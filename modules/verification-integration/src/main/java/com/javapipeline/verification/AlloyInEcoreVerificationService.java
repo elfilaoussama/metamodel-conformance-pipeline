@@ -67,7 +67,7 @@ public final class AlloyInEcoreVerificationService {
                 process.waitFor(150, TimeUnit.MILLISECONDS);
             }
             reader.join(2_000);
-            if (process.exitValue() != 0 || !Files.isRegularFile(json)) {
+            if (!Files.isRegularFile(json)) {
                 throw new VerificationException("AlloyInEcore verifier failed (exit " + process.exitValue()
                         + "). " + tail(output.toString()));
             }

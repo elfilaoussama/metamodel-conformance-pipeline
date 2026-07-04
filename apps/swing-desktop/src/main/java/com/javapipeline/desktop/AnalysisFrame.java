@@ -28,7 +28,7 @@ import java.util.prefs.Preferences;
 final class AnalysisFrame extends JFrame {
     private static final String DEFAULT_WORKSPACE = "workspace/repositories";
     private static final String DEFAULT_OUTPUT = "analysis-output";
-    private static final String DEFAULT_VERIFIER = "alloy-in-ecore-java-verification/VerificationEnvironment";
+    private static final String DEFAULT_VERIFIER = "modules/verification-cli";
     private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/ClassHierarchies.recore";
 
     private final Preferences preferences = Preferences.userNodeForPackage(AnalysisFrame.class);

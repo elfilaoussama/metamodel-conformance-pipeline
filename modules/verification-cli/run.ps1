@@ -20,5 +20,8 @@ if ($report) { $argsList += "--report"; $argsList += $report }
 if ($csv) { $argsList += "--csv"; $argsList += $csv }
 
 $projectDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-mvn -f "$projectDir\pom.xml" exec:java -q -Dexec.args="$($argsList -join ' ')"
+$quotedArgs = $argsList | ForEach-Object {
+    if ($_ -match '\s') { "`"$($_.Replace('"', '\"'))`"" } else { $_ }
+}
+mvn -f "$projectDir\pom.xml" exec:java -q "-Dexec.args=$($quotedArgs -join ' ')"
 if (-not $?) { exit 1 }

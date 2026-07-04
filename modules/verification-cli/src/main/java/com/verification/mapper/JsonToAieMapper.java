@@ -48,6 +48,14 @@ public class JsonToAieMapper {
         }
         aie.append("}\n");
 
+        for (int i = 0; i < typeList.size(); i++) {
+            JsonObject t = typeList.get(i);
+            aie.append("  Class").append(i).append(" = { name = \"")
+                    .append(getString(t, "name", "Unknown_").replace("\"", "\\\""))
+                    .append("\", abstract = ").append(getString(t, "abstract", "false"))
+                    .append(" }\n");
+        }
+
         int methodIndex = 0;
         int fieldIndex = 0;
 

@@ -77,7 +77,9 @@ public class Main {
                 }
             }
 
-            System.exit("SAT".equals(report.getResult()) ? 0 : 1);
+            if ("SAT".equals(report.getResult())) System.exit(0);
+            else if ("UNSAT".equals(report.getResult())) System.exit(1);
+            else System.exit(2);
 
         } catch (Exception e) {
             System.err.println("Verification failed: " + e.getMessage());
