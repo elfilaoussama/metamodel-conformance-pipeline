@@ -1,0 +1,44 @@
+# Build outputs
+target/
+**/target/
+
+# IDE files
+.idea/
+.vscode/
+*.iml
+.project
+.classpath
+.settings/
+
+# Logs
+*.log
+
+# Generated pipeline data
+workspace/
+analysis-output/
+pipeline-output/
+
+# AlloyInEcore — keep source, exclude binaries and IDE files
+alloy-in-ecore-java-verification/AlloyInEcore/**/lib/
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.jar
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.so
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.dll
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.dylib
+alloy-in-ecore-java-verification/AlloyInEcore/**/plingeling
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.mp4
+alloy-in-ecore-java-verification/**/*.mp4
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.zip
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.tar.gz
+alloy-in-ecore-java-verification/AlloyInEcore/**/MANIFEST
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.out
+alloy-in-ecore-java-verification/AlloyInEcore/**/wscript
+alloy-in-ecore-java-verification/AlloyInEcore/**/*.patch
+
+
+# Verification environment output
+modules/verification-cli/output/
+modules/verification-cli/SatSolvers/
+
+# Tool artifacts
+.agents/
+

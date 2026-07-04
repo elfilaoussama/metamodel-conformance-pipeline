@@ -1,0 +1,5 @@
+output/
+results.json
+SatSolvers/
+target/
+*.log

@@ -1,0 +1,42 @@
+{
+  "projectName": "test-project",
+  "repository": "test/repo",
+  "revision": "abc123",
+  "complianceLevel": 11,
+  "includeTests": false,
+  "sourceRoots": ["src/main/java"],
+  "types": [
+    {
+      "name": "Animal",
+      "package": "com.test",
+      "superclass": "java.lang.Object",
+      "interfaces": [],
+      "abstract": false,
+      "final": false,
+      "visibility": "public",
+      "sourcePosition": "Animal.java:1",
+      "fields": [
+        { "name": "name", "type": "String", "visibility": "private", "static": false, "final": false }
+      ],
+      "methods": [
+        { "name": "speak", "returnType": "void", "visibility": "public", "static": false, "abstract": false, "parameters": [] }
+      ]
+    },
+    {
+      "name": "Animal",
+      "package": "com.test",
+      "superclass": "java.lang.Object",
+      "interfaces": [],
+      "abstract": false,
+      "final": false,
+      "visibility": "public",
+      "sourcePosition": "Animal.java:1",
+      "fields": [
+        { "name": "name", "type": "String", "visibility": "private", "static": false, "final": false }
+      ],
+      "methods": [
+        { "name": "speak", "returnType": "void", "visibility": "public", "static": false, "abstract": false, "parameters": [] }
+      ]
+    }
+  ]
+}
