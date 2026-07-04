@@ -10,7 +10,7 @@
     <properties>
         <maven.compiler.source>1.8</maven.compiler.source>
         <maven.compiler.target>1.8</maven.compiler.target>
-        <alloyinecore.lib.dir>../../alloy-in-ecore-java-verification/AlloyInEcore/Source/eu.modelwriter.core.alloyinecore/lib</alloyinecore.lib.dir>
+        <alloyinecore.lib.dir>lib</alloyinecore.lib.dir>
     </properties>
 
     <dependencies>

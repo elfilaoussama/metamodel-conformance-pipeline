@@ -6,7 +6,7 @@ AlloyInEcore-based structural invariant checker for Java source code models.
 
 - Java 8+ runtime
 - Maven 3.6+
-- AlloyInEcore JARs in `../../alloy-in-ecore-java-verification/AlloyInEcore/Source/eu.modelwriter.core.alloyinecore/lib/`
+- AlloyInEcore JARs in `lib/` (included in this module)
 
 ## Usage
 

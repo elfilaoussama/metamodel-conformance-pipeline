@@ -117,7 +117,6 @@ be included explicitly from the UI.
 
 ## Existing code
 
-The AlloyInEcore engine remains isolated in `alloy-in-ecore-java-verification`
-because it uses an older EMF/Kodkod stack. Application code reaches it only
-through `verification-integration`, keeping those dependencies out of the Java
-17 desktop runtime.
+The AlloyInEcore engine is bundled in `modules/verification-cli/lib/`. Application
+code reaches it only through `verification-integration`, keeping those dependencies
+out of the Java 17 desktop runtime.
