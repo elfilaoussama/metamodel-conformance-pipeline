@@ -1,0 +1,8 @@
+-- Root container
+Root = {
+  classes = {Class0}
+  Class0 = { name = "ConcreteClass", abstract = "false" }
+  Method0 = { name = "doSomething", abstract = "true" }
+  classParent[Class0] = null
+  classMethods[Class0] = {Method0}
+}

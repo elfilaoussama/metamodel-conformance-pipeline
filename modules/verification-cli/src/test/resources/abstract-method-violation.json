@@ -1,0 +1,31 @@
+{
+  "projectName": "test-project",
+  "repository": "test/repo",
+  "revision": "abc123",
+  "complianceLevel": 11,
+  "includeTests": false,
+  "sourceRoots": ["src/main/java"],
+  "types": [
+    {
+      "name": "ConcreteClass",
+      "package": "com.test",
+      "superclass": "java.lang.Object",
+      "interfaces": [],
+      "abstract": false,
+      "final": false,
+      "visibility": "public",
+      "sourcePosition": "ConcreteClass.java:1",
+      "fields": [],
+      "methods": [
+        {
+          "name": "doSomething",
+          "returnType": "void",
+          "visibility": "public",
+          "static": false,
+          "abstract": true,
+          "parameters": []
+        }
+      ]
+    }
+  ]
+}

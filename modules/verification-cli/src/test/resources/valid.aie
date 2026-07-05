@@ -1,0 +1,6 @@
+-- Root container
+Root = {
+  classes = {Class0}
+  Class0 = { name = "Animal", abstract = "false" }
+  classParent[Class0] = null
+}

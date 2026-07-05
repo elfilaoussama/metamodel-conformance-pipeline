@@ -105,8 +105,9 @@ public final class AlloyInEcoreVerificationService {
         if (!Files.isDirectory(request.verifierHome())) throw new VerificationException("Verifier folder not found: " + request.verifierHome());
         if (!Files.isRegularFile(request.metamodel())) throw new VerificationException("AlloyInEcore metamodel not found: " + request.metamodel());
         if (!Files.isRegularFile(request.extractionJson())) throw new VerificationException("Spoon extraction not found: " + request.extractionJson());
-        if (!request.metamodel().getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".recore")) {
-            throw new VerificationException("Metamodel must be an AlloyInEcore .recore file");
+        String name = request.metamodel().getFileName().toString().toLowerCase(Locale.ROOT);
+        if (!name.endsWith(".recore") && !name.endsWith(".als")) {
+            throw new VerificationException("Metamodel must be a .recore or .als file");
         }
     }
 

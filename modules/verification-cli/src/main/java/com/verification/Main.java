@@ -121,8 +121,8 @@ public class Main {
         }
 
         if (opts.metamodel == null) {
-            System.err.println("Usage: java com.verification.Main -r <recore> [-i <extraction.json>] -o <outputDir> [--strict] [--details] [--report <report.json>] [--csv <report.csv>]");
-            System.err.println("  -r <file>       : AlloyInEcore .recore metamodel (required)");
+            System.err.println("Usage: java com.verification.Main -r <metamodel> [-i <extraction.json>] -o <outputDir> [--strict] [--details] [--report <report.json>] [--csv <report.csv>]");
+            System.err.println("  -r <file>       : metamodel (.als) (required)");
             System.err.println("  -i <file>       : Spoon extraction JSON input");
             System.err.println("  -o <dir>        : Output directory");
             System.err.println("  --strict        : Strict conformance mode (fix non-derived relations)");

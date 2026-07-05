@@ -29,7 +29,7 @@ final class AnalysisFrame extends JFrame {
     private static final String DEFAULT_WORKSPACE = "workspace/repositories";
     private static final String DEFAULT_OUTPUT = "analysis-output";
     private static final String DEFAULT_VERIFIER = "modules/verification-cli";
-    private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/ClassHierarchies.recore";
+    private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/class_level_structural_kernel.als";
 
     private final Preferences preferences = Preferences.userNodeForPackage(AnalysisFrame.class);
     private final RepositoryQueueModel queueModel = new RepositoryQueueModel();
@@ -312,11 +312,24 @@ final class AnalysisFrame extends JFrame {
     private void loadPreferences() {
         workspaceField.setText(preferences.get("workspace", DEFAULT_WORKSPACE));
         outputField.setText(preferences.get("output", DEFAULT_OUTPUT));
-        verifierField.setText(preferences.get("verifier", DEFAULT_VERIFIER));
-        metamodelField.setText(preferences.get("metamodel", DEFAULT_METAMODEL));
+        verifierField.setText(staleToDefault("verifier", DEFAULT_VERIFIER, true));
+        metamodelField.setText(staleToDefault("metamodel", DEFAULT_METAMODEL, false));
         verifyBox.setSelected(preferences.getBoolean("verify", false));
         includeTestsBox.setSelected(preferences.getBoolean("includeTests", false));
         reuseBox.setSelected(preferences.getBoolean("reuse", true));
+    }
+
+    private String staleToDefault(String key, String defaultValue, boolean isDirectory) {
+        String saved = preferences.get(key, defaultValue);
+        Path p = Path.of(saved).toAbsolutePath().normalize();
+        boolean exists = isDirectory ? Files.isDirectory(p) : Files.isRegularFile(p);
+        if (!exists) {
+            Path def = Path.of(defaultValue).toAbsolutePath().normalize();
+            if (isDirectory ? Files.isDirectory(def) : Files.isRegularFile(def)) {
+                return defaultValue;
+            }
+        }
+        return saved;
     }
 
     private void savePreferences() {

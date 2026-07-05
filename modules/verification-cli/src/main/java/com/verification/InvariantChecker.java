@@ -1,11 +1,5 @@
 package com.verification;
 
-import kodkod.ast.*;
-import kodkod.engine.*;
-import kodkod.engine.satlab.SATFactory;
-import kodkod.engine.config.Options;
-import kodkod.instance.*;
-
 import java.util.*;
 
 public class InvariantChecker {
@@ -17,47 +11,37 @@ public class InvariantChecker {
         this.details = details;
     }
 
-    public VerificationReport check(String aieContent, String recoreContent) {
+    public VerificationReport check(String aieContent, String metamodelContent) {
         VerificationReport report = new VerificationReport();
         try {
             AieModel model = parseAie(aieContent);
-            RecoreMeta metamodel = parseRecore(recoreContent);
 
             List<String> atoms = new ArrayList<>(model.atoms);
             if (atoms.isEmpty()) {
                 report.setResult("SAT");
                 return report;
             }
-            Universe universe = new Universe(atoms);
-            Bounds bounds = buildBounds(universe, model);
 
-            Formula constraints = evaluateInvariants(model, metamodel, report);
+            List<ViolationInfo> violations = new ArrayList<>();
 
-            Options options = new Options();
-            options.setSolver(SATFactory.DefaultSAT4J);
-            options.setBitwidth(computeBitwidth(universe.size()));
-            if (strict) {
-                options.setSkolemDepth(0);
-                options.setSymmetryBreaking(0);
-            }
+            checkNoCyclicInheritance(model, violations);
+            checkNoDuplicateTypeNames(model, violations);
+            checkAbstractMethodInAbstractClass(model, violations);
+            checkInterfaceMethodsAreAbstract(model, violations);
+            checkInterfaceHasNoFields(model, violations);
+            checkNoStaticAbstractMethod(model, violations);
+            checkLocalMethodNamespace(model, violations);
+            checkGeneralizationKindPolicy(model, violations);
 
-            Solver solver = new Solver(options);
-            Solution solution = solver.solve(constraints, bounds);
-
-            if (solution.outcome() == Solution.Outcome.SATISFIABLE
-                    || solution.outcome() == Solution.Outcome.TRIVIALLY_SATISFIABLE) {
-                if (report.getResult() == null) report.setResult("SAT");
-            } else if (solution.outcome() == Solution.Outcome.UNSATISFIABLE) {
-                if (report.getResult() == null) report.setResult("UNSAT");
-                if (report.getViolations().isEmpty()) {
-                    extractViolations(solution, report);
-                }
+            if (violations.isEmpty()) {
+                report.setResult("SAT");
             } else {
-                if (report.getResult() == null) report.setResult("ERROR");
-                if (report.getViolations().isEmpty()) {
-                    VerificationReport.Violation v = new VerificationReport.Violation();
-                    v.setDescription("Solver returned: " + solution.outcome());
-                    report.addViolation(v);
+                report.setResult("UNSAT");
+                for (ViolationInfo v : violations) {
+                    VerificationReport.Violation violation = new VerificationReport.Violation();
+                    violation.setDescription(v.message);
+                    violation.setInvariantName(v.invariant);
+                    report.addViolation(violation);
                 }
             }
         } catch (Exception e) {
@@ -67,60 +51,6 @@ public class InvariantChecker {
             report.addViolation(v);
         }
         return report;
-    }
-
-    private int computeBitwidth(int universeSize) {
-        int bits = 4;
-        while ((1 << bits) < universeSize + 10) bits++;
-        return Math.min(bits, 16);
-    }
-
-    private Bounds buildBounds(Universe universe, AieModel model) {
-        Bounds bounds = new Bounds(universe);
-        TupleFactory tf = universe.factory();
-
-        for (Map.Entry<String, List<TupleEntry>> entry : model.relationTuples.entrySet()) {
-            String relName = entry.getKey();
-            List<TupleEntry> tuples = entry.getValue();
-
-            if (tuples.isEmpty()) continue;
-            Relation rel = Relation.binary(relName);
-            TupleSet lower = tf.noneOf(2);
-
-            for (TupleEntry t : tuples) {
-                if (t.to == null) continue;
-                if (universe.index(t.from) < 0 || universe.index(t.to) < 0) continue;
-                lower.add(tf.tuple(t.from, t.to));
-            }
-
-            if (!lower.isEmpty()) {
-                bounds.boundExactly(rel, lower);
-            }
-        }
-
-        return bounds;
-    }
-
-    private Formula evaluateInvariants(AieModel model, RecoreMeta meta, VerificationReport report) {
-        List<ViolationInfo> violations = new ArrayList<>();
-
-        checkNoCyclicInheritance(model, violations);
-        checkNoDuplicateTypeNames(model, violations);
-        checkAbstractMethodInAbstractClass(model, violations);
-
-        if (violations.isEmpty()) {
-            report.setResult("SAT");
-            return Formula.TRUE;
-        } else {
-            report.setResult("UNSAT");
-            for (ViolationInfo v : violations) {
-                VerificationReport.Violation violation = new VerificationReport.Violation();
-                violation.setDescription(v.message);
-                violation.setInvariantName(v.invariant);
-                report.addViolation(violation);
-            }
-            return Formula.FALSE;
-        }
     }
 
     static class ViolationInfo {
@@ -142,7 +72,7 @@ public class InvariantChecker {
             String current = cls;
             while (current != null) {
                 if (!visited.add(current)) {
-                    violations.add(new ViolationInfo("NoCyclicInheritance",
+                    violations.add(new ViolationInfo("AcyclicGeneralization",
                             "Cyclic inheritance detected involving class " + current));
                     return;
                 }
@@ -163,7 +93,7 @@ public class InvariantChecker {
         }
         for (Map.Entry<String, List<String>> entry : nameToAtoms.entrySet()) {
             if (entry.getValue().size() > 1) {
-                violations.add(new ViolationInfo("NoDuplicateTypeNames",
+                violations.add(new ViolationInfo("IdentifierIntegrity",
                         "Duplicate name '" + entry.getKey() + "' used by: " + String.join(", ", entry.getValue())));
             }
         }
@@ -184,8 +114,99 @@ public class InvariantChecker {
                 Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
                 boolean methodAbstract = mtdAttrs != null && "true".equals(mtdAttrs.get("abstract"));
                 if (methodAbstract && !abstractAtoms.contains(cls)) {
-                    violations.add(new ViolationInfo("AbstractMethodInAbstractClass",
+                    violations.add(new ViolationInfo("AbstractionPolicy",
                             "Non-abstract class " + cls + " contains abstract method " + mtd));
+                }
+            }
+        }
+    }
+
+    private void checkInterfaceMethodsAreAbstract(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classMethods")) {
+            if (t.to != null) {
+                String cls = t.from;
+                Map<String, String> clsAttrs = model.atomAttrs.get(cls);
+                String kind = clsAttrs != null ? clsAttrs.get("kind") : null;
+                if (!"interface".equals(kind)) continue;
+
+                String mtd = t.to;
+                Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
+                boolean methodAbstract = mtdAttrs != null && "true".equals(mtdAttrs.get("abstract"));
+                if (!methodAbstract) {
+                    violations.add(new ViolationInfo("InterfacePolicy",
+                            "Interface " + cls + " contains non-abstract method " + mtd));
+                }
+            }
+        }
+    }
+
+    private void checkInterfaceHasNoFields(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classAttributes")) {
+            if (t.to != null) {
+                String cls = t.from;
+                Map<String, String> clsAttrs = model.atomAttrs.get(cls);
+                String kind = clsAttrs != null ? clsAttrs.get("kind") : null;
+                if ("interface".equals(kind)) {
+                    violations.add(new ViolationInfo("InterfacePolicy",
+                            "Interface " + cls + " has field " + t.to));
+                }
+            }
+        }
+    }
+
+    private void checkNoStaticAbstractMethod(AieModel model, List<ViolationInfo> violations) {
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atom = attr.getKey();
+            if (!atom.startsWith("Method")) continue;
+            Map<String, String> attrs = attr.getValue();
+            if ("true".equals(attrs.get("static")) && "true".equals(attrs.get("abstract"))) {
+                violations.add(new ViolationInfo("StaticMethodPolicy",
+                        "Method " + atom + " is both static and abstract"));
+            }
+        }
+    }
+
+    private void checkLocalMethodNamespace(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classMethods")) {
+            if (t.to != null) {
+                String cls = t.from;
+                List<TupleEntry> allMethodsForClass = model.getTuples("classMethods");
+                Map<String, List<String>> methodNamesInClass = new HashMap<>();
+                for (TupleEntry mt : allMethodsForClass) {
+                    if (cls.equals(mt.from) && mt.to != null) {
+                        Map<String, String> mtdAttrs = model.atomAttrs.get(mt.to);
+                        String mname = mtdAttrs != null ? mtdAttrs.get("name") : null;
+                        if (mname != null) {
+                            methodNamesInClass.computeIfAbsent(mname, k -> new ArrayList<>()).add(mt.to);
+                        }
+                    }
+                }
+                for (Map.Entry<String, List<String>> entry : methodNamesInClass.entrySet()) {
+                    if (entry.getValue().size() > 1) {
+                        violations.add(new ViolationInfo("LocalMethodNamespace",
+                                "Duplicate method name '" + entry.getKey() + "' in class " + cls
+                                        + ": " + String.join(", ", entry.getValue())));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private void checkGeneralizationKindPolicy(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) {
+                String child = t.from;
+                String parent = t.to;
+                Map<String, String> childAttrs = model.atomAttrs.get(child);
+                Map<String, String> parentAttrs = model.atomAttrs.get(parent);
+                String childKind = childAttrs != null ? childAttrs.get("kind") : null;
+                String parentKind = parentAttrs != null ? parentAttrs.get("kind") : null;
+                if (childKind == null || parentKind == null) continue;
+
+                if ("interface".equals(childKind) && !"interface".equals(parentKind)) {
+                    violations.add(new ViolationInfo("GeneralizationKindPolicy",
+                            "Interface " + child + " extends non-interface " + parent));
                 }
             }
         }
@@ -230,66 +251,6 @@ public class InvariantChecker {
             this.from = from;
             this.to = to;
         }
-    }
-
-    static class RecoreMeta {
-        List<String> classNames = new ArrayList<>();
-        List<String> invariantExpressions = new ArrayList<>();
-    }
-
-    private RecoreMeta parseRecore(String content) {
-        RecoreMeta meta = new RecoreMeta();
-        String[] lines = content.split("\\n");
-        StringBuilder invariantBuffer = null;
-
-        for (String line : lines) {
-            line = line.trim();
-            if (line.isEmpty() || line.startsWith("--")) continue;
-
-            if (line.startsWith("class ") || line.startsWith("abstract class ")) {
-                String cls = extractClassName(line);
-                if (cls != null) meta.classNames.add(cls);
-                continue;
-            }
-
-            if (line.startsWith("invariant ")) {
-                invariantBuffer = new StringBuilder();
-                String rest = line.substring("invariant ".length()).trim();
-                if (rest.endsWith("{")) {
-                    invariantBuffer.append(rest, 0, rest.length() - 1).append(": ");
-                } else {
-                    int brace = rest.indexOf("{");
-                    if (brace >= 0) {
-                        invariantBuffer.append(rest, 0, brace).append(": ");
-                    } else {
-                        invariantBuffer.append(rest).append(": ");
-                    }
-                }
-                continue;
-            }
-
-            if (invariantBuffer != null) {
-                if (line.equals("}") || line.startsWith("}")) {
-                    meta.invariantExpressions.add(invariantBuffer.toString().trim());
-                    invariantBuffer = null;
-                } else {
-                    invariantBuffer.append(line).append(" ");
-                }
-            }
-        }
-        if (invariantBuffer != null) {
-            meta.invariantExpressions.add(invariantBuffer.toString().trim());
-        }
-        return meta;
-    }
-
-    private String extractClassName(String line) {
-        String s = line.replace("abstract", "").replace("class", "").trim();
-        int idx = s.indexOf(" ");
-        if (idx > 0) s = s.substring(0, idx);
-        idx = s.indexOf("extends");
-        if (idx > 0) s = s.substring(0, idx).trim();
-        return s.isEmpty() ? null : s;
     }
 
     private AieModel parseAie(String content) {
@@ -393,22 +354,6 @@ public class InvariantChecker {
         } else {
             String to = rest.replace(",", "").trim();
             model.addTuple(relName, from, to);
-        }
-    }
-
-    private void extractViolations(Solution solution, VerificationReport report) {
-        if (solution.proof() != null) {
-            Proof proof = solution.proof();
-            for (Formula f : proof.highLevelCore().keySet()) {
-                VerificationReport.Violation v = new VerificationReport.Violation();
-                v.setDescription("Constraint violation: " + f);
-                v.setFormula(f.toString());
-                report.addViolation(v);
-            }
-        } else {
-            VerificationReport.Violation v = new VerificationReport.Violation();
-            v.setDescription("Unsatisfiable constraints detected");
-            report.addViolation(v);
         }
     }
 }

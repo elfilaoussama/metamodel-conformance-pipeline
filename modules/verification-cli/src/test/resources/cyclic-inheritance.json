@@ -1,0 +1,34 @@
+{
+  "projectName": "test-project",
+  "repository": "test/repo",
+  "revision": "abc123",
+  "complianceLevel": 11,
+  "includeTests": false,
+  "sourceRoots": ["src/main/java"],
+  "types": [
+    {
+      "name": "Animal",
+      "package": "com.test",
+      "superclass": "Mammal",
+      "interfaces": [],
+      "abstract": false,
+      "final": false,
+      "visibility": "public",
+      "sourcePosition": "Animal.java:1",
+      "fields": [],
+      "methods": []
+    },
+    {
+      "name": "Mammal",
+      "package": "com.test",
+      "superclass": "Animal",
+      "interfaces": [],
+      "abstract": false,
+      "final": false,
+      "visibility": "public",
+      "sourcePosition": "Mammal.java:1",
+      "fields": [],
+      "methods": []
+    }
+  ]
+}
