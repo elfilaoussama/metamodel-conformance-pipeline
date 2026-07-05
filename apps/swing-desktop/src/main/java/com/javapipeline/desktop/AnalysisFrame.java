@@ -10,6 +10,7 @@ import com.javapipeline.verification.VerificationRequest;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
+import javax.swing.border.TitledBorder;
 import java.awt.BorderLayout;
 import java.awt.Desktop;
 import java.awt.Dimension;
@@ -19,10 +20,15 @@ import java.awt.GridBagLayout;
 import java.awt.GridLayout;
 import java.awt.Insets;
 import java.awt.event.ActionEvent;
+import java.awt.event.FocusAdapter;
+import java.awt.event.FocusEvent;
+import java.awt.event.WindowAdapter;
+import java.awt.event.WindowEvent;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.CancellationException;
+import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
 
 final class AnalysisFrame extends JFrame {
@@ -30,6 +36,15 @@ final class AnalysisFrame extends JFrame {
     private static final String DEFAULT_OUTPUT = "analysis-output";
     private static final String DEFAULT_VERIFIER = "modules/verification-cli";
     private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/class_level_structural_kernel.als";
+    private static final String PREF_WORKSPACE = "workspace";
+    private static final String PREF_OUTPUT = "output";
+    private static final String PREF_VERIFIER = "verifier";
+    private static final String PREF_METAMODEL = "metamodel";
+    private static final String PREF_VERIFY = "verify";
+    private static final String PREF_INCLUDE_TESTS = "includeTests";
+    private static final String PREF_REUSE = "reuse";
+    private static final int TAB_ACTIVITY = 0;
+    private static final int TAB_VERIFICATION = 1;
 
     private final Preferences preferences = Preferences.userNodeForPackage(AnalysisFrame.class);
     private final RepositoryQueueModel queueModel = new RepositoryQueueModel();
@@ -55,14 +70,33 @@ final class AnalysisFrame extends JFrame {
     private final JButton clearButton = new JButton("Clear");
     private final JButton startButton = new JButton("Start");
     private final JButton cancelButton = new JButton("Cancel");
-    private AnalysisWorker activeWorker;
+    private final JButton verifyExistingButton = new JButton("Verify existing");
+    private final JTabbedPane resultTabs = new JTabbedPane();
+    private SwingWorker<Void, UiEvent> activeWorker;
 
     AnalysisFrame() {
         super("Java Analysis Platform");
         setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);
-        setMinimumSize(new Dimension(1050, 720));
+        setMinimumSize(new Dimension(900, 600));
         setSize(1200, 820);
         setLocationRelativeTo(null);
+
+        setDefaultCloseOperation(WindowConstants.DO_NOTHING_ON_CLOSE);
+        addWindowListener(new WindowAdapter() {
+            @Override
+            public void windowClosing(WindowEvent e) {
+                if (activeWorker != null && !activeWorker.isDone()) {
+                    int result = JOptionPane.showConfirmDialog(AnalysisFrame.this,
+                            "Analysis is still running. Exit anyway?",
+                            "Confirm exit", JOptionPane.YES_NO_OPTION);
+                    if (result != JOptionPane.YES_OPTION) return;
+                    activeWorker.cancel(true);
+                }
+                flushPreferences();
+                dispose();
+                System.exit(0);
+            }
+        });
 
         JPanel content = new JPanel(new BorderLayout(10, 10));
         content.setBorder(new EmptyBorder(12, 12, 12, 12));
@@ -75,25 +109,33 @@ final class AnalysisFrame extends JFrame {
         wireActions();
         configureTable();
         updateVerificationControls();
+        installFieldValidation();
         setBusy(false);
     }
 
     private JComponent buildConfigurationPanel() {
-        JPanel panel = new JPanel(new GridBagLayout());
-        GridBagConstraints c = new GridBagConstraints();
-        c.insets = new Insets(4, 4, 4, 4);
-        c.fill = GridBagConstraints.HORIZONTAL;
+        JPanel container = new JPanel(new BorderLayout(8, 8));
 
+        JPanel urlPanel = new JPanel(new BorderLayout(4, 4));
         JPanel urlActions = new JPanel(new GridLayout(2, 1, 0, 4));
         urlActions.add(addButton);
         urlActions.add(searchGitHubButton);
-        addRow(panel, c, 0, "GitHub URLs", new JScrollPane(urlsArea), urlActions);
-        addRow(panel, c, 1, "Clone workspace", workspaceField, browseButton(workspaceField));
-        addRow(panel, c, 2, "Analysis output", outputField, browseButton(outputField));
-        addRow(panel, c, 3, "Verifier module", verifierField, browseButton(verifierField));
-        addRow(panel, c, 4, "Alloy metamodel", metamodelField, fileBrowseButton(metamodelField, "recore"));
+        urlPanel.add(new JLabel("GitHub URLs"), BorderLayout.NORTH);
+        urlPanel.add(new JScrollPane(urlsArea), BorderLayout.CENTER);
+        urlPanel.add(urlActions, BorderLayout.EAST);
+        urlPanel.setBorder(BorderFactory.createTitledBorder("Repository sources"));
 
-        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        JPanel pathPanel = new JPanel(new GridBagLayout());
+        GridBagConstraints c = new GridBagConstraints();
+        c.insets = new Insets(3, 4, 3, 4);
+        c.fill = GridBagConstraints.HORIZONTAL;
+        addPathRow(pathPanel, c, 0, "Clone workspace", workspaceField);
+        addPathRow(pathPanel, c, 1, "Analysis output", outputField);
+        addPathRow(pathPanel, c, 2, "Verifier module", verifierField);
+        addPathRow(pathPanel, c, 3, "Alloy metamodel", metamodelField);
+        pathPanel.setBorder(BorderFactory.createTitledBorder("Paths"));
+
+        JPanel options = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 4));
         options.add(new JLabel("Clone depth"));
         options.add(depthSpinner);
         options.add(new JLabel("Java level"));
@@ -101,20 +143,24 @@ final class AnalysisFrame extends JFrame {
         options.add(includeTestsBox);
         options.add(reuseBox);
         options.add(verifyBox);
-        c.gridx = 0; c.gridy = 5; c.weightx = 0;
-        panel.add(new JLabel("Options"), c);
-        c.gridx = 1; c.weightx = 1; c.gridwidth = 2;
-        panel.add(options, c);
-        return panel;
+        JPanel optionsPanel = new JPanel(new BorderLayout());
+        optionsPanel.add(options, BorderLayout.WEST);
+        optionsPanel.setBorder(BorderFactory.createTitledBorder("Options"));
+
+        container.add(urlPanel, BorderLayout.NORTH);
+        container.add(pathPanel, BorderLayout.CENTER);
+        container.add(optionsPanel, BorderLayout.SOUTH);
+        return container;
     }
 
-    private void addRow(JPanel panel, GridBagConstraints c, int row, String label, JComponent component, JComponent action) {
-        c.gridwidth = 1; c.gridx = 0; c.gridy = row; c.weightx = 0;
+    private void addPathRow(JPanel panel, GridBagConstraints c, int row, String label, JTextField field) {
+        JPanel rowPanel = new JPanel(new BorderLayout(4, 0));
+        rowPanel.add(field, BorderLayout.CENTER);
+        rowPanel.add(browseButton(field), BorderLayout.EAST);
+        c.gridx = 0; c.gridy = row; c.weightx = 0; c.gridwidth = 1;
         panel.add(new JLabel(label), c);
         c.gridx = 1; c.weightx = 1;
-        panel.add(component, c);
-        c.gridx = 2; c.weightx = 0;
-        panel.add(action, c);
+        panel.add(rowPanel, c);
     }
 
     private JComponent buildMainPanel() {
@@ -126,6 +172,7 @@ final class AnalysisFrame extends JFrame {
         JButton openOutput = new JButton("Open output");
         openOutput.addActionListener(event -> openOutputFolder());
         queueActions.add(openOutput);
+        queueActions.add(verifyExistingButton);
 
         JPanel queuePanel = new JPanel(new BorderLayout(5, 5));
         queuePanel.add(queueActions, BorderLayout.NORTH);
@@ -135,24 +182,24 @@ final class AnalysisFrame extends JFrame {
         logArea.setFont(new java.awt.Font(java.awt.Font.MONOSPACED, java.awt.Font.PLAIN, 12));
         JScrollPane logScroll = new JScrollPane(logArea);
         verificationTable.setAutoCreateRowSorter(true);
-        verificationTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        int[] verificationWidths = {180, 80, 190, 55, 520, 340};
-        for (int i = 0; i < verificationWidths.length; i++) {
+        verificationTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+        int[] verificationWidths = {180, 65, 160, 45, 400, 200};
+        for (int i = 0; i < verificationWidths.length && i < verificationTable.getColumnCount(); i++) {
             verificationTable.getColumnModel().getColumn(i).setPreferredWidth(verificationWidths[i]);
         }
-        JTabbedPane resultTabs = new JTabbedPane();
         resultTabs.addTab("Activity", logScroll);
         resultTabs.addTab("Verification results", new JScrollPane(verificationTable));
 
         JSplitPane split = new JSplitPane(JSplitPane.VERTICAL_SPLIT, queuePanel, resultTabs);
-        split.setResizeWeight(0.62);
+        split.setResizeWeight(0.6);
+        split.setOneTouchExpandable(true);
         return split;
     }
 
     private JComponent buildStatusPanel() {
         JPanel panel = new JPanel(new BorderLayout(8, 0));
         progressBar.setStringPainted(true);
-        progressBar.setPreferredSize(new Dimension(300, 20));
+        progressBar.setPreferredSize(new Dimension(300, 22));
         panel.add(statusLabel, BorderLayout.CENTER);
         panel.add(progressBar, BorderLayout.EAST);
         return panel;
@@ -161,9 +208,10 @@ final class AnalysisFrame extends JFrame {
     private void configureTable() {
         queueTable.setAutoCreateRowSorter(true);
         queueTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
-        queueTable.getColumnModel().getColumn(0).setPreferredWidth(330);
-        queueTable.getColumnModel().getColumn(2).setPreferredWidth(260);
-        queueTable.getColumnModel().getColumn(4).setPreferredWidth(280);
+        queueTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+        queueTable.getColumnModel().getColumn(0).setPreferredWidth(280);
+        queueTable.getColumnModel().getColumn(2).setPreferredWidth(220);
+        queueTable.getColumnModel().getColumn(4).setPreferredWidth(200);
     }
 
     private void wireActions() {
@@ -177,6 +225,79 @@ final class AnalysisFrame extends JFrame {
             if (activeWorker != null) activeWorker.cancel(false);
         });
         verifyBox.addActionListener(event -> updateVerificationControls());
+        verifyExistingButton.addActionListener(event -> verifyExistingRepos());
+    }
+
+    private void installFieldValidation() {
+        installPathValidation(workspaceField, true);
+        installPathValidation(outputField, true);
+        installPathValidation(verifierField, true);
+        installPathValidation(metamodelField, false);
+    }
+
+    private void installPathValidation(JTextField field, boolean isDirectory) {
+        field.addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusLost(FocusEvent e) {
+                String text = field.getText().trim();
+                if (text.isEmpty()) {
+                    field.setBackground(null);
+                    field.setToolTipText(null);
+                    return;
+                }
+                Path p = Path.of(text).toAbsolutePath().normalize();
+                boolean exists = isDirectory ? Files.isDirectory(p) : Files.isRegularFile(p);
+                if (!exists) {
+                    field.setBackground(new java.awt.Color(255, 230, 230));
+                    field.setToolTipText("Path does not exist: " + p);
+                } else {
+                    field.setBackground(new java.awt.Color(230, 255, 230));
+                    field.setToolTipText(p.toString());
+                }
+            }
+        });
+    }
+
+    private void verifyExistingRepos() {
+        Path outputBase = Path.of(outputField.getText().trim()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(outputBase)) {
+            JOptionPane.showMessageDialog(this, "Output directory does not exist: " + outputBase,
+                    "Cannot verify", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        try {
+            verifyBox.setSelected(true);
+            Path verifier = requiredPath(verifierField.getText(), "Verifier module");
+            Path metamodel = requiredPath(metamodelField.getText(), "Alloy metamodel");
+            List<Path> extractionJsons = Files.list(outputBase)
+                    .filter(Files::isDirectory)
+                    .map(dir -> dir.resolve("extraction.json"))
+                    .filter(Files::isRegularFile)
+                    .sorted()
+                    .toList();
+            if (extractionJsons.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No extraction.json files found in " + outputBase,
+                        "Nothing to verify", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            for (Path extraction : extractionJsons) {
+                String repoName = extraction.getParent().getFileName().toString();
+                queueModel.add(repoName);
+            }
+            RunConfiguration configuration = new RunConfiguration(
+                    requiredPath(workspaceField.getText(), "Clone workspace"),
+                    outputBase, 1, 17, false, true, true, verifier, metamodel);
+            savePreferences();
+            progressBar.setValue(0);
+            progressBar.setMaximum(extractionJsons.size());
+            progressBar.setIndeterminate(false);
+            setBusy(true);
+            verificationModel.clear();
+            activeWorker = new ExistingVerificationWorker(extractionJsons, configuration);
+            activeWorker.execute();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
     }
 
     private void addUrls(ActionEvent ignored) {
@@ -254,6 +375,7 @@ final class AnalysisFrame extends JFrame {
         searchGitHubButton.setEnabled(!busy);
         removeButton.setEnabled(!busy);
         clearButton.setEnabled(!busy);
+        verifyExistingButton.setEnabled(!busy);
         cancelButton.setEnabled(busy);
         verifyBox.setEnabled(!busy);
         if (!busy) updateVerificationControls();
@@ -264,7 +386,7 @@ final class AnalysisFrame extends JFrame {
         verifierField.setEnabled(enabled);
         metamodelField.setEnabled(enabled);
         verifyBox.setToolTipText("Strict conformance: non-derived model relations are fixed to the Spoon extraction");
-        metamodelField.setToolTipText("The selected .recore file is parsed again for every repository run");
+        metamodelField.setToolTipText("The metamodel (.als / .recore) is parsed for every repository run");
     }
 
     private JButton browseButton(JTextField target) {
@@ -274,20 +396,22 @@ final class AnalysisFrame extends JFrame {
             chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
             if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 target.setText(chooser.getSelectedFile().getAbsolutePath());
+                target.postActionEvent();
             }
         });
         return button;
     }
 
-    private JButton fileBrowseButton(JTextField target, String extension) {
+    private JButton fileBrowseButton(JTextField target) {
         JButton button = new JButton("Browse");
         button.addActionListener(event -> {
             JFileChooser chooser = new JFileChooser(target.getText());
             chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
             chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
-                    "AlloyInEcore metamodel (*." + extension + ")", extension));
+                    "Metamodel (.als, .recore)", "als", "recore"));
             if (chooser.showOpenDialog(this) == JFileChooser.APPROVE_OPTION) {
                 target.setText(chooser.getSelectedFile().getAbsolutePath());
+                target.postActionEvent();
             }
         });
         return button;
@@ -296,11 +420,19 @@ final class AnalysisFrame extends JFrame {
     private void openOutputFolder() {
         try {
             Path output = Path.of(outputField.getText()).toAbsolutePath().normalize();
-            if (!Files.isDirectory(output)) throw new IllegalArgumentException("Output folder does not exist");
-            if (!Desktop.isDesktopSupported()) throw new IllegalStateException("Desktop integration is unavailable");
+            if (!Files.isDirectory(output)) {
+                JOptionPane.showMessageDialog(this, "Output folder does not exist: " + output,
+                        "Cannot open", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
+            if (!Desktop.isDesktopSupported()) {
+                JOptionPane.showMessageDialog(this, "Desktop integration is unavailable",
+                        "Cannot open", JOptionPane.WARNING_MESSAGE);
+                return;
+            }
             Desktop.getDesktop().open(output.toFile());
         } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Cannot open output", JOptionPane.WARNING_MESSAGE);
+            appendLog("Cannot open output: " + ex.getMessage());
         }
     }
 
@@ -309,37 +441,46 @@ final class AnalysisFrame extends JFrame {
         logArea.setCaretPosition(logArea.getDocument().getLength());
     }
 
+    private void updateVerificationTabBadge() {
+        int count = verificationModel.getRowCount();
+        String title = count > 0 ? "Verification results (" + count + ")" : "Verification results";
+        resultTabs.setTitleAt(TAB_VERIFICATION, title);
+    }
+
     private void loadPreferences() {
-        workspaceField.setText(preferences.get("workspace", DEFAULT_WORKSPACE));
-        outputField.setText(preferences.get("output", DEFAULT_OUTPUT));
-        verifierField.setText(staleToDefault("verifier", DEFAULT_VERIFIER, true));
-        metamodelField.setText(staleToDefault("metamodel", DEFAULT_METAMODEL, false));
-        verifyBox.setSelected(preferences.getBoolean("verify", false));
-        includeTestsBox.setSelected(preferences.getBoolean("includeTests", false));
-        reuseBox.setSelected(preferences.getBoolean("reuse", true));
+        workspaceField.setText(preferences.get(PREF_WORKSPACE, DEFAULT_WORKSPACE));
+        outputField.setText(preferences.get(PREF_OUTPUT, DEFAULT_OUTPUT));
+        verifierField.setText(staleToDefault(PREF_VERIFIER, DEFAULT_VERIFIER, true));
+        metamodelField.setText(staleToDefault(PREF_METAMODEL, DEFAULT_METAMODEL, false));
+        verifyBox.setSelected(preferences.getBoolean(PREF_VERIFY, false));
+        includeTestsBox.setSelected(preferences.getBoolean(PREF_INCLUDE_TESTS, false));
+        reuseBox.setSelected(preferences.getBoolean(PREF_REUSE, true));
     }
 
     private String staleToDefault(String key, String defaultValue, boolean isDirectory) {
         String saved = preferences.get(key, defaultValue);
-        Path p = Path.of(saved).toAbsolutePath().normalize();
-        boolean exists = isDirectory ? Files.isDirectory(p) : Files.isRegularFile(p);
+        Path savedPath = Path.of(saved).toAbsolutePath().normalize();
+        boolean exists = isDirectory ? Files.isDirectory(savedPath) : Files.isRegularFile(savedPath);
         if (!exists) {
-            Path def = Path.of(defaultValue).toAbsolutePath().normalize();
-            if (isDirectory ? Files.isDirectory(def) : Files.isRegularFile(def)) {
-                return defaultValue;
-            }
+            return defaultValue;
         }
         return saved;
     }
 
     private void savePreferences() {
-        preferences.put("workspace", workspaceField.getText().trim());
-        preferences.put("output", outputField.getText().trim());
-        preferences.put("verifier", verifierField.getText().trim());
-        preferences.put("metamodel", metamodelField.getText().trim());
-        preferences.putBoolean("verify", verifyBox.isSelected());
-        preferences.putBoolean("includeTests", includeTestsBox.isSelected());
-        preferences.putBoolean("reuse", reuseBox.isSelected());
+        preferences.put(PREF_WORKSPACE, workspaceField.getText().trim());
+        preferences.put(PREF_OUTPUT, outputField.getText().trim());
+        preferences.put(PREF_VERIFIER, verifierField.getText().trim());
+        preferences.put(PREF_METAMODEL, metamodelField.getText().trim());
+        preferences.putBoolean(PREF_VERIFY, verifyBox.isSelected());
+        preferences.putBoolean(PREF_INCLUDE_TESTS, includeTestsBox.isSelected());
+        preferences.putBoolean(PREF_REUSE, reuseBox.isSelected());
+    }
+
+    private void flushPreferences() {
+        try {
+            preferences.flush();
+        } catch (BackingStoreException ignored) { }
     }
 
     private record RunConfiguration(
@@ -364,7 +505,7 @@ final class AnalysisFrame extends JFrame {
         private final JavaExtractionService extraction = new SpoonJavaExtractionService();
         private final ExtractionJsonWriter writer = new ExtractionJsonWriter();
         private final AlloyInEcoreVerificationService verification = new AlloyInEcoreVerificationService();
-        private int completed;
+        private volatile int completed;
 
         private AnalysisWorker(List<RepositoryQueueModel.Item> items, RunConfiguration configuration) {
             this.items = items;
@@ -488,11 +629,15 @@ final class AnalysisFrame extends JFrame {
                 if (event.log() != null) appendLog(event.log());
                 if (event.verification() != null) {
                     verificationModel.add(item.url, event.verification());
+                    updateVerificationTabBadge();
                 }
                 statusLabel.setText(event.activity());
             }
-            progressBar.setValue(completed);
-            progressBar.setString(completed + " / " + items.size());
+            int c = completed;
+            int total = items.size();
+            progressBar.setValue(Math.min(c, total));
+            progressBar.setString(c + " / " + total);
+            progressBar.setIndeterminate(c == 0 && total > 0);
         }
 
         @Override
@@ -506,6 +651,82 @@ final class AnalysisFrame extends JFrame {
                 statusLabel.setText("Unexpected failure");
                 appendLog("Unexpected worker failure: " + ex.getMessage());
             } finally {
+                progressBar.setIndeterminate(false);
+                setBusy(false);
+                activeWorker = null;
+            }
+        }
+    }
+
+    private final class ExistingVerificationWorker extends SwingWorker<Void, UiEvent> {
+        private final List<Path> extractionJsons;
+        private final RunConfiguration configuration;
+        private final AlloyInEcoreVerificationService verification = new AlloyInEcoreVerificationService();
+        private volatile int completed;
+
+        private ExistingVerificationWorker(List<Path> extractionJsons, RunConfiguration configuration) {
+            this.extractionJsons = extractionJsons;
+            this.configuration = configuration;
+        }
+
+        @Override
+        protected Void doInBackground() {
+            for (Path extraction : extractionJsons) {
+                if (isCancelled()) break;
+                String repoName = extraction.getParent().getFileName().toString();
+                try {
+                    VerificationOutcome outcome = verification.verify(new VerificationRequest(
+                                    configuration.verifierHome(), configuration.metamodel(),
+                                    extraction, extraction.getParent().resolve("verification")),
+                            event -> { }, this::isCancelled);
+                    completed++;
+                    RepositoryQueueModel.Status st = outcome.status() == VerificationOutcome.Status.UNSAT
+                            ? RepositoryQueueModel.Status.VIOLATIONS : RepositoryQueueModel.Status.COMPLETED;
+                    publish(new UiEvent(null, st,
+                            outcome.status() + " — " + outcome.violations().size() + " violation(s)",
+                            null, null, "Verified " + repoName + ": " + outcome.status(), outcome));
+                } catch (Exception ex) {
+                    if (isCancelled()) break;
+                    completed++;
+                    publish(new UiEvent(null, RepositoryQueueModel.Status.FAILED,
+                            ex.getMessage(), null, null, "Failed " + repoName + ": " + ex.getMessage(), null));
+                }
+            }
+            return null;
+        }
+
+        @Override
+        protected void process(List<UiEvent> chunks) {
+            for (UiEvent event : chunks) {
+                if (event.log() != null) appendLog(event.log());
+                if (event.verification() != null) {
+                    verificationModel.add(event.log() != null
+                            ? event.log().replaceFirst("^Verified ", "").replaceFirst(":.*", "")
+                            : "unknown", event.verification());
+                    updateVerificationTabBadge();
+                }
+                if (!resultTabs.isShowing() || resultTabs.getSelectedIndex() == TAB_ACTIVITY) {
+                    statusLabel.setText(event.activity());
+                }
+            }
+            int total = extractionJsons.size();
+            int c = completed;
+            progressBar.setValue(Math.min(c, total));
+            progressBar.setString(c + " / " + total);
+        }
+
+        @Override
+        protected void done() {
+            try {
+                get();
+                statusLabel.setText(isCancelled() ? "Cancelled" : "Finished verifying existing repos");
+            } catch (CancellationException ex) {
+                statusLabel.setText("Cancelled");
+            } catch (Exception ex) {
+                statusLabel.setText("Unexpected failure");
+                appendLog("Unexpected worker failure: " + ex.getMessage());
+            } finally {
+                progressBar.setIndeterminate(false);
                 setBusy(false);
                 activeWorker = null;
             }

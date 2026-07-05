@@ -16,6 +16,16 @@ final class RepositoryQueueModel extends AbstractTableModel {
         Path output;
 
         Item(String url) { this.url = url; }
+
+        String detail() {
+            StringBuilder sb = new StringBuilder();
+            sb.append("Repository: ").append(url).append('\n');
+            sb.append("Status: ").append(status).append('\n');
+            sb.append("Activity: ").append(SwingUtils.blank(activity, "Waiting")).append('\n');
+            if (typeCount != null) sb.append("Types extracted: ").append(typeCount).append('\n');
+            if (output != null) sb.append("Output: ").append(output).append('\n');
+            return sb.toString();
+        }
     }
 
     private static final String[] COLUMNS = {"Repository", "Status", "Activity", "Types", "Output"};

@@ -6,6 +6,7 @@ import javax.swing.table.AbstractTableModel;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 final class VerificationTableModel extends AbstractTableModel {
     private static final String[] COLUMNS = {
@@ -27,15 +28,26 @@ final class VerificationTableModel extends AbstractTableModel {
         } else {
             for (VerificationOutcome.Violation violation : outcome.violations()) {
                 rows.add(new Row(repository, outcome.status().name(),
-                        blank(violation.invariantName(), "[unnamed constraint]"), violation.line(),
-                        blank(violation.description(), violation.formula()), outcome.csvReport()));
+                        SwingUtils.blank(violation.invariantName(), "[unnamed constraint]"), violation.line(),
+                        SwingUtils.blank(violation.description(), violation.formula()), outcome.csvReport()));
             }
         }
         fireTableDataChanged();
     }
 
-    private static String blank(String value, String fallback) {
-        return value == null || value.isBlank() ? (fallback == null ? "" : fallback) : value;
+    List<Row> filterByRepository(String repoName) {
+        if (repoName == null || repoName.isBlank()) return List.copyOf(rows);
+        return rows.stream()
+                .filter(r -> r.repository.equalsIgnoreCase(repoName))
+                .toList();
+    }
+
+    List<String> distinctRepositories() {
+        return rows.stream()
+                .map(r -> r.repository)
+                .distinct()
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .toList();
     }
 
     @Override public int getRowCount() { return rows.size(); }
@@ -54,6 +66,6 @@ final class VerificationTableModel extends AbstractTableModel {
         };
     }
 
-    private record Row(String repository, String result, String constraint,
-                       Integer line, String description, Path csv) { }
+    record Row(String repository, String result, String constraint,
+               Integer line, String description, Path csv) { }
 }

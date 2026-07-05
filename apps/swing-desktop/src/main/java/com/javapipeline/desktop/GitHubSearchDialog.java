@@ -14,6 +14,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.function.Consumer;
+import java.util.prefs.Preferences;
 
 final class GitHubSearchDialog extends JDialog {
     private final Consumer<List<String>> addToQueue;
@@ -54,6 +55,7 @@ final class GitHubSearchDialog extends JDialog {
     private final JLabel pageLabel = new JLabel("Page 1 of 1");
     private final JComboBox<Integer> pageSizeBox = new JComboBox<>(new Integer[]{25, 50, 100});
     private final JTextArea detailsArea = new JTextArea(6, 50);
+    private final Preferences preferences = Preferences.userNodeForPackage(GitHubSearchDialog.class);
     private SearchWorker worker;
 
     GitHubSearchDialog(Window owner, Consumer<List<String>> addToQueue) {
@@ -73,6 +75,7 @@ final class GitHubSearchDialog extends JDialog {
 
         wireActions();
         configureTable();
+        loadPreferences();
         setSearching(false);
     }
 
@@ -243,9 +246,9 @@ final class GitHubSearchDialog extends JDialog {
 
     private void configureTable() {
         resultsTable.setAutoCreateRowSorter(true);
-        resultsTable.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
-        int[] widths = {45, 220, 80, 70, 90, 100, 100, 75, 420};
-        for (int index = 0; index < widths.length; index++) {
+        resultsTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+        int[] widths = {45, 200, 65, 55, 70, 70, 80, 60};
+        for (int index = 0; index < widths.length && index < resultsTable.getColumnCount(); index++) {
             resultsTable.getColumnModel().getColumn(index).setPreferredWidth(widths[index]);
         }
         resultsModel.addTableModelListener(event ->
@@ -295,6 +298,7 @@ final class GitHubSearchDialog extends JDialog {
             progressBar.setMaximum(criteria.resultLimit());
             progressBar.setValue(0);
             progressBar.setIndeterminate(true);
+            savePreferences();
             worker = new SearchWorker(criteria, token);
             worker.execute();
         } catch (IllegalArgumentException ex) {
@@ -363,12 +367,12 @@ final class GitHubSearchDialog extends JDialog {
         }
         GitHubRepositorySummary repository = resultsModel.repositoryAt(resultsTable.convertRowIndexToModel(viewRow));
         detailsArea.setText("Repository: " + repository.fullName()
-                + "\nDescription: " + blank(repository.description(), "No description")
+                + "\nDescription: " + SwingUtils.blank(repository.description(), "No description")
                 + "\nWeb: " + repository.htmlUrl()
                 + "\nClone: " + repository.cloneUrl()
-                + "\nDefault branch: " + blank(repository.defaultBranch(), "Unknown")
-                + " | Language: " + blank(repository.language(), "Unknown")
-                + " | License: " + blank(repository.license(), "Not declared")
+                + "\nDefault branch: " + SwingUtils.blank(repository.defaultBranch(), "Unknown")
+                + " | Language: " + SwingUtils.blank(repository.language(), "Unknown")
+                + " | License: " + SwingUtils.blank(repository.license(), "Not declared")
                 + "\nStars: " + repository.stars() + " | Forks: " + repository.forks()
                 + " | Size: " + repository.sizeKb() + " KB"
                 + " | Fork: " + repository.fork() + " | Archived: " + repository.archived()
@@ -376,8 +380,45 @@ final class GitHubSearchDialog extends JDialog {
         detailsArea.setCaretPosition(0);
     }
 
-    private static String blank(String value, String fallback) {
-        return value == null || value.isBlank() ? fallback : value;
+    private void loadPreferences() {
+        keywordsField.setText(preferences.get("ghs.keywords", ""));
+        languageField.setText(preferences.get("ghs.language", "Java"));
+        ownerField.setText(preferences.get("ghs.owner", ""));
+        topicField.setText(preferences.get("ghs.topic", ""));
+        licenseField.setText(preferences.get("ghs.license", ""));
+        minStarsField.setText(preferences.get("ghs.minStars", ""));
+        maxStarsField.setText(preferences.get("ghs.maxStars", ""));
+        limitSpinner.setValue(preferences.getInt("ghs.limit", 50));
+        pageSizeBox.setSelectedItem(preferences.getInt("ghs.pageSize", 25));
+        String sort = preferences.get("ghs.sort", "STARS");
+        for (int i = 0; i < sortBox.getItemCount(); i++) {
+            if (sortBox.getItemAt(i).name().equals(sort)) {
+                sortBox.setSelectedIndex(i);
+                break;
+            }
+        }
+        String order = preferences.get("ghs.order", "DESC");
+        for (int i = 0; i < orderBox.getItemCount(); i++) {
+            if (orderBox.getItemAt(i).name().equals(order)) {
+                orderBox.setSelectedIndex(i);
+                break;
+            }
+        }
+    }
+
+    private void savePreferences() {
+        preferences.put("ghs.keywords", keywordsField.getText().trim());
+        preferences.put("ghs.language", languageField.getText().trim());
+        preferences.put("ghs.owner", ownerField.getText().trim());
+        preferences.put("ghs.topic", topicField.getText().trim());
+        preferences.put("ghs.license", licenseField.getText().trim());
+        preferences.put("ghs.minStars", minStarsField.getText().trim());
+        preferences.put("ghs.maxStars", maxStarsField.getText().trim());
+        preferences.putInt("ghs.limit", (Integer) limitSpinner.getValue());
+        preferences.putInt("ghs.pageSize", (Integer) pageSizeBox.getSelectedItem());
+        preferences.put("ghs.sort", ((GitHubSearchCriteria.Sort) sortBox.getSelectedItem()).name());
+        preferences.put("ghs.order", ((GitHubSearchCriteria.Order) orderBox.getSelectedItem()).name());
+        try { preferences.flush(); } catch (Exception ignored) { }
     }
 
     @Override
