@@ -51,6 +51,15 @@ final class RepositoryQueueModel extends AbstractTableModel {
         fireTableRowsDeleted(0, last);
     }
 
+    Item get(String url) {
+        return items.stream().filter(item -> item.url.equalsIgnoreCase(url)).findFirst().orElse(null);
+    }
+
+    Item itemAt(int modelRow) {
+        if (modelRow < 0 || modelRow >= items.size()) return null;
+        return items.get(modelRow);
+    }
+
     List<Item> snapshot() { return List.copyOf(items); }
 
     void changed(Item item) {

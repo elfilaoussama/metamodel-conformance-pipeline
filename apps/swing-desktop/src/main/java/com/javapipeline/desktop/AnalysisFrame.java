@@ -10,26 +10,26 @@ import com.javapipeline.verification.VerificationRequest;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
-import javax.swing.border.TitledBorder;
-import java.awt.BorderLayout;
+import java.awt.*;
 import java.awt.Desktop;
-import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.GridBagConstraints;
-import java.awt.GridBagLayout;
-import java.awt.GridLayout;
-import java.awt.Insets;
 import java.awt.event.ActionEvent;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.awt.event.WindowAdapter;
 import java.awt.event.WindowEvent;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.prefs.BackingStoreException;
 import java.util.prefs.Preferences;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 final class AnalysisFrame extends JFrame {
     private static final String DEFAULT_WORKSPACE = "workspace/repositories";
@@ -98,6 +98,8 @@ final class AnalysisFrame extends JFrame {
             }
         });
 
+        setJMenuBar(buildMenuBar());
+
         JPanel content = new JPanel(new BorderLayout(10, 10));
         content.setBorder(new EmptyBorder(12, 12, 12, 12));
         setContentPane(content);
@@ -108,9 +110,225 @@ final class AnalysisFrame extends JFrame {
         loadPreferences();
         wireActions();
         configureTable();
+        installQueuePopup();
         updateVerificationControls();
         installFieldValidation();
         setBusy(false);
+    }
+
+    private JMenuBar buildMenuBar() {
+        JMenuBar bar = new JMenuBar();
+
+        JMenu fileMenu = new JMenu("File");
+        JMenuItem loadExistingItem = new JMenuItem("Load existing repositories...");
+        loadExistingItem.addActionListener(e -> loadExistingRepos());
+        fileMenu.add(loadExistingItem);
+        fileMenu.addSeparator();
+        JMenuItem exitItem = new JMenuItem("Exit");
+        exitItem.addActionListener(e -> dispatchEvent(new WindowEvent(this, WindowEvent.WINDOW_CLOSING)));
+        fileMenu.add(exitItem);
+        bar.add(fileMenu);
+
+        JMenu exportMenu = new JMenu("Export");
+        JMenuItem exportJsonItem = new JMenuItem("Verification results as JSON...");
+        exportJsonItem.addActionListener(e -> exportVerification("json"));
+        exportMenu.add(exportJsonItem);
+        JMenuItem exportCsvItem = new JMenuItem("Verification results as CSV...");
+        exportCsvItem.addActionListener(e -> exportVerification("csv"));
+        exportMenu.add(exportCsvItem);
+        JMenuItem exportSummaryItem = new JMenuItem("Verification summary as text...");
+        exportSummaryItem.addActionListener(e -> exportVerification("txt"));
+        exportMenu.add(exportSummaryItem);
+        bar.add(exportMenu);
+
+        JMenu helpMenu = new JMenu("Help");
+        JMenuItem aboutItem = new JMenuItem("About");
+        aboutItem.addActionListener(e -> JOptionPane.showMessageDialog(this,
+                "Java Analysis Platform v0.2.0\n\n"
+                        + "Clone, extract, and verify Java repositories\n"
+                        + "using Spoon and AlloyInEcore.",
+                "About", JOptionPane.INFORMATION_MESSAGE));
+        helpMenu.add(aboutItem);
+        bar.add(helpMenu);
+
+        return bar;
+    }
+
+    private void loadExistingRepos() {
+        Path outputBase = Path.of(outputField.getText().trim()).toAbsolutePath().normalize();
+        if (!Files.isDirectory(outputBase)) {
+            JOptionPane.showMessageDialog(this, "Output directory does not exist: " + outputBase,
+                    "Cannot load", JOptionPane.WARNING_MESSAGE);
+            return;
+        }
+        try {
+            List<Path> repoDirs;
+            try (Stream<Path> stream = Files.list(outputBase)) {
+                repoDirs = stream.filter(Files::isDirectory).sorted().toList();
+            }
+            if (repoDirs.isEmpty()) {
+                JOptionPane.showMessageDialog(this, "No repositories found in " + outputBase,
+                        "Nothing to load", JOptionPane.INFORMATION_MESSAGE);
+                return;
+            }
+            int loaded = 0;
+            AlloyInEcoreVerificationService verifier = new AlloyInEcoreVerificationService();
+            for (Path dir : repoDirs) {
+                String repoName = dir.getFileName().toString();
+                queueModel.add(repoName);
+                RepositoryQueueModel.Item item = queueModel.get(repoName);
+                if (item == null) continue;
+                Path extractionJson = dir.resolve("extraction.json");
+                Path verificationDir = dir.resolve("verification");
+                Path verificationJson = verificationDir.resolve("verification-report.json");
+                if (Files.isRegularFile(extractionJson)) {
+                    item.activity = "Extraction completed";
+                    item.output = extractionJson;
+                    if (Files.isRegularFile(verificationJson)) {
+                        try {
+                            VerificationOutcome outcome = verifier.readExisting(verificationDir);
+                            item.status = outcome.status() == VerificationOutcome.Status.UNSAT
+                                    ? RepositoryQueueModel.Status.VIOLATIONS : RepositoryQueueModel.Status.COMPLETED;
+                            item.activity = outcome.status() + " — " + outcome.violations().size() + " violation(s)";
+                            verificationModel.add(repoName, outcome);
+                            updateVerificationTabBadge();
+                        } catch (Exception ex) {
+                            item.status = RepositoryQueueModel.Status.COMPLETED;
+                            item.activity = "Extraction completed (verification unavailable)";
+                        }
+                    } else {
+                        item.status = RepositoryQueueModel.Status.COMPLETED;
+                        item.activity = "Extraction completed (no verification)";
+                    }
+                }
+                queueModel.changed(item);
+                loaded++;
+            }
+            appendLog("Loaded " + loaded + " existing repositories from " + outputBase);
+            statusLabel.setText("Loaded " + loaded + " existing repositories");
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void exportVerification(String format) {
+        if (verificationModel.getRowCount() == 0) {
+            JOptionPane.showMessageDialog(this, "No verification results to export.",
+                    "Nothing to export", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        JFileChooser chooser = new JFileChooser(outputField.getText().trim());
+        String extension = "." + format;
+        String description = switch (format) {
+            case "json" -> "JSON file (*.json)";
+            case "csv" -> "CSV file (*.csv)";
+            default -> "Text file (*.txt)";
+        };
+        chooser.setSelectedFile(new java.io.File("verification-export" + extension));
+        javax.swing.filechooser.FileNameExtensionFilter filter =
+                new javax.swing.filechooser.FileNameExtensionFilter(description, format);
+        chooser.setFileFilter(filter);
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path target = chooser.getSelectedFile().toPath();
+        if (!target.getFileName().toString().contains(".")) {
+            target = target.resolveSibling(target.getFileName() + extension);
+        }
+        try {
+            String content = switch (format) {
+                case "json" -> exportJson();
+                case "csv" -> exportCsv();
+                default -> exportTxt();
+            };
+            Files.writeString(target, content, StandardCharsets.UTF_8);
+            appendLog("Exported verification results to " + target);
+            statusLabel.setText("Exported " + target.getFileName());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Export failed: " + ex.getMessage(),
+                    "Export error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private String exportJson() {
+        List<VerificationTableModel.Row> rows = verificationModel.allRows();
+        StringBuilder sb = new StringBuilder();
+        sb.append("[\n");
+        for (int i = 0; i < rows.size(); i++) {
+            VerificationTableModel.Row row = rows.get(i);
+            sb.append("  {")
+                    .append("\"repository\":\"").append(escapeJson(row.repository())).append("\",")
+                    .append("\"result\":\"").append(escapeJson(row.result())).append("\",")
+                    .append("\"constraint\":\"").append(escapeJson(row.constraint())).append("\",")
+                    .append("\"line\":").append(row.line() == null ? "null" : row.line()).append(",")
+                    .append("\"description\":\"").append(escapeJson(row.description())).append("\"")
+                    .append("}");
+            if (i < rows.size() - 1) sb.append(",");
+            sb.append("\n");
+        }
+        sb.append("]\n");
+        return sb.toString();
+    }
+
+    private static String escapeJson(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+    }
+
+    private String exportCsv() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Repository,Result,Constraint,Line,Description\n");
+        for (VerificationTableModel.Row row : verificationModel.allRows()) {
+            sb.append(csvCell(row.repository())).append(',');
+            sb.append(csvCell(row.result())).append(',');
+            sb.append(csvCell(row.constraint())).append(',');
+            sb.append(row.line() == null ? "" : row.line()).append(',');
+            sb.append(csvCell(row.description())).append('\n');
+        }
+        return sb.toString();
+    }
+
+    private static String csvCell(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
+    }
+
+    private String exportTxt() {
+        StringBuilder sb = new StringBuilder();
+        sb.append("Verification Results Summary\n");
+        sb.append("============================\n\n");
+        long total = verificationModel.allRows().size();
+        long violations = verificationModel.allRows().stream()
+                .filter(r -> "UNSAT".equals(r.result())).count();
+        long sat = verificationModel.allRows().stream()
+                .filter(r -> "SAT".equals(r.result())).count();
+        sb.append("Total entries: ").append(total).append('\n');
+        sb.append("SAT: ").append(sat).append('\n');
+        sb.append("UNSAT (violations): ").append(violations).append("\n\n");
+        sb.append("--- Repositories ---\n");
+        for (String repo : verificationModel.distinctRepositories()) {
+            List<VerificationTableModel.Row> repoRows = verificationModel.filterByRepository(repo);
+            String result = repoRows.isEmpty() ? "?" : repoRows.get(0).result();
+            long repoViolations = repoRows.stream().filter(r -> r.constraint() != null && !r.constraint().isEmpty()).count();
+            sb.append("  ").append(repo).append(": ").append(result);
+            if (repoViolations > 0) sb.append(" (").append(repoViolations).append(" violation(s))");
+            sb.append('\n');
+        }
+        if (violations > 0) {
+            sb.append("\n--- Violation Details ---\n");
+            for (VerificationTableModel.Row row : verificationModel.allRows()) {
+                if ("UNSAT".equals(row.result())) {
+                    sb.append("  ").append(row.repository())
+                            .append(" | ").append(SwingUtils.blank(row.constraint(), "?"))
+                            .append(" | ").append(SwingUtils.blank(row.description(), ""));
+                    if (row.line() != null) sb.append(" [line ").append(row.line()).append(']');
+                    sb.append('\n');
+                }
+            }
+        }
+        return sb.toString();
     }
 
     private JComponent buildConfigurationPanel() {
@@ -214,6 +432,123 @@ final class AnalysisFrame extends JFrame {
         queueTable.getColumnModel().getColumn(4).setPreferredWidth(200);
     }
 
+    private void installQueuePopup() {
+        queueTable.addMouseListener(new MouseAdapter() {
+            @Override
+            public void mousePressed(MouseEvent e) { maybeShow(e); }
+            @Override
+            public void mouseReleased(MouseEvent e) { maybeShow(e); }
+            private void maybeShow(MouseEvent e) {
+                if (!e.isPopupTrigger()) return;
+                int viewRow = queueTable.rowAtPoint(e.getPoint());
+                if (viewRow < 0) return;
+                queueTable.setRowSelectionInterval(viewRow, viewRow);
+                int modelRow = queueTable.convertRowIndexToModel(viewRow);
+                RepositoryQueueModel.Item item = queueModel.itemAt(modelRow);
+                JPopupMenu popup = new JPopupMenu();
+
+                if (item.status == RepositoryQueueModel.Status.QUEUED
+                        || item.status == RepositoryQueueModel.Status.CANCELLED
+                        || item.status == RepositoryQueueModel.Status.FAILED) {
+                    JMenuItem runItem = new JMenuItem("Run analysis");
+                    runItem.addActionListener(ev -> runSingleItem(item));
+                    popup.add(runItem);
+                }
+                if (activeWorker != null && !activeWorker.isDone()
+                        && (item.status == RepositoryQueueModel.Status.INGESTING
+                        || item.status == RepositoryQueueModel.Status.EXTRACTING
+                        || item.status == RepositoryQueueModel.Status.VERIFYING)) {
+                    popup.add(new JMenuItem("(analysis in progress)"));
+                }
+
+                JMenuItem removeItem = new JMenuItem("Remove");
+                removeItem.addActionListener(ev -> queueModel.remove(modelRow));
+                popup.add(removeItem);
+
+                JMenuItem detailsItem = new JMenuItem("Show details");
+                detailsItem.addActionListener(ev -> showItemDetails(item));
+                popup.add(detailsItem);
+
+                if (item.output != null) {
+                    JMenuItem openOutputItem = new JMenuItem("Open output folder");
+                    openOutputItem.addActionListener(ev -> openItemOutput(item));
+                    popup.add(openOutputItem);
+                }
+
+                if (item.status == RepositoryQueueModel.Status.COMPLETED
+                        || item.status == RepositoryQueueModel.Status.VIOLATIONS
+                        || item.status == RepositoryQueueModel.Status.FAILED) {
+                    JMenuItem viewResultsItem = new JMenuItem("View verification results");
+                    viewResultsItem.addActionListener(ev -> showResultsForRepo(item.url));
+                    popup.add(viewResultsItem);
+                }
+
+                popup.show(queueTable, e.getX(), e.getY());
+            }
+        });
+    }
+
+    private void runSingleItem(RepositoryQueueModel.Item item) {
+        List<RepositoryQueueModel.Item> items = List.of(item);
+        try {
+            RunConfiguration configuration = new RunConfiguration(
+                    requiredPath(workspaceField.getText(), "Clone workspace"),
+                    requiredPath(outputField.getText(), "Analysis output"),
+                    (Integer) depthSpinner.getValue(),
+                    (Integer) complianceSpinner.getValue(),
+                    includeTestsBox.isSelected(), reuseBox.isSelected(), verifyBox.isSelected(),
+                    verifyBox.isSelected() ? requiredPath(verifierField.getText(), "Verifier module") : null,
+                    verifyBox.isSelected() ? requiredPath(metamodelField.getText(), "Alloy metamodel") : null);
+            Files.createDirectories(configuration.workspace());
+            Files.createDirectories(configuration.output());
+            savePreferences();
+            progressBar.setValue(0);
+            progressBar.setMaximum(1);
+            progressBar.setIndeterminate(false);
+            setBusy(true);
+            verificationModel.clear();
+            activeWorker = new AnalysisWorker(items, configuration);
+            activeWorker.execute();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid configuration", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void showItemDetails(RepositoryQueueModel.Item item) {
+        JTextArea area = new JTextArea(item.detail());
+        area.setEditable(false);
+        area.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 12));
+        area.setCaretPosition(0);
+        JOptionPane.showMessageDialog(this, new JScrollPane(area),
+                "Repository details", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private void openItemOutput(RepositoryQueueModel.Item item) {
+        if (item.output == null) return;
+        Path dir = item.output.getParent();
+        if (dir == null || !Files.isDirectory(dir)) return;
+        try {
+            if (Desktop.isDesktopSupported()) Desktop.getDesktop().open(dir.toFile());
+        } catch (Exception ex) {
+            appendLog("Cannot open output: " + ex.getMessage());
+        }
+    }
+
+    private void showResultsForRepo(String url) {
+        resultTabs.setSelectedIndex(TAB_VERIFICATION);
+        String shortName = url.contains("/") ? url.substring(url.lastIndexOf('/') + 1) : url;
+        int rowCount = verificationTable.getRowCount();
+        for (int i = 0; i < rowCount; i++) {
+            int modelRow = verificationTable.convertRowIndexToModel(i);
+            Object val = verificationModel.getValueAt(modelRow, 0);
+            if (val != null && val.toString().equalsIgnoreCase(shortName)) {
+                verificationTable.setRowSelectionInterval(i, i);
+                verificationTable.scrollRectToVisible(verificationTable.getCellRect(i, 0, true));
+                break;
+            }
+        }
+    }
+
     private void wireActions() {
         addButton.addActionListener(this::addUrls);
         searchGitHubButton.addActionListener(event ->
@@ -248,10 +583,10 @@ final class AnalysisFrame extends JFrame {
                 Path p = Path.of(text).toAbsolutePath().normalize();
                 boolean exists = isDirectory ? Files.isDirectory(p) : Files.isRegularFile(p);
                 if (!exists) {
-                    field.setBackground(new java.awt.Color(255, 230, 230));
+                    field.setBackground(new Color(255, 230, 230));
                     field.setToolTipText("Path does not exist: " + p);
                 } else {
-                    field.setBackground(new java.awt.Color(230, 255, 230));
+                    field.setBackground(new Color(230, 255, 230));
                     field.setToolTipText(p.toString());
                 }
             }
@@ -269,12 +604,15 @@ final class AnalysisFrame extends JFrame {
             verifyBox.setSelected(true);
             Path verifier = requiredPath(verifierField.getText(), "Verifier module");
             Path metamodel = requiredPath(metamodelField.getText(), "Alloy metamodel");
-            List<Path> extractionJsons = Files.list(outputBase)
-                    .filter(Files::isDirectory)
-                    .map(dir -> dir.resolve("extraction.json"))
-                    .filter(Files::isRegularFile)
-                    .sorted()
-                    .toList();
+            List<Path> extractionJsons;
+            try (Stream<Path> stream = Files.list(outputBase)) {
+                extractionJsons = stream
+                        .filter(Files::isDirectory)
+                        .map(dir -> dir.resolve("extraction.json"))
+                        .filter(Files::isRegularFile)
+                        .sorted()
+                        .toList();
+            }
             if (extractionJsons.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "No extraction.json files found in " + outputBase,
                         "Nothing to verify", JOptionPane.INFORMATION_MESSAGE);

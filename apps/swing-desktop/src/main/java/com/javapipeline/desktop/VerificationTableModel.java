@@ -35,6 +35,8 @@ final class VerificationTableModel extends AbstractTableModel {
         fireTableDataChanged();
     }
 
+    List<Row> allRows() { return List.copyOf(rows); }
+
     List<Row> filterByRepository(String repoName) {
         if (repoName == null || repoName.isBlank()) return List.copyOf(rows);
         return rows.stream()
