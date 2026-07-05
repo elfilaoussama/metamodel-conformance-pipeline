@@ -1,122 +1,449 @@
-# Java Analysis Platform
+# Java Analysis Pipeline
 
-A modular Java 17 platform for ingesting GitHub repositories and extracting
-source-code models with Spoon. The primary application is a cross-platform
-Swing desktop interface; ingestion and extraction are independent libraries.
+A modular, extensible platform for large-scale structural analysis of Java repositories. Designed for academic researchers and software engineering practitioners who need to clone, extract, verify, and explore the structural properties of Java codebases at scale.
 
-## Current milestone
+---
 
-Implemented:
+## Table of Contents
 
-- queued GitHub repository ingestion through JGit;
-- advanced GitHub repository search with optional token authentication,
-  qualifiers, pagination, result limits, and selective queue insertion;
-- shallow clones with explicit reuse/fail policies;
-- Maven multi-module source-root discovery;
-- Spoon extraction of types, inheritance, fields, methods, constructors,
-  qualified types, and source locations;
-- versioned, UTF-8, atomically written JSON output;
-- optional AlloyInEcore conformance verification using a metamodel selected at
-  runtime, with named violations in JSON, CSV, and the desktop result table;
-- background Swing execution, progress reporting, cancellation, logging, and
-  persistent folder preferences;
-- a self-contained executable JAR.
+- [Overview](#overview)
+- [Architecture](#architecture)
+  - [High-Level Pipeline Design](#high-level-pipeline-design)
+  - [Module Dependency Graph](#module-dependency-graph)
+  - [Pipeline Workflow](#pipeline-workflow)
+- [Modules](#modules)
+  - [analysis-core](#analysis-core)
+  - [github-ingestion](#github-ingestion)
+  - [github-search](#github-search)
+  - [spoon-extraction](#spoon-extraction)
+  - [verification-cli (standalone)](#verification-cli-standalone)
+  - [verification-integration](#verification-integration)
+  - [swing-desktop](#swing-desktop)
+- [Formal Verification with Alloy](#formal-verification-with-alloy)
+  - [Class-Level Structural Kernel](#class-level-structural-kernel)
+  - [Invariant Checks](#invariant-checks)
+- [Getting Started](#getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Build](#build)
+  - [Run the Desktop Application](#run-the-desktop-application)
+  - [Run the Verification CLI](#run-the-verification-cli)
+- [Output Format](#output-format)
+- [Caching and Incremental Execution](#caching-and-incremental-execution)
+- [Related Projects](#related-projects)
+- [License](#license)
+
+---
+
+## Overview
+
+The **Java Analysis Pipeline** automates the end-to-end workflow of ingesting Java repositories from GitHub, extracting structural type models using the [Spoon](https://fr.inria.fr/gforge/spoon/) static analysis framework, and verifying those models against formal structural invariants expressed in [Alloy](https://alloytools.org/).
+
+The pipeline supports three modes of operation:
+
+1. **Batch analysis** — Queue multiple GitHub repository URLs, then clone, extract, and verify them in one run.
+2. **GitHub search integration** — Search repositories by keywords, language, owner, stars, forks, license, and topic, then add results directly to the analysis queue.
+3. **Existing repository verification** — Re-verify already-extracted repositories without re-cloning or re-extracting, using cached extraction JSON files.
+
+The verification step checks for common structural anti-patterns: cyclic inheritance, duplicate type names, interface field declarations, static abstract methods, and local method namespace collisions — all formalised in a declarative Alloy model and checked either through the AlloyInEcore toolchain or through equivalent native Java invariant checks.
+
+---
+
+## Architecture
+
+The platform follows a **modular, interface-driven** design. The `analysis-core` module defines all domain contracts; downstream modules implement them, and the desktop application composes them.
+
+### High-Level Pipeline Design
+
+The pipeline transforms a set of GitHub repository URLs into a structured verification report through four sequential stages:
+
+```mermaid
+flowchart LR
+    subgraph Stage1["1. Ingestion"]
+        A[GitHub URL] --> B[JGit shallow clone]
+        B --> C[Workspace repository]
+    end
+
+    subgraph Stage2["2. Extraction"]
+        C --> D[Spoon AST builder]
+        D --> E[Type model extraction]
+        E --> F[extraction.json]
+    end
+
+    subgraph Stage3["3. Verification"]
+        F --> G[JsonToAieMapper]
+        G --> H[AlloyInEcore solver<br/>or<br/>native InvariantChecker]
+        H --> I[verification-report.json]
+    end
+
+    subgraph Stage4["4. Presentation"]
+        I --> J[Swing UI / CLI]
+        I --> K[Export JSON / CSV / TXT]
+    end
+```
+
+**Stage 1 — Ingestion:** Each repository URL is resolved to a `RepositoryRequest` and cloned via JGit (shallow, configurable depth). Existing clones are reused when the `REUSE` policy is active. Progress is reported through `ProgressEvent` callbacks.
+
+**Stage 2 — Extraction:** The cloned source tree is scanned for Java source roots. Spoon builds a full AST model, which is then walked to produce a flat structural type model: types, fields, executables, and inheritance relationships. The result is serialised as `extraction.json`.
+
+**Stage 3 — Verification:** The extraction JSON is mapped to an AlloyInEcore instance (`.aie` format) representing the concrete model. Two verification paths are available: (a) the AlloyInEcore framework translates structural invariants from the Alloy metamodel into Kodkod SAT problems and solves them; (b) the native `InvariantChecker` mirrors the same invariants directly in Java for deterministic, solver-free checking. Both paths produce the same JSON report.
+
+**Stage 4 — Presentation:** The desktop application displays results in a sortable table grouped by repository and invariant. Results can be exported as JSON, CSV, or plain text. The CLI offers a lightweight headless alternative.
+
+```mermaid
+flowchart TB
+    subgraph DataFlow["Data Flow"]
+        direction LR
+        URL(("URLs")) --> Clone["Clone (JGit)"]
+        Clone --> Extract["Extract (Spoon)"]
+        Extract --> Verify["Verify (AlloyInEcore)"]
+        Verify --> Report(("Report"))
+    end
+```
+
+### Module Dependency Graph
+
+```mermaid
+flowchart TB
+    subgraph Core["analysis-core (interfaces & domain types)"]
+        direction TB
+        RI[RepositoryIngestionService]
+        JE[JavaExtractionService]
+        GS[GitHubRepositorySearchService]
+        PE[ProgressEvent / CancellationToken]
+    end
+
+    subgraph Impl["Service Implementations"]
+        GI[github-ingestion<br/>JGit shallow clone]
+        GSvc[github-search<br/>GitHub REST API + Gson]
+        SE[spoon-extraction<br/>Spoon AST → JSON model]
+    end
+
+    subgraph Verify["Verification"]
+        VI[verification-integration<br/>subprocess orchestrator]
+        CLI[verification-cli<br/>standalone verifier]
+        ALS[class_level_structural_kernel.als<br/>Alloy formal model]
+    end
+
+    subgraph UI["Desktop Application"]
+        AF[swing-desktop<br/>AnalysisFrame + Swing workers]
+    end
+
+    Core --> GI
+    Core --> GSvc
+    Core --> SE
+    Core --> VI
+    VI --> CLI
+    CLI --> ALS
+    GI --> AF
+    GSvc --> AF
+    SE --> AF
+    VI --> AF
+```
+
+### Pipeline Workflow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Desktop as swing-desktop
+    participant Git as github-ingestion
+    participant Spoon as spoon-extraction
+    participant Cache as AnalysisCache
+    participant Verifier as verification-cli
+
+    User->>Desktop: Add repository URL(s)
+    User->>Desktop: Start analysis
+    Desktop->>Git: ingest(request, workspace)
+    Git-->>Desktop: IngestedRepository
+
+    Desktop->>Cache: check extraction cache
+    alt Cache miss
+        Desktop->>Spoon: extract(project, options)
+        Spoon-->>Desktop: ExtractionResult
+        Desktop->>Desktop: write extraction.json
+        Desktop->>Cache: recordExtraction(key)
+    else Cache hit
+        Desktop->>Cache: read cached type count
+    end
+
+    opt Verification enabled
+        Desktop->>Cache: check verification cache
+        alt Cache miss
+            Desktop->>Verifier: run.ps1 -r metamodel.als -i extraction.json --strict
+            Verifier-->>Desktop: verification-report.json
+            Desktop->>Cache: recordVerification(key)
+        else Cache hit
+            Desktop->>Verifier: readExisting(outputDirectory)
+        end
+        Desktop->>Desktop: show violation details
+    end
+
+    Desktop-->>User: SAT / UNSAT per repository
+```
+
+---
 
 ## Modules
 
-| Module | Responsibility |
-| --- | --- |
-| `modules/analysis-core` | Stable domain records, service interfaces, progress and cancellation contracts |
-| `modules/github-ingestion` | GitHub/JGit implementation of repository ingestion |
-| `modules/github-search` | GitHub REST repository search, query construction, paging, and rate-limit metadata |
-| `modules/spoon-extraction` | Source-root discovery, Spoon model extraction, JSON serialization |
-| `modules/verification-integration` | Cross-platform, cancellable adapter for the isolated AlloyInEcore runtime |
-| `apps/swing-desktop` | Cross-platform desktop workflow and executable packaging |
+### analysis-core
 
-See [Architecture](docs/architecture.md) for dependency rules and extension points.
+**Coordinates:** `com.javapipeline:analysis-core:0.2.0-SNAPSHOT`
 
-## Requirements
+The backbone of the platform. Defines all domain interfaces and records with zero external dependencies:
 
-- JDK 17+
-- Maven 3.9+
-- Network access to GitHub for new clones
+| Type | Purpose |
+|---|---|
+| `RepositoryIngestionService` | Contract for cloning/pulling Git repositories |
+| `JavaExtractionService` | Contract for extracting structural models from source |
+| `GitHubRepositorySearchService` | Contract for searching GitHub repositories |
+| `RepositoryRequest` / `IngestedRepository` | Ingestion input/output records |
+| `ExtractionResult` (with `TypeModel`, `FieldModel`, `ExecutableModel`, `ParameterModel`) | Structural type model |
+| `ProgressListener` / `CancellationToken` | Cross-cutting async support |
+| `GitHubSearchCriteria` / `GitHubRepositorySummary` / `GitHubSearchResponse` | Search domain types |
+| `ExtractionOptions` | Compliance level, test inclusion |
 
-## Build and test
+### github-ingestion
 
-```powershell
-.\build.ps1
-```
+**Coordinates:** `com.javapipeline:github-ingestion:0.2.0-SNAPSHOT`
 
-On Linux/macOS, run `./build.sh`.
+Implements `RepositoryIngestionService` using **JGit** (Eclipse JGit v7.1.0). Performs shallow clones of GitHub repositories into a configurable workspace directory. Supports `REUSE` (reuse existing clone), `REPLACE` (re-clone), and `FAIL` (abort if exists) policies. Reports clone progress via the `ProgressListener` callback.
 
-To compile and run tests without replacing a currently running desktop JAR:
+### github-search
 
-```powershell
-.\build.ps1 -TestsOnly
-```
+**Coordinates:** `com.javapipeline:github-search:0.2.0-SNAPSHOT`
 
-Use `.\build.ps1 -NoClean` to package a new version while an older desktop JAR
-is still open on Windows.
+Implements `GitHubRepositorySearchService` against the **GitHub REST API** (`/search/repositories`). Supports the full GitHub search query syntax: keywords, primary language, owner/org, topic, license, star/fork/size ranges, creation/push dates, fork and archive mode filters, and multiple sort orders. Handles pagination, rate-limit tracking, and token-based authentication.
 
-## Run the desktop application
+### spoon-extraction
 
-Windows:
+**Coordinates:** `com.javapipeline:spoon-extraction:0.2.0-SNAPSHOT`
 
-```powershell
-.\run-desktop.ps1
-```
+Implements `JavaExtractionService` using **Spoon** (v11.3.0). Builds a full Spoon model from discovered Java source roots, then walks the AST to produce a flat type model with:
 
-Linux/macOS:
+- Fully qualified type names and their `kind` (class, interface, enum, annotation, record)
+- Fields: name, type reference, visibility, static flag
+- Executables (methods/constructors): name, parameter types, return type, visibility, static flag, abstract flag
+- Inheritance relationships (superclass and implemented interfaces)
+- Source line numbers
+
+The output is serialized to JSON via `ExtractionJsonWriter`.
+
+### verification-cli (standalone)
+
+**Coordinates:** `com.verification:standalone-verifier:1.0-SNAPSHOT`
+
+A standalone Maven project (not part of the reactor) that performs structural verification. It uses a hybrid approach:
+
+1. **AlloyInEcore** (Eclipse-based model verification framework, bundled as pre-built JARs in `lib/`) — translates the extraction JSON into an AIE instance and runs it through the Alloy/Kodkod solver.
+2. **Native Java invariant checker** (`InvariantChecker`) — mirrors the Alloy model's structural `fact` constraints directly in Java, bypassing the Kodkod solver. This ensures consistent results without solver latency.
+
+Accepts both `.recore` (legacy) and `.als` (native Alloy) metamodel files. See the [Formal Verification with Alloy](#formal-verification-with-alloy) section for the full list of invariants.
+
+### verification-integration
+
+**Coordinates:** `com.javapipeline:verification-integration:0.2.0-SNAPSHOT`
+
+Orchestrates the `verification-cli` as a subprocess. Handles subprocess lifecycle, 15-minute safety timeout, cancellation propagation, and parsing of JSON/CSV reports. Also provides `readExisting()` for loading cached verification results without re-running the solver.
+
+### swing-desktop
+
+**Coordinates:** `com.javapipeline:swing-desktop:0.2.0-SNAPSHOT`
+
+A Swing-based graphical user interface that composes all platform services. Packaged as a shaded uber-JAR via `maven-shade-plugin`. Key features:
+
+- **Repository queue** — URL input, GitHub search dialog, start/cancel/remove/clear
+- **Configuration panel** — workspace path, output path, verifier path, metamodel path, clone depth, Java compliance level, test inclusion, verification toggle, clone reuse
+- **Activity log** — real-time streaming log output
+- **Verification results table** — per-repository, per-violation rows with constraint name, line, and description
+- **Export** — verification results as JSON, CSV, or plain text
+- **File > Load existing repositories** — scans the output directory for previously analyzed repos and loads their cached results
+- **Right-click context menu** — run single repo, show details, open output folder, view verification results
+- **Path validation** — inline red/green feedback when path fields lose focus
+- **GitHub search dialog** — modal dialog with 14 search criteria, paginated table, rate-limit tracking, presistable search preferences
+- **Window close guard** — confirmation dialog when a worker is active
+- **Preferences persistence** — workspace, output, verifier, metamodel, verify toggle, include tests, reuse toggle, and GitHub search parameters survive restart
+
+---
+
+## Formal Verification with Alloy
+
+### Class-Level Structural Kernel
+
+The verification metamodel is defined in [`modules/verification-cli/src/main/resources/class_level_structural_kernel.als`](modules/verification-cli/src/main/resources/class_level_structural_kernel.als). This is an Alloy formal model (674 lines) that captures the essential structural elements of Java classes and interfaces, along with well-formedness rules that any valid Java program should satisfy.
+
+The model defines:
+
+- **Signatures:** `Class`, `Method`, `Attribute`, `Object`, `Visibility`, `Scope`, `ClassifierKind`, `MethodBody`
+- **Relations:** Inheritance (`parents`), membership (`attributes`, `methods`, `iattributes`, `imethods`), typing (`rtype`, `atype`), and scoping
+- **Facts:** 15 structural invariants formalised as Alloy `fact` constraints
+
+### Invariant Checks
+
+The platform verifies the following structural properties:
+
+| Invariant | Description | Alloy fact |
+|---|---|---|
+| `IdentifierIntegrity` | No duplicate type names within the same package; IDs are unique and cover their domain | ✓ |
+| `AcyclicGeneralization` | Inheritance hierarchy contains no cycles | ✓ |
+| `GeneralizationKindPolicy` | Classes extend classes; interfaces extend interfaces | ✓ |
+| `LocalMethodNamespace` | No two methods in the same class share the same name | ✓ |
+| `InterfacePolicy` | Interfaces declare no fields; interface methods are abstract | ✓ |
+| `StaticMethodPolicy` | Static methods cannot be abstract | ✓ |
+| `AbstractionPolicy` | Classes with unresolved abstract methods must be declared abstract | ✓ |
+| `ExclusiveDeclarationOwnership` | Each method and attribute belongs to exactly one declaring class | ✓ |
+| `NoUnresolvedInheritedMethodConflict` | No conflicting method signatures from multiple inherited interfaces | ✓ |
+| `AbstractMethodHasNoDeclaringBody` | Abstract methods must not have a method body | ✓ |
+
+A result of **SAT** means the extracted model satisfies all invariants; **UNSAT** means one or more violations were detected. The verification report lists each violated invariant together with the specific elements involved.
+
+---
+
+## Getting Started
+
+### Prerequisites
+
+- **Java Development Kit** — JDK 17 or later (tested with JDK 21). The system default JDK on Windows is often JDK 8; the scripts auto-detect JDK 17+ under `C:\Program Files\Java\`.
+- **Apache Maven** — 3.9+ (used by all build scripts; must be on `PATH`).
+
+### Build
 
 ```bash
+# Windows
+.\build.ps1
+
+# Linux / macOS
+./build.sh
+
+# Or manually
+mvn clean verify
+```
+
+This compiles all reactor modules, runs unit tests, and packages the desktop application as a shaded uber-JAR. The `verification-cli` module is built separately within its own directory — see its [README](modules/verification-cli/README.md) for details.
+
+> **Note:** The three JARs built by the deleted `alloy-in-ecore-java-verification/` subproject are pre-committed in `modules/verification-cli/lib/`. No additional source build is needed for those dependencies.
+
+### Run the Desktop Application
+
+```bash
+# Windows
+.\run-desktop.ps1
+
+# Linux / macOS
 ./run-desktop.sh
+
+# Or directly
+java -jar apps/swing-desktop/target/swing-desktop-*-all.jar
 ```
 
-Or run the packaged application directly:
+The desktop application starts with a default workspace path (`workspace/repositories`) and output path (`analysis-output/`). You can change these in the UI or via Preferences persistence.
 
-```text
-java -jar apps/swing-desktop/target/swing-desktop-0.2.0-SNAPSHOT-all.jar
+### Run the Verification CLI
+
+```bash
+# Windows
+cd modules/verification-cli
+.\run.ps1 -r src/main/resources/class_level_structural_kernel.als -i path/to/extraction.json -o output
+
+# Linux / macOS
+cd modules/verification-cli
+./run.sh -r src/main/resources/class_level_structural_kernel.als -i path/to/extraction.json -o output
 ```
 
-Enter one GitHub HTTPS URL per line, add them to the queue, choose clone and
-output folders, then start. Each repository produces:
+---
 
-Alternatively, choose **Search GitHub...** to search by keywords, language,
-owner/organization, topic, license, stars, forks, size, activity dates, fork
-state, and archive state. Search results can be selected individually, all at
-once, or inverted before adding them to the ingestion queue. Authentication is
-optional for public repositories; access tokens are not persisted. Results can
-be browsed in 25, 50, or 100-row pages without losing selections, and the detail
-pane shows URLs, branch, size, activity, license, and repository state. The UI
-also explains GitHub's 100-per-page and 1,000-result limits and reports partial
-results and the remaining search quota.
+## Output Format
 
-```text
-analysis-output/<owner>__<repository>/extraction.json
-analysis-output/<owner>__<repository>/verification/verification-report.json
-analysis-output/<owner>__<repository>/verification/verification-report.csv
+### Extraction JSON (`extraction.json`)
+
+```json
+{
+  "name": "owner__repo",
+  "types": [
+    {
+      "qualifiedName": "com.example.Foo",
+      "kind": "CLASS",
+      "superClass": "com.example.Bar",
+      "interfaces": ["java.io.Serializable"],
+      "fields": [
+        {
+          "name": "value",
+          "type": "int",
+          "visibility": "PRIVATE",
+          "static": false
+        }
+      ],
+      "executables": [
+        {
+          "name": "compute",
+          "parameters": ["java.lang.String"],
+          "returnType": "int",
+          "visibility": "PUBLIC",
+          "static": false,
+          "abstract": false
+        }
+      ],
+      "abstractType": false
+    }
+  ]
+}
 ```
 
-Enable **Verify extracted model with AlloyInEcore**, select any compatible
-`.recore` file, and start the queue. The metamodel is parsed afresh on every
-run, so invariants can be changed without rebuilding the desktop. Desktop runs
-use strict conformance rather than AlloyInEcore's partial-model completion mode.
-The built-in
-Spoon mapping profile expects the Java structural elements `Root`, `Class`,
-`Method`, and `Attribute`; a structurally different metamodel requires its own
-instance mapper, while its constraints may be edited freely.
+### Verification Report JSON (`verification-report.json`)
 
-Repeated runs are incremental: Spoon output is reused only when the repository
-revision, Java options, and Java-source content fingerprint still match.
-Verification is reused only when both that extraction fingerprint and the full
-metamodel content match. Run `VerificationEnvironment/setup.ps1` once to cache
-the verifier classpath; subsequent solver launches bypass Maven.
+```json
+{
+  "result": "UNSAT",
+  "violations": [
+    {
+      "invariantName": "InterfacePolicy",
+      "description": "Interface ConfigCollection has field log"
+    }
+  ]
+}
+```
 
-By default only standard `src/main/java` roots are analyzed. Test sources can
-be included explicitly from the UI.
+### Verification Report CSV (`verification-report.csv`)
 
-## Existing code
+Exported from the desktop application as:
 
-The AlloyInEcore engine is bundled in `modules/verification-cli/lib/`. Application
-code reaches it only through `verification-integration`, keeping those dependencies
-out of the Java 17 desktop runtime.
+```
+Repository,Result,Constraint,Line,Description
+```
+
+---
+
+## Caching and Incremental Execution
+
+The platform implements two levels of caching to avoid redundant work during iterative research workflows:
+
+1. **Extraction cache** — Fingerprints the repository revision, Java compliance level, test inclusion flag, and the full content of every `.java` source file (SHA-256). Reusing an exact match skips both the clone and Spoon model-building steps.
+2. **Verification cache** — Combines the extraction fingerprint with the full content of the metamodel file. Reusing a match skips the Alloy solver entirely.
+
+Cache data is stored in `analysis-cache.properties` files inside each output directory. Cache entries are invalidated automatically when the source code, options, or metamodel change.
+
+---
+
+## Related Projects
+
+This platform integrates and builds upon the following open-source projects:
+
+| Project | Usage | Version |
+|---|---|---|
+| [Spoon](https://github.com/INRIA/spoon) | Java source code analysis and AST model building | 11.3.0 |
+| [Alloy](https://alloytools.org/) | Declarative formal specification language for the metamodel | — |
+| [AlloyInEcore](https://github.com/Epsilon-Forge/AlloyInEcore) | Model verification framework translating structural invariants into Alloy/Kodkod SAT problems | 1.0-SNAPSHOT |
+| [Eclipse JGit](https://www.eclipse.org/jgit/) | Pure Java Git implementation for cloning/pulling repositories | 7.1.0 |
+| [Gson](https://github.com/google/gson) | JSON serialization/deserialization | 2.11.0 |
+| [Kodkod](https://github.com/emina/kodkod) | SAT-based finite model finder used by Alloy | 2.3 |
+| [Z3](https://github.com/Z3Prover/z3) | SMT solver from Microsoft Research | 4.6.0 |
+| [SAT4J](https://sat4j.org/) | SAT solver library for Java | 2.3.1 |
+| [ANTLR](https://www.antlr.org/) | Parser generator used by AlloyInEcore's constraint grammar | 4.7 |
+| [Eclipse Modeling Framework (EMF)](https://eclipse.dev/modeling/emf/) | Metamodel representation framework used by AlloyInEcore | — |
+| [EMF Compare](https://eclipse.dev/emf/compare/) | Model comparison library used by AlloyInEcore | — |
+| [SLF4J](https://www.slf4j.org/) | Simple logging facade for Java | 2.0.16 |
+
+---
+
+## License
+
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

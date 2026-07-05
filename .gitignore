@@ -27,3 +27,7 @@ modules/verification-cli/output/
 # Tool artifacts
 .agents/
 
+# Standalone analysis scripts (not part of the pipeline)
+analyze_verification.py
+plots/
+
