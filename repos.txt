@@ -1,0 +1,15 @@
+# repos.txt — one GitHub URL per line. Blank lines and #-comments ignored.
+# Lines starting with # are comments.
+
+# Java
+# https://github.com/iluwatar/java-design-patterns
+# https://github.com/google/guava
+# https://github.com/apache/commons-lang
+
+# Python
+# https://github.com/psf/requests
+# https://github.com/pallets/flask
+
+# C++
+# https://github.com/nlohmann/json
+# https://github.com/grpc/grpc
