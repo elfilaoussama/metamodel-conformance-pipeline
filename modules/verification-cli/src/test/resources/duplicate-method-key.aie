@@ -1,0 +1,13 @@
+-- O-08 violation: Two local methods with same memberName
+Root = {
+  classifiers = {Class0}
+  Class0 = { name = "Foo", isAbstract = "No", cid = ClassifierID0 }
+  Method0 = { memberName = "duplicate", returnType = "void", isAbstract = "No", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }
+  Method1 = { memberName = "duplicate", returnType = "String", isAbstract = "No", visibility = Pub, scope = Instance, mid = MethodID1, paramTypes = {} }
+  MethodBody0 = {}
+  MethodBody1 = {}
+  ImplementationBinding0 = { implementer = Class0, target = Method0, body = MethodBody0 }
+  ImplementationBinding1 = { implementer = Class0, target = Method1, body = MethodBody1 }
+  classParent[Class0] = null
+  localMethods[Class0] = {Method0, Method1}
+}

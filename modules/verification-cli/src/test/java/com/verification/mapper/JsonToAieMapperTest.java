@@ -28,7 +28,8 @@ class JsonToAieMapperTest {
         assertTrue(Files.isRegularFile(aieOutput));
         String content = Files.readString(aieOutput);
         assertTrue(content.contains("Root = {"));
-        assertTrue(content.contains("Class0 = { name = \"Animal\", abstract = false, kind = \"class\" }"));
+        assertTrue(content.contains("classifiers = {Class0}"));
+        assertTrue(content.contains("name = \"Animal\"") && content.contains("isAbstract = No"));
         assertTrue(content.contains("classParent[Class0] = null"));
     }
 
@@ -68,8 +69,9 @@ class JsonToAieMapperTest {
 
         assertTrue(Files.isRegularFile(aieOutput));
         String content = Files.readString(aieOutput);
-        assertTrue(content.contains("Method0 = { name = \"doSomething\", abstract = true"));
-        assertTrue(content.contains("classMethods[Class0] = {Method0}"));
+        assertTrue(content.contains("memberName = \"doSomething\""));
+        assertTrue(content.contains("isAbstract = Yes"));
+        assertTrue(content.contains("localMethods[Class0] = {Method0}"));
     }
 
     @Test
@@ -83,7 +85,27 @@ class JsonToAieMapperTest {
 
         assertTrue(Files.isRegularFile(aieOutput));
         String content = Files.readString(aieOutput);
-        assertTrue(content.contains("classes = {}"));
+        assertTrue(content.contains("classifiers = {}"));
+    }
+
+    @Test
+    void mapsInterfaceTypesCorrectly() throws Exception {
+        String json = "{\"projectName\":\"test\",\"types\":[" +
+                "{\"qualifiedName\":\"Foo\",\"kind\":\"class\",\"abstractType\":\"false\",\"superClass\":null}," +
+                "{\"qualifiedName\":\"IBar\",\"kind\":\"interface\",\"abstractType\":\"true\",\"superClass\":null}" +
+                "]}";
+        Path jsonPath = tempDir.resolve("iface.json");
+        Files.writeString(jsonPath, json);
+        Path aieOutput = tempDir.resolve("output.aie");
+
+        mapper.map(jsonPath, aieOutput);
+
+        assertTrue(Files.isRegularFile(aieOutput));
+        String content = Files.readString(aieOutput);
+        assertTrue(content.contains("Class0"));
+        assertTrue(content.contains("Interface1"));
+        assertTrue(content.contains("classifiers = {Class0, Interface1}"));
+        assertTrue(content.contains("isAbstract = Yes"));
     }
 
     private static Path resourcePath(String name) throws IOException, URISyntaxException {

@@ -1,8 +1,8 @@
 -- Root container
 Root = {
-  classes = {Class0, Class1}
-  Class0 = { name = "Animal", abstract = "false" }
-  Class1 = { name = "Animal", abstract = "false" }
+  classifiers = {Class0, Class1}
+  Class0 = { name = "Animal", isAbstract = "No", cid = ClassifierID0 }
+  Class1 = { name = "Animal", isAbstract = "No", cid = ClassifierID1 }
   classParent[Class0] = null
   classParent[Class1] = null
 }

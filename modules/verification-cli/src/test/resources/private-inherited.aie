@@ -1,0 +1,13 @@
+-- O-04 violation: Private method in inheritedMethods
+Root = {
+  classifiers = {Class0, Class1}
+  Class0 = { name = "Parent", isAbstract = "No", cid = ClassifierID0 }
+  Class1 = { name = "Child", isAbstract = "No", cid = ClassifierID1 }
+  Method0 = { memberName = "secret", returnType = "void", isAbstract = "No", visibility = Priv, scope = Instance, mid = MethodID0, paramTypes = {} }
+  MethodBody0 = {}
+  ImplementationBinding0 = { implementer = Class0, target = Method0, body = MethodBody0 }
+  classParent[Class1] = Class0
+  classParent[Class0] = null
+  localMethods[Class0] = {Method0}
+  inheritedMethods[Class1] = {Method0}
+}

@@ -1,0 +1,8 @@
+-- O-03 violation: Interface has classParent
+Root = {
+  classifiers = {Class0, Interface0}
+  Class0 = { name = "Foo", isAbstract = "No", cid = ClassifierID0 }
+  Interface0 = { name = "IBar", isAbstract = "Yes", cid = ClassifierID0 }
+  classParent[Interface0] = Class0
+  classParent[Class0] = null
+}

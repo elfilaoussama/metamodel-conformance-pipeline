@@ -1,5 +1,7 @@
 package com.javapipeline.desktop;
 
+import com.javapipeline.core.Language;
+
 import javax.swing.table.AbstractTableModel;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -14,6 +16,7 @@ final class RepositoryQueueModel extends AbstractTableModel {
         String activity = "Waiting";
         Integer typeCount;
         Path output;
+        Language language = Language.JAVA;
 
         Item(String url) { this.url = url; }
 
@@ -22,13 +25,14 @@ final class RepositoryQueueModel extends AbstractTableModel {
             sb.append("Repository: ").append(url).append('\n');
             sb.append("Status: ").append(status).append('\n');
             sb.append("Activity: ").append(SwingUtils.blank(activity, "Waiting")).append('\n');
+            sb.append("Language: ").append(language).append('\n');
             if (typeCount != null) sb.append("Types extracted: ").append(typeCount).append('\n');
             if (output != null) sb.append("Output: ").append(output).append('\n');
             return sb.toString();
         }
     }
 
-    private static final String[] COLUMNS = {"Repository", "Status", "Activity", "Types", "Output"};
+    private static final String[] COLUMNS = {"Repository", "Language", "Status", "Activity", "Types", "Output"};
     private final List<Item> items = new ArrayList<>();
 
     void add(String url) {
@@ -76,10 +80,11 @@ final class RepositoryQueueModel extends AbstractTableModel {
         Item item = items.get(rowIndex);
         return switch (columnIndex) {
             case 0 -> item.url;
-            case 1 -> item.status;
-            case 2 -> item.activity;
-            case 3 -> item.typeCount == null ? "" : item.typeCount;
-            case 4 -> item.output == null ? "" : item.output;
+            case 1 -> item.language;
+            case 2 -> item.status;
+            case 3 -> item.activity;
+            case 4 -> item.typeCount == null ? "" : item.typeCount;
+            case 5 -> item.output == null ? "" : item.output;
             default -> "";
         };
     }

@@ -30,6 +30,14 @@
         </dependency>
         <dependency>
             <groupId>com.javapipeline</groupId>
+            <artifactId>python-extraction</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javapipeline</groupId>
+            <artifactId>cpp-extraction</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.javapipeline</groupId>
             <artifactId>verification-integration</artifactId>
         </dependency>
         <dependency>

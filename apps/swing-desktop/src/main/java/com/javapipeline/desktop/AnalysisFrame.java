@@ -1,7 +1,9 @@
 package com.javapipeline.desktop;
 
 import com.javapipeline.core.*;
+import com.javapipeline.cpp.CppExtractionService;
 import com.javapipeline.github.JGitHubRepositoryIngestionService;
+import com.javapipeline.python.PythonExtractionService;
 import com.javapipeline.spoon.ExtractionJsonWriter;
 import com.javapipeline.spoon.SpoonJavaExtractionService;
 import com.javapipeline.verification.AlloyInEcoreVerificationService;
@@ -35,7 +37,7 @@ final class AnalysisFrame extends JFrame {
     private static final String DEFAULT_WORKSPACE = "workspace/repositories";
     private static final String DEFAULT_OUTPUT = "analysis-output";
     private static final String DEFAULT_VERIFIER = "modules/verification-cli";
-    private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/class_level_structural_kernel.als";
+    private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/kernel_v2_obligation.als";
     private static final String PREF_WORKSPACE = "workspace";
     private static final String PREF_OUTPUT = "output";
     private static final String PREF_VERIFIER = "verifier";
@@ -145,8 +147,9 @@ final class AnalysisFrame extends JFrame {
         JMenuItem aboutItem = new JMenuItem("About");
         aboutItem.addActionListener(e -> JOptionPane.showMessageDialog(this,
                 "Java Analysis Platform v0.2.0\n\n"
-                        + "Clone, extract, and verify Java repositories\n"
-                        + "using Spoon and AlloyInEcore.",
+                        + "Multi-language structural analysis pipeline.\n"
+                        + "Clone, extract, and verify Java, Python, and C++\n"
+                        + "repositories using Spoon, Python AST, and Alloy.",
                 "About", JOptionPane.INFORMATION_MESSAGE));
         helpMenu.add(aboutItem);
         bar.add(helpMenu);
@@ -178,6 +181,7 @@ final class AnalysisFrame extends JFrame {
                 queueModel.add(repoName);
                 RepositoryQueueModel.Item item = queueModel.get(repoName);
                 if (item == null) continue;
+                item.language = detectLanguage(dir);
                 Path extractionJson = dir.resolve("extraction.json");
                 Path verificationDir = dir.resolve("verification");
                 Path verificationJson = verificationDir.resolve("verification-report.json");
@@ -428,8 +432,9 @@ final class AnalysisFrame extends JFrame {
         queueTable.setSelectionMode(ListSelectionModel.MULTIPLE_INTERVAL_SELECTION);
         queueTable.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
         queueTable.getColumnModel().getColumn(0).setPreferredWidth(280);
-        queueTable.getColumnModel().getColumn(2).setPreferredWidth(220);
-        queueTable.getColumnModel().getColumn(4).setPreferredWidth(200);
+        queueTable.getColumnModel().getColumn(1).setPreferredWidth(70);
+        queueTable.getColumnModel().getColumn(3).setPreferredWidth(220);
+        queueTable.getColumnModel().getColumn(5).setPreferredWidth(200);
     }
 
     private void installQueuePopup() {
@@ -464,6 +469,19 @@ final class AnalysisFrame extends JFrame {
                 JMenuItem removeItem = new JMenuItem("Remove");
                 removeItem.addActionListener(ev -> queueModel.remove(modelRow));
                 popup.add(removeItem);
+
+                JMenu langMenu = new JMenu("Set language");
+                for (Language lang : Language.values()) {
+                    JMenuItem langItem = new JMenuItem(lang.toString());
+                    if (item.language == lang) langItem.setFont(langItem.getFont().deriveFont(Font.BOLD));
+                    langItem.addActionListener(ev -> {
+                        item.language = lang;
+                        queueModel.changed(item);
+                        appendLog("Set language for " + item.url + " to " + lang);
+                    });
+                    langMenu.add(langItem);
+                }
+                popup.add(langMenu);
 
                 JMenuItem detailsItem = new JMenuItem("Show details");
                 detailsItem.addActionListener(ev -> showItemDetails(item));
@@ -836,11 +854,36 @@ final class AnalysisFrame extends JFrame {
             VerificationOutcome verification
     ) { }
 
+    static Language detectLanguage(Path repoDir) {
+        try {
+            List<Path> files = Files.walk(repoDir, 4)
+                    .filter(Files::isRegularFile)
+                    .filter(p -> {
+                        String name = p.getFileName().toString().toLowerCase();
+                        return name.endsWith(".py") || name.endsWith(".java") || name.endsWith(".cpp");
+                    })
+                    .toList();
+            long pyCount = files.stream().filter(p -> p.toString().endsWith(".py")).count();
+            long javaCount = files.stream().filter(p -> p.toString().endsWith(".java")).count();
+            long cppCount = files.stream().filter(p -> {
+                String n = p.toString().toLowerCase();
+                return n.endsWith(".cpp") || n.endsWith(".cc") || n.endsWith(".cxx")
+                        || n.endsWith(".h") || n.endsWith(".hpp");
+            }).count();
+            if (pyCount > javaCount && pyCount > cppCount && pyCount > 0) return Language.PYTHON;
+            if (cppCount > javaCount && cppCount > 0) return Language.CPP;
+            if (javaCount > 0) return Language.JAVA;
+        } catch (Exception ignored) { }
+        return Language.JAVA;
+    }
+
     private final class AnalysisWorker extends SwingWorker<Void, UiEvent> {
         private final List<RepositoryQueueModel.Item> items;
         private final RunConfiguration configuration;
         private final RepositoryIngestionService ingestion = new JGitHubRepositoryIngestionService();
-        private final JavaExtractionService extraction = new SpoonJavaExtractionService();
+        private final JavaExtractionService javaExtraction = new SpoonJavaExtractionService();
+        private final JavaExtractionService pythonExtraction = new PythonExtractionService();
+        private final JavaExtractionService cppExtraction = new CppExtractionService();
         private final ExtractionJsonWriter writer = new ExtractionJsonWriter();
         private final AlloyInEcoreVerificationService verification = new AlloyInEcoreVerificationService();
         private volatile int completed;
@@ -848,6 +891,22 @@ final class AnalysisFrame extends JFrame {
         private AnalysisWorker(List<RepositoryQueueModel.Item> items, RunConfiguration configuration) {
             this.items = items;
             this.configuration = configuration;
+        }
+
+        private JavaExtractionService selectExtractor(Language lang) {
+            return switch (lang) {
+                case PYTHON -> pythonExtraction;
+                case CPP -> cppExtraction;
+                default -> javaExtraction;
+            };
+        }
+
+        private String extractorName(Language lang) {
+            return switch (lang) {
+                case PYTHON -> "Python AST";
+                case CPP -> "Clang";
+                default -> "Spoon";
+            };
         }
 
         @Override
@@ -869,10 +928,18 @@ final class AnalysisFrame extends JFrame {
                     IngestedRepository repository = ingestion.ingest(
                             request, configuration.workspace(), event -> publish(progressEvent(item, event)),
                             this::isCancelled);
+
+                    Language lang = item.language != Language.JAVA ? item.language
+                            : AnalysisFrame.detectLanguage(repository.directory());
+                    item.language = lang;
+                    JavaExtractionService extractor = selectExtractor(lang);
+                    String extractorName = extractorName(lang);
+
                     publish(new UiEvent(item, RepositoryQueueModel.Status.EXTRACTING,
-                            "Building Spoon model", null, null,
+                            "Building " + extractorName + " model", null, null,
                             (repository.reused() ? "Reusing " : "Cloned ") + request.coordinate()
-                                    + " at " + repository.revision(), null));
+                                    + " at " + repository.revision()
+                                    + " [" + lang + "]", null));
 
                     Path output = configuration.output()
                             .resolve(request.owner() + "__" + request.name()).resolve("extraction.json");
@@ -883,10 +950,10 @@ final class AnalysisFrame extends JFrame {
                     if (cache.hasExtraction(extractionKey, output)) {
                         typeCount = cache.typeCount();
                         publish(new UiEvent(item, RepositoryQueueModel.Status.EXTRACTING,
-                                "Reusing cached Spoon extraction", typeCount, output,
-                                "Cache hit for " + request.coordinate() + ": Spoon extraction skipped", null));
+                                "Reusing cached " + extractorName + " extraction", typeCount, output,
+                                "Cache hit for " + request.coordinate() + ": " + extractorName + " extraction skipped", null));
                     } else {
-                        var result = extraction.extract(
+                        var result = extractor.extract(
                                 request.coordinate(), repository.directory(),
                                 new ExtractionOptions(configuration.compliance(), configuration.includeTests()),
                                 event -> publish(progressEvent(item, event)), this::isCancelled);

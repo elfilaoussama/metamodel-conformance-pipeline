@@ -1,0 +1,13 @@
+-- O-06 violation: Binding targets method not in localMethods or inheritedMethods
+Root = {
+  classifiers = {Class0}
+  Class0 = { name = "Foo", isAbstract = "No", cid = ClassifierID0 }
+  Method0 = { memberName = "exists", returnType = "void", isAbstract = "No", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }
+  Method1 = { memberName = "phantom", returnType = "void", isAbstract = "No", visibility = Pub, scope = Instance, mid = MethodID1, paramTypes = {} }
+  MethodBody0 = {}
+  MethodBody1 = {}
+  ImplementationBinding0 = { implementer = Class0, target = Method0, body = MethodBody0 }
+  ImplementationBinding1 = { implementer = Class0, target = Method1, body = MethodBody1 }
+  classParent[Class0] = null
+  localMethods[Class0] = {Method0}
+}

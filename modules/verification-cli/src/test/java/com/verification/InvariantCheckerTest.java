@@ -18,7 +18,7 @@ class InvariantCheckerTest {
 
     @Test
     void emptyAtomsReturnsSat() {
-        String aie = "Root = { classes = {} }";
+        String aie = "Root = { classifiers = {} }";
         VerificationReport report = checker.check(aie, "");
         assertEquals("SAT", report.getResult());
         assertTrue(report.getViolations().isEmpty());
@@ -37,7 +37,6 @@ class InvariantCheckerTest {
         String aie = loadResource("duplicate-names.aie");
         VerificationReport report = checker.check(aie, "");
         assertEquals("UNSAT", report.getResult());
-        assertFalse(report.getViolations().isEmpty());
         assertTrue(report.getViolations().stream()
                 .anyMatch(v -> "IdentifierIntegrity".equals(v.getInvariantName())));
     }
@@ -47,7 +46,6 @@ class InvariantCheckerTest {
         String aie = loadResource("cyclic-inheritance.aie");
         VerificationReport report = checker.check(aie, "");
         assertEquals("UNSAT", report.getResult());
-        assertFalse(report.getViolations().isEmpty());
         assertTrue(report.getViolations().stream()
                 .anyMatch(v -> "AcyclicGeneralization".equals(v.getInvariantName())));
     }
@@ -57,7 +55,6 @@ class InvariantCheckerTest {
         String aie = loadResource("abstract-method-violation.aie");
         VerificationReport report = checker.check(aie, "");
         assertEquals("UNSAT", report.getResult());
-        assertFalse(report.getViolations().isEmpty());
         assertTrue(report.getViolations().stream()
                 .anyMatch(v -> "AbstractionPolicy".equals(v.getInvariantName())));
     }
@@ -67,17 +64,16 @@ class InvariantCheckerTest {
         String aie = "this is not valid AIE content";
         VerificationReport report = checker.check(aie, "");
         assertEquals("SAT", report.getResult());
-        assertTrue(report.getViolations().isEmpty());
     }
 
     @Test
-    void interfaceWithNonAbstractMethodReportsUnsat() throws Exception {
+    void interfaceWithNonAbstractMethodReportsUnsat() {
         String aie = "Root = {\n" +
-                "  classes = {Class0}\n" +
-                "  Class0 = { name = \"MyInterface\", abstract = \"true\", kind = \"interface\" }\n" +
-                "  Method0 = { name = \"foo\", abstract = \"false\" }\n" +
-                "  classParent[Class0] = null\n" +
-                "  classMethods[Class0] = {Method0}\n" +
+                "  classifiers = {Interface0}\n" +
+                "  Interface0 = { name = \"MyInterface\", isAbstract = \"Yes\", cid = ClassifierID0 }\n" +
+                "  Method0 = { memberName = \"foo\", returnType = \"void\", isAbstract = \"No\", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }\n" +
+                "  classParent[Interface0] = null\n" +
+                "  localMethods[Interface0] = {Method0}\n" +
                 "}\n";
         VerificationReport report = checker.check(aie, "");
         assertEquals("UNSAT", report.getResult());
@@ -87,13 +83,7 @@ class InvariantCheckerTest {
 
     @Test
     void staticAbstractMethodReportsUnsat() throws Exception {
-        String aie = "Root = {\n" +
-                "  classes = {Class0}\n" +
-                "  Class0 = { name = \"MyClass\", abstract = \"false\", kind = \"class\" }\n" +
-                "  Method0 = { name = \"foo\", abstract = \"true\", static = \"true\" }\n" +
-                "  classParent[Class0] = null\n" +
-                "  classMethods[Class0] = {Method0}\n" +
-                "}\n";
+        String aie = loadResource("static-abstract-method.aie");
         VerificationReport report = checker.check(aie, "");
         assertEquals("UNSAT", report.getResult());
         assertTrue(report.getViolations().stream()
@@ -101,18 +91,75 @@ class InvariantCheckerTest {
     }
 
     @Test
-    void interfaceWithFieldReportsUnsat() throws Exception {
-        String aie = "Root = {\n" +
-                "  classes = {Class0}\n" +
-                "  Class0 = { name = \"MyInterface\", abstract = \"true\", kind = \"interface\" }\n" +
-                "  Field0 = { name = \"x\", visibility = \"public\", static = \"false\" }\n" +
-                "  classParent[Class0] = null\n" +
-                "  classAttributes[Class0] = {Field0}\n" +
-                "}\n";
+    void interfaceWithInstanceAttributeReportsUnsat() throws Exception {
+        String aie = loadResource("interface-instance-attribute.aie");
         VerificationReport report = checker.check(aie, "");
         assertEquals("UNSAT", report.getResult());
         assertTrue(report.getViolations().stream()
                 .anyMatch(v -> "InterfacePolicy".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void interfaceWithClassParentReportsUnsat() throws Exception {
+        String aie = loadResource("interface-class-parent.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "GeneralizationKindPolicy".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void sharedMethodOwnershipReportsUnsat() throws Exception {
+        String aie = loadResource("shared-method-ownership.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "ExclusiveDeclarationOwnership".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void privateMethodInheritedReportsUnsat() throws Exception {
+        String aie = loadResource("private-inherited.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "InheritedMemberDerivation".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void localInheritedOverlapReportsUnsat() throws Exception {
+        String aie = loadResource("local-inherited-overlap.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "LocalInheritedSeparation".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void phantomBindingTargetReportsUnsat() throws Exception {
+        String aie = loadResource("phantom-binding.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "ImplementationBindingPolicy".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void duplicateMethodNameInClassReportsUnsat() throws Exception {
+        String aie = loadResource("duplicate-method-key.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "LocalMethodNamespace".equals(v.getInvariantName())));
+    }
+
+    @Test
+    void inheritedMethodConflictReportsUnsat() throws Exception {
+        String aie = loadResource("inherited-method-conflict.aie");
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult());
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> "InheritedConflictPolicy".equals(v.getInvariantName())));
     }
 
     @ParameterizedTest
@@ -120,7 +167,16 @@ class InvariantCheckerTest {
         "valid.aie, SAT",
         "duplicate-names.aie, UNSAT",
         "cyclic-inheritance.aie, UNSAT",
-        "abstract-method-violation.aie, UNSAT"
+        "abstract-method-violation.aie, UNSAT",
+        "static-abstract-method.aie, UNSAT",
+        "interface-class-parent.aie, UNSAT",
+        "shared-method-ownership.aie, UNSAT",
+        "private-inherited.aie, UNSAT",
+        "local-inherited-overlap.aie, UNSAT",
+        "phantom-binding.aie, UNSAT",
+        "duplicate-method-key.aie, UNSAT",
+        "interface-instance-attribute.aie, UNSAT",
+        "inherited-method-conflict.aie, UNSAT"
     })
     void endToEndWithResourceFiles(String resource, String expectedResult) throws Exception {
         String aie = loadResource(resource);

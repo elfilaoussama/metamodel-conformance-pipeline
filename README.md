@@ -107,21 +107,23 @@ flowchart TB
     subgraph Core["analysis-core (interfaces & domain types)"]
         direction TB
         RI[RepositoryIngestionService]
-        JE[JavaExtractionService]
+        JE[JavaExtractionService / getLanguage()]
         GS[GitHubRepositorySearchService]
         PE[ProgressEvent / CancellationToken]
+        LG[Language enum: JAVA, PYTHON, CPP]
     end
 
     subgraph Impl["Service Implementations"]
         GI[github-ingestion<br/>JGit shallow clone]
         GSvc[github-search<br/>GitHub REST API + Gson]
         SE[spoon-extraction<br/>Spoon AST → JSON model]
+        PE[python-extraction<br/>stdlib ast → JSON model]
     end
 
     subgraph Verify["Verification"]
         VI[verification-integration<br/>subprocess orchestrator]
         CLI[verification-cli<br/>standalone verifier]
-        ALS[class_level_structural_kernel.als<br/>Alloy formal model]
+        ALS[kernel_v2_obligation.als<br/>Alloy formal model]
     end
 
     subgraph UI["Desktop Application"]
@@ -269,7 +271,7 @@ A Swing-based graphical user interface that composes all platform services. Pack
 
 ### Class-Level Structural Kernel
 
-The verification metamodel is defined in [`modules/verification-cli/src/main/resources/class_level_structural_kernel.als`](modules/verification-cli/src/main/resources/class_level_structural_kernel.als). This is an Alloy formal model (674 lines) that captures the essential structural elements of Java classes and interfaces, along with well-formedness rules that any valid Java program should satisfy.
+The verification metamodel is defined in [`modules/verification-cli/src/main/resources/kernel_v2_obligation.als`](modules/verification-cli/src/main/resources/kernel_v2_obligation.als). This is an Alloy formal model that captures the essential structural elements of object-oriented classifiers (classes and interfaces), organized around 10 formal obligations (O-01 through O-09), with accompanying verification commands in [`verification_v2.als`](modules/verification-cli/src/main/resources/verification_v2.als).
 
 The model defines:
 
@@ -337,16 +339,58 @@ java -jar apps/swing-desktop/target/swing-desktop-*-all.jar
 
 The desktop application starts with a default workspace path (`workspace/repositories`) and output path (`analysis-output/`). You can change these in the UI or via Preferences persistence.
 
-### Run the Verification CLI
+### Run the Pipeline CLI (clone → extract → verify)
+
+```bash
+# Windows
+.\pipeline.ps1 --repo https://github.com/user/repo
+
+# Linux / macOS
+./pipeline.sh --repo https://github.com/user/repo
+```
+
+**Options:**
+
+| Flag | Description | Default |
+|---|---|---|
+| `-r, --repo <url>` | GitHub repository URL | *(required)* |
+| `-l, --language <lang>` | `java`, `python`, or `cpp` | auto-detected |
+| `-o, --output <dir>` | Analysis output directory | `analysis-output` |
+| `-w, --workspace <dir>` | Clone workspace | `workspace/repositories` |
+| `-m, --metamodel <file>` | Alloy .als metamodel path | `modules/verification-cli/.../kernel_v2_obligation.als` |
+| `-v, --verifier <dir>` | Verification modules directory | `modules/verification-cli` |
+| `-d, --depth <n>` | Clone depth | `1` |
+| `--no-verify` | Skip structural verification | *(verification enabled)* |
+| `-h, --help` | Show usage help | |
+
+**Exit codes:** `0` = SAT, `1` = UNSAT, `2` = ERROR
+
+**Examples:**
+
+```bash
+# Java project (auto-detected)
+.\pipeline.ps1 --repo https://github.com/iluwatar/java-design-patterns
+
+# Python project (explicit language)
+.\pipeline.ps1 --repo https://github.com/psf/requests --language python
+
+# Fast extraction only, skip verification
+.\pipeline.ps1 --repo https://github.com/user/lib --no-verify -o results/
+
+# Custom output and workspace paths
+.\pipeline.ps1 --repo https://github.com/user/repo -o ./my-output -w ./my-workspace -d 3
+```
+
+### Run the Verification CLI (standalone)
 
 ```bash
 # Windows
 cd modules/verification-cli
-.\run.ps1 -r src/main/resources/class_level_structural_kernel.als -i path/to/extraction.json -o output
+.\run.ps1 -r src/main/resources/kernel_v2_obligation.als -i path/to/extraction.json -o output
 
 # Linux / macOS
 cd modules/verification-cli
-./run.sh -r src/main/resources/class_level_structural_kernel.als -i path/to/extraction.json -o output
+./run.sh -r src/main/resources/kernel_v2_obligation.als -i path/to/extraction.json -o output
 ```
 
 ---

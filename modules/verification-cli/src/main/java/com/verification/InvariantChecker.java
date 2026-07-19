@@ -3,12 +3,11 @@ package com.verification;
 import java.util.*;
 
 public class InvariantChecker {
-    private final boolean strict;
-    private final boolean details;
+
+    public InvariantChecker() { }
 
     public InvariantChecker(boolean strict, boolean details) {
-        this.strict = strict;
-        this.details = details;
+        this();
     }
 
     public VerificationReport check(String aieContent, String metamodelContent) {
@@ -24,14 +23,22 @@ public class InvariantChecker {
 
             List<ViolationInfo> violations = new ArrayList<>();
 
-            checkNoCyclicInheritance(model, violations);
             checkNoDuplicateTypeNames(model, violations);
+            checkIdUniqueness(model, violations);
+            checkExclusiveDeclarationOwnership(model, violations);
+            checkNoCyclicInheritance(model, violations);
+            checkGeneralizationKindPolicy(model, violations);
+            checkInheritedMemberDerivation(model, violations);
+            checkLocalInheritedDisjointness(model, violations);
+            checkImplementationBinding(model, violations);
+            checkUnresolvedMethods(model, violations);
             checkAbstractMethodInAbstractClass(model, violations);
             checkInterfaceMethodsAreAbstract(model, violations);
-            checkInterfaceHasNoFields(model, violations);
+            checkInterfaceHasNoInstanceFields(model, violations);
             checkNoStaticAbstractMethod(model, violations);
             checkLocalMethodNamespace(model, violations);
-            checkGeneralizationKindPolicy(model, violations);
+            checkInheritedConflictPolicy(model, violations);
+            checkOverrideDiscipline(model, violations);
 
             if (violations.isEmpty()) {
                 report.setResult("SAT");
@@ -62,30 +69,32 @@ public class InvariantChecker {
         }
     }
 
-    private void checkNoCyclicInheritance(AieModel model, List<ViolationInfo> violations) {
-        Map<String, String> parentMap = new HashMap<>();
-        for (TupleEntry t : model.getTuples("classParent")) {
-            if (t.to != null) parentMap.put(t.from, t.to);
-        }
-        for (String cls : parentMap.keySet()) {
-            Set<String> visited = new HashSet<>();
-            String current = cls;
-            while (current != null) {
-                if (!visited.add(current)) {
-                    violations.add(new ViolationInfo("AcyclicGeneralization",
-                            "Cyclic inheritance detected involving class " + current));
-                    return;
-                }
-                current = parentMap.get(current);
-            }
-        }
+    private boolean isClassifierAtom(String atom) {
+        return atom != null && (atom.startsWith("Class") || atom.startsWith("Interface"));
     }
 
+    private boolean isInterfaceAtom(String atom) {
+        return atom != null && atom.startsWith("Interface");
+    }
+
+    private boolean isClassAtom(String atom) {
+        return atom != null && atom.startsWith("Class");
+    }
+
+    private String isAbstract(String atom) {
+        Map<String, String> attrs = model_cache.atomAttrs.get(atom);
+        if (attrs == null) return null;
+        return attrs.get("isAbstract");
+    }
+
+    private AieModel model_cache;
+
     private void checkNoDuplicateTypeNames(AieModel model, List<ViolationInfo> violations) {
+        model_cache = model;
         Map<String, List<String>> nameToAtoms = new HashMap<>();
         for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
             String atomName = attr.getKey();
-            if (!atomName.startsWith("Class")) continue;
+            if (!isClassifierAtom(atomName)) continue;
             String clsName = attr.getValue().get("name");
             if (clsName != null) {
                 nameToAtoms.computeIfAbsent(clsName, k -> new ArrayList<>()).add(atomName);
@@ -95,43 +104,363 @@ public class InvariantChecker {
             if (entry.getValue().size() > 1) {
                 violations.add(new ViolationInfo("IdentifierIntegrity",
                         "Duplicate name '" + entry.getKey() + "' used by: " + String.join(", ", entry.getValue())));
+                return;
+            }
+        }
+    }
+
+    private void checkIdUniqueness(AieModel model, List<ViolationInfo> violations) {
+        Map<String, String> cidToAtom = new LinkedHashMap<>();
+        Map<String, String> midToAtom = new LinkedHashMap<>();
+        Map<String, String> aidToAtom = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atom = attr.getKey();
+            Map<String, String> a = attr.getValue();
+            if (isClassifierAtom(atom)) {
+                String cid = a.get("cid");
+                if (cid != null) {
+                    String prev = cidToAtom.put(cid, atom);
+                    if (prev != null) {
+                        violations.add(new ViolationInfo("IdentifierIntegrity",
+                                "Duplicate ClassifierID " + cid + " on " + prev + " and " + atom));
+                        return;
+                    }
+                }
+            } else if (atom.startsWith("Method")) {
+                String mid = a.get("mid");
+                if (mid != null) {
+                    String prev = midToAtom.put(mid, atom);
+                    if (prev != null) {
+                        violations.add(new ViolationInfo("IdentifierIntegrity",
+                                "Duplicate MethodID " + mid + " on " + prev + " and " + atom));
+                        return;
+                    }
+                }
+            } else if (atom.startsWith("Attribute")) {
+                String aid = a.get("aid");
+                if (aid != null) {
+                    String prev = aidToAtom.put(aid, atom);
+                    if (prev != null) {
+                        violations.add(new ViolationInfo("IdentifierIntegrity",
+                                "Duplicate AttributeID " + aid + " on " + prev + " and " + atom));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private void checkExclusiveDeclarationOwnership(AieModel model, List<ViolationInfo> violations) {
+        Map<String, Set<String>> methodOwners = new HashMap<>();
+        Map<String, Set<String>> attrOwners = new HashMap<>();
+        for (TupleEntry t : model.getTuples("localMethods")) {
+            if (t.to != null) {
+                methodOwners.computeIfAbsent(t.to, k -> new LinkedHashSet<>()).add(t.from);
+            }
+        }
+        for (TupleEntry t : model.getTuples("localAttributes")) {
+            if (t.to != null) {
+                attrOwners.computeIfAbsent(t.to, k -> new LinkedHashSet<>()).add(t.from);
+            }
+        }
+        for (Map.Entry<String, Set<String>> e : methodOwners.entrySet()) {
+            if (e.getValue().size() > 1) {
+                violations.add(new ViolationInfo("ExclusiveDeclarationOwnership",
+                        "Method " + e.getKey() + " declared in multiple classifiers: " + e.getValue()));
+            }
+        }
+        for (Map.Entry<String, Set<String>> e : attrOwners.entrySet()) {
+            if (e.getValue().size() > 1) {
+                violations.add(new ViolationInfo("ExclusiveDeclarationOwnership",
+                        "Attribute " + e.getKey() + " declared in multiple classifiers: " + e.getValue()));
+            }
+        }
+    }
+
+    private void checkNoCyclicInheritance(AieModel model, List<ViolationInfo> violations) {
+        Map<String, List<String>> parentMap = new HashMap<>();
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) {
+                parentMap.computeIfAbsent(t.from, k -> new ArrayList<>()).add(t.to);
+            }
+        }
+        for (TupleEntry t : model.getTuples("interfaceParents")) {
+            if (t.to != null) {
+                parentMap.computeIfAbsent(t.from, k -> new ArrayList<>()).add(t.to);
+            }
+        }
+
+        for (String cls : parentMap.keySet()) {
+            Set<String> visited = new LinkedHashSet<>();
+            Deque<String> stack = new ArrayDeque<>();
+            stack.push(cls);
+            while (!stack.isEmpty()) {
+                String current = stack.pop();
+                if (!visited.add(current)) {
+                    if (current.equals(cls)) {
+                        violations.add(new ViolationInfo("AcyclicGeneralization",
+                                "Cyclic inheritance involving " + cls));
+                        return;
+                    }
+                    continue;
+                }
+                List<String> parents = parentMap.get(current);
+                if (parents != null) {
+                    for (String p : parents) stack.push(p);
+                }
+            }
+        }
+    }
+
+    private void checkGeneralizationKindPolicy(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) {
+                String child = t.from;
+                if (isInterfaceAtom(child)) {
+                    violations.add(new ViolationInfo("GeneralizationKindPolicy",
+                            "Interface " + child + " has a classParent " + t.to));
+                }
+            }
+        }
+    }
+
+    private void checkInheritedMemberDerivation(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("inheritedMethods")) {
+            if (t.to != null) {
+                Map<String, String> attrs = model.atomAttrs.get(t.to);
+                if (attrs != null && "Priv".equals(attrs.get("visibility"))) {
+                    violations.add(new ViolationInfo("InheritedMemberDerivation",
+                            "Private method " + t.to + " appears in inheritedMethods of " + t.from));
+                }
+            }
+        }
+        for (TupleEntry t : model.getTuples("inheritedAttributes")) {
+            if (t.to != null) {
+                Map<String, String> attrs = model.atomAttrs.get(t.to);
+                if (attrs != null && "Priv".equals(attrs.get("visibility"))) {
+                    violations.add(new ViolationInfo("InheritedMemberDerivation",
+                            "Private attribute " + t.to + " appears in inheritedAttributes of " + t.from));
+                }
+            }
+        }
+    }
+
+    private void checkLocalInheritedDisjointness(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry lt : model.getTuples("localMethods")) {
+            if (lt.to == null) continue;
+            for (TupleEntry it : model.getTuples("inheritedMethods")) {
+                if (it.to == null) continue;
+                if (lt.from.equals(it.from) && lt.to.equals(it.to)) {
+                    violations.add(new ViolationInfo("LocalInheritedSeparation",
+                            "Method " + lt.to + " appears in both localMethods and inheritedMethods of " + lt.from));
+                }
+            }
+        }
+        for (TupleEntry lt : model.getTuples("localAttributes")) {
+            if (lt.to == null) continue;
+            for (TupleEntry it : model.getTuples("inheritedAttributes")) {
+                if (it.to == null) continue;
+                if (lt.from.equals(it.from) && lt.to.equals(it.to)) {
+                    violations.add(new ViolationInfo("LocalInheritedSeparation",
+                            "Attribute " + lt.to + " appears in both localAttributes and inheritedAttributes of " + lt.from));
+                }
+            }
+        }
+    }
+
+    private void checkImplementationBinding(AieModel model, List<ViolationInfo> violations) {
+        Map<String, Map<String, String>> bindingTargets = new LinkedHashMap<>();
+        Map<String, String> bodyToBinding = new LinkedHashMap<>();
+        Map<String, List<String>> bindingsPerClassMethod = new LinkedHashMap<>();
+
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atom = attr.getKey();
+            if (!atom.startsWith("ImplementationBinding")) continue;
+            Map<String, String> a = attr.getValue();
+            bindingTargets.put(atom, a);
+            String body = a.get("body");
+            if (body != null) bodyToBinding.put(body, atom);
+        }
+
+        List<MethodBodyInfo> orphanBodies = new ArrayList<>();
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atom = attr.getKey();
+            if (!atom.startsWith("MethodBody")) continue;
+            if (!bodyToBinding.containsKey(atom)) {
+                orphanBodies.add(new MethodBodyInfo(atom));
+            }
+        }
+        for (MethodBodyInfo mb : orphanBodies) {
+            violations.add(new ViolationInfo("ImplementationBindingPolicy",
+                    "Orphan MethodBody " + mb.atom + " has no ImplementationBinding"));
+        }
+
+        for (Map.Entry<String, Map<String, String>> e : bindingTargets.entrySet()) {
+            String bindingId = e.getKey();
+            Map<String, String> b = e.getValue();
+            String implementer = b.get("implementer");
+            String target = b.get("target");
+
+            if (implementer == null || target == null) continue;
+
+            String key = implementer + "::" + target;
+            bindingsPerClassMethod.computeIfAbsent(key, k -> new ArrayList<>()).add(bindingId);
+
+            boolean found = false;
+            for (TupleEntry t : model.getTuples("localMethods")) {
+                if (t.from.equals(implementer) && t.to.equals(target)) { found = true; break; }
+            }
+            if (!found) {
+                for (TupleEntry t : model.getTuples("inheritedMethods")) {
+                    if (t.from.equals(implementer) && t.to.equals(target)) { found = true; break; }
+                }
+            }
+            if (!found) {
+                violations.add(new ViolationInfo("ImplementationBindingPolicy",
+                        "ImplementationBinding " + bindingId + " targets method " + target
+                                + " not available in " + implementer));
+            }
+
+            if (isClassAtom(implementer)) {
+                for (TupleEntry t : model.getTuples("localMethods")) {
+                    if (t.from.equals(implementer) && t.to.equals(target)) {
+                        Map<String, String> mattrs = model.atomAttrs.get(target);
+                        if (mattrs != null && "Yes".equals(mattrs.get("isAbstract"))) {
+                            violations.add(new ViolationInfo("ImplementationBindingPolicy",
+                                    "Abstract method " + target + " has a body via " + bindingId
+                                            + " in declaring class " + implementer));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (Map.Entry<String, List<String>> e : bindingsPerClassMethod.entrySet()) {
+            if (e.getValue().size() > 1) {
+                violations.add(new ViolationInfo("ImplementationBindingPolicy",
+                        "Multiple bindings for " + e.getKey() + ": " + e.getValue()));
+            }
+        }
+
+        for (TupleEntry t : model.getTuples("localMethods")) {
+            if (t.to == null) continue;
+            String cls = t.from;
+            String mtd = t.to;
+            if (!isClassAtom(cls)) continue;
+            Map<String, String> mattrs = model.atomAttrs.get(mtd);
+            if (mattrs != null && "No".equals(mattrs.get("isAbstract"))) {
+                String key = cls + "::" + mtd;
+                if (!bindingsPerClassMethod.containsKey(key)) {
+                    violations.add(new ViolationInfo("ImplementationBindingPolicy",
+                            "Non-abstract method " + mtd + " in " + cls
+                                    + " has no ImplementationBinding"));
+                }
+            }
+        }
+    }
+
+    private void checkUnresolvedMethods(AieModel model, List<ViolationInfo> violations) {
+        // Build a map: method atom -> set of implementer Classifier atoms that bind it
+        Map<String, Set<String>> methodToImplementers = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            if (attr.getKey().startsWith("ImplementationBinding")) {
+                String target = attr.getValue().get("target");
+                String implementer = attr.getValue().get("implementer");
+                if (target != null && implementer != null) {
+                    methodToImplementers.computeIfAbsent(target, k -> new LinkedHashSet<>())
+                            .add(implementer);
+                }
+            }
+        }
+
+        Set<String> abstractMethods = new HashSet<>();
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            if (attr.getKey().startsWith("Method")
+                    && "Yes".equals(attr.getValue().get("isAbstract"))) {
+                abstractMethods.add(attr.getKey());
+            }
+        }
+
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atom = attr.getKey();
+            if (!isClassifierAtom(atom)) continue;
+            if ("Yes".equals(attr.getValue().get("isAbstract"))) continue;
+
+            // Collect all methods available to this classifier (local + inherited)
+            Set<String> allMethods = new LinkedHashSet<>();
+            for (TupleEntry t : model.getTuples("localMethods")) {
+                if (atom.equals(t.from) && t.to != null) allMethods.add(t.to);
+            }
+            for (TupleEntry t : model.getTuples("inheritedMethods")) {
+                if (atom.equals(t.from) && t.to != null) allMethods.add(t.to);
+            }
+
+            // Compute the set of Classifiers in this classifier's ancestor chain
+            // (including itself) — only bindings from these implementers are visible.
+            Set<String> visibleImplementers = new LinkedHashSet<>();
+            visibleImplementers.add(atom);
+            Map<String, String> cAttrs = model.atomAttrs.get(atom);
+            if (cAttrs != null) {
+                String parent = cAttrs.get("classParent");
+                while (parent != null) {
+                    if (!visibleImplementers.add(parent)) break; // cycle guard
+                    Map<String, String> pAttrs = model.atomAttrs.get(parent);
+                    parent = pAttrs != null ? pAttrs.get("classParent") : null;
+                }
+            }
+
+            for (String m : allMethods) {
+                if (abstractMethods.contains(m)) continue;
+                Set<String> implementers = methodToImplementers.get(m);
+                if (implementers == null || implementers.isEmpty()) {
+                    violations.add(new ViolationInfo("AbstractionPolicy",
+                            "Non-abstract classifier " + atom + " has non-abstract method "
+                                    + m + " without any ImplementationBinding"));
+                    continue;
+                }
+                // Check if at least one binding comes from a visible implementer
+                boolean visible = false;
+                for (String impl : implementers) {
+                    if (visibleImplementers.contains(impl)) {
+                        visible = true;
+                        break;
+                    }
+                }
+                if (!visible) {
+                    violations.add(new ViolationInfo("AbstractionPolicy",
+                            "Non-abstract classifier " + atom + " has non-abstract method "
+                                    + m + " with no ImplementationBinding visible in ancestor chain"));
+                }
             }
         }
     }
 
     private void checkAbstractMethodInAbstractClass(AieModel model, List<ViolationInfo> violations) {
-        Set<String> abstractAtoms = new HashSet<>();
-        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
-            if ("true".equals(attr.getValue().get("abstract"))) {
-                abstractAtoms.add(attr.getKey());
-            }
-        }
-
-        for (TupleEntry t : model.getTuples("classMethods")) {
+        for (TupleEntry t : model.getTuples("localMethods")) {
             if (t.to != null) {
                 String cls = t.from;
                 String mtd = t.to;
+                String clsAbstract = isAbstract(cls);
                 Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
-                boolean methodAbstract = mtdAttrs != null && "true".equals(mtdAttrs.get("abstract"));
-                if (methodAbstract && !abstractAtoms.contains(cls)) {
+                boolean methodAbstract = mtdAttrs != null && "Yes".equals(mtdAttrs.get("isAbstract"));
+                if (methodAbstract && clsAbstract != null && !"Yes".equals(clsAbstract)) {
                     violations.add(new ViolationInfo("AbstractionPolicy",
-                            "Non-abstract class " + cls + " contains abstract method " + mtd));
+                            "Non-abstract classifier " + cls + " contains abstract method " + mtd));
                 }
             }
         }
     }
 
     private void checkInterfaceMethodsAreAbstract(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("classMethods")) {
+        for (TupleEntry t : model.getTuples("localMethods")) {
             if (t.to != null) {
                 String cls = t.from;
-                Map<String, String> clsAttrs = model.atomAttrs.get(cls);
-                String kind = clsAttrs != null ? clsAttrs.get("kind") : null;
-                if (!"interface".equals(kind)) continue;
-
+                if (!isInterfaceAtom(cls)) continue;
                 String mtd = t.to;
                 Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
-                boolean methodAbstract = mtdAttrs != null && "true".equals(mtdAttrs.get("abstract"));
+                boolean methodAbstract = mtdAttrs != null && "Yes".equals(mtdAttrs.get("isAbstract"));
                 if (!methodAbstract) {
                     violations.add(new ViolationInfo("InterfacePolicy",
                             "Interface " + cls + " contains non-abstract method " + mtd));
@@ -140,15 +469,16 @@ public class InvariantChecker {
         }
     }
 
-    private void checkInterfaceHasNoFields(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("classAttributes")) {
+    private void checkInterfaceHasNoInstanceFields(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("localAttributes")) {
             if (t.to != null) {
                 String cls = t.from;
-                Map<String, String> clsAttrs = model.atomAttrs.get(cls);
-                String kind = clsAttrs != null ? clsAttrs.get("kind") : null;
-                if ("interface".equals(kind)) {
+                if (!isInterfaceAtom(cls)) continue;
+                String attr = t.to;
+                Map<String, String> attrAttrs = model.atomAttrs.get(attr);
+                if (attrAttrs != null && "Instance".equals(attrAttrs.get("scope"))) {
                     violations.add(new ViolationInfo("InterfacePolicy",
-                            "Interface " + cls + " has field " + t.to));
+                            "Interface " + cls + " has instance-scoped attribute " + attr));
                 }
             }
         }
@@ -159,7 +489,7 @@ public class InvariantChecker {
             String atom = attr.getKey();
             if (!atom.startsWith("Method")) continue;
             Map<String, String> attrs = attr.getValue();
-            if ("true".equals(attrs.get("static")) && "true".equals(attrs.get("abstract"))) {
+            if ("Static".equals(attrs.get("scope")) && "Yes".equals(attrs.get("isAbstract"))) {
                 violations.add(new ViolationInfo("StaticMethodPolicy",
                         "Method " + atom + " is both static and abstract"));
             }
@@ -167,49 +497,204 @@ public class InvariantChecker {
     }
 
     private void checkLocalMethodNamespace(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("classMethods")) {
-            if (t.to != null) {
-                String cls = t.from;
-                List<TupleEntry> allMethodsForClass = model.getTuples("classMethods");
-                Map<String, List<String>> methodNamesInClass = new HashMap<>();
-                for (TupleEntry mt : allMethodsForClass) {
-                    if (cls.equals(mt.from) && mt.to != null) {
-                        Map<String, String> mtdAttrs = model.atomAttrs.get(mt.to);
-                        String mname = mtdAttrs != null ? mtdAttrs.get("name") : null;
-                        if (mname != null) {
-                            methodNamesInClass.computeIfAbsent(mname, k -> new ArrayList<>()).add(mt.to);
-                        }
-                    }
+        Map<String, Map<String, List<String>>> classLocalMethods = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("localMethods")) {
+            if (t.to == null) continue;
+            Map<String, String> attrs = model.atomAttrs.get(t.to);
+            if (attrs == null) continue;
+            String key = methodKey(attrs);
+            if (key == null) continue;
+            classLocalMethods.computeIfAbsent(t.from, k -> new LinkedHashMap<>())
+                    .computeIfAbsent(key, k -> new ArrayList<>()).add(t.to);
+        }
+        for (Map.Entry<String, Map<String, List<String>>> e : classLocalMethods.entrySet()) {
+            for (Map.Entry<String, List<String>> ne : e.getValue().entrySet()) {
+                if (ne.getValue().size() > 1) {
+                    violations.add(new ViolationInfo("LocalMethodNamespace",
+                            "Duplicate method key '" + ne.getKey() + "' in " + e.getKey()
+                                    + ": " + ne.getValue()));
                 }
-                for (Map.Entry<String, List<String>> entry : methodNamesInClass.entrySet()) {
-                    if (entry.getValue().size() > 1) {
-                        violations.add(new ViolationInfo("LocalMethodNamespace",
-                                "Duplicate method name '" + entry.getKey() + "' in class " + cls
-                                        + ": " + String.join(", ", entry.getValue())));
-                        return;
+            }
+        }
+    }
+
+    private static String methodKey(Map<String, String> attrs) {
+        String name = attrs.get("memberName");
+        if (name == null) return null;
+        String paramTypes = attrs.get("paramTypes");
+        if (paramTypes != null && !paramTypes.isEmpty() && !"{}".equals(paramTypes)) {
+            return name + "(" + sortParamTypes(paramTypes) + ")";
+        }
+        return name;
+    }
+
+    private static String sortParamTypes(String raw) {
+        String inner = raw.replace("{", "").replace("}", "").trim();
+        if (inner.isEmpty()) return "";
+        Map<Integer, String> map = new TreeMap<>();
+        for (String entry : inner.split(",")) {
+            String trimmed = entry.trim();
+            int eq = trimmed.indexOf("=");
+            if (eq < 0) continue;
+            try {
+                int idx = Integer.parseInt(trimmed.substring(0, eq).trim());
+                String type = trimmed.substring(eq + 1).trim().replace("\"", "");
+                map.put(idx, type);
+            } catch (NumberFormatException ignored) { }
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<Integer, String> e : map.entrySet()) {
+            if (sb.length() > 0) sb.append(",");
+            sb.append(e.getValue());
+        }
+        return sb.toString();
+    }
+
+    /**
+     * Best-effort isSubtype check: returns true if {@code localType} is a nominal
+     * subtype of {@code inheritedType} via the classParent chain. Both types must
+     * be names of existing Classifier atoms. If no suitable hierarchy is found,
+     * returns false (conservative). Full Type-atom-based subtyping is deferred
+     * until the mapper emits Type/ClassifierType/PrimitiveType atoms.
+     */
+    private static boolean isSubtypeOf(String localType, String inheritedType, AieModel model) {
+        Set<String> localAtoms = new LinkedHashSet<>();
+        Set<String> inheritedAtoms = new LinkedHashSet<>();
+        for (Map.Entry<String, Map<String, String>> e : model.atomAttrs.entrySet()) {
+            String clsName = e.getValue().get("name");
+            if (localType.equals(clsName)) localAtoms.add(e.getKey());
+            if (inheritedType.equals(clsName)) inheritedAtoms.add(e.getKey());
+        }
+        if (localAtoms.isEmpty() || inheritedAtoms.isEmpty()) return false;
+
+        // Walk classParent chain: local's classifier must be a descendant
+        // of inherited's classifier
+        for (String localAtom : localAtoms) {
+            for (String inheritedAtom : inheritedAtoms) {
+                    if (localAtom.equals(inheritedAtom)) return true;
+                    String current = localAtom;
+                    Set<String> visited = new LinkedHashSet<>();
+                    while (current != null && visited.add(current)) {
+                        Map<String, String> cattrs = model.atomAttrs.get(current);
+                        String parent = cattrs != null ? cattrs.get("classParent") : null;
+                        if (inheritedAtom.equals(parent)) return true;
+                        current = parent;
+                    }
+            }
+        }
+        return false;
+    }
+
+    private void checkInheritedConflictPolicy(AieModel model, List<ViolationInfo> violations) {
+        Map<String, Map<String, List<String>>> classInheritedMethods = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("inheritedMethods")) {
+            if (t.to == null) continue;
+            Map<String, String> attrs = model.atomAttrs.get(t.to);
+            if (attrs == null) continue;
+            String key = methodKey(attrs);
+            if (key == null) continue;
+            classInheritedMethods.computeIfAbsent(t.from, k -> new LinkedHashMap<>())
+                    .computeIfAbsent(key, k -> new ArrayList<>()).add(t.to);
+        }
+        for (Map.Entry<String, Map<String, List<String>>> e : classInheritedMethods.entrySet()) {
+            for (Map.Entry<String, List<String>> ne : e.getValue().entrySet()) {
+                if (ne.getValue().size() > 1) {
+                    violations.add(new ViolationInfo("InheritedConflictPolicy",
+                            "Inherited method conflict key '" + ne.getKey() + "' in " + e.getKey()
+                                    + ": " + ne.getValue()));
+                }
+            }
+        }
+
+        Map<String, Map<String, List<String>>> classInheritedAttrs = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("inheritedAttributes")) {
+            if (t.to == null) continue;
+            Map<String, String> attrs = model.atomAttrs.get(t.to);
+            if (attrs == null) continue;
+            String memberName = attrs.get("memberName");
+            if (memberName == null) continue;
+            classInheritedAttrs.computeIfAbsent(t.from, k -> new LinkedHashMap<>())
+                    .computeIfAbsent(memberName, k -> new ArrayList<>()).add(t.to);
+        }
+        for (Map.Entry<String, Map<String, List<String>>> e : classInheritedAttrs.entrySet()) {
+            for (Map.Entry<String, List<String>> ne : e.getValue().entrySet()) {
+                if (ne.getValue().size() > 1) {
+                    violations.add(new ViolationInfo("InheritedConflictPolicy",
+                            "Inherited attribute conflict '" + ne.getKey() + "' in " + e.getKey()
+                                    + ": " + ne.getValue()));
+                }
+            }
+        }
+    }
+
+    private void checkOverrideDiscipline(AieModel model, List<ViolationInfo> violations) {
+        Map<String, Set<String>> localIds = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("localMethods")) {
+            if (t.to == null) continue;
+            Map<String, String> attrs = model.atomAttrs.get(t.to);
+            if (attrs == null) continue;
+            localIds.computeIfAbsent(t.from, k -> new LinkedHashSet<>()).add(t.to);
+        }
+
+        Map<String, Set<String>> inheritedIds = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("inheritedMethods")) {
+            if (t.to == null) continue;
+            Map<String, String> attrs = model.atomAttrs.get(t.to);
+            if (attrs == null) continue;
+            inheritedIds.computeIfAbsent(t.from, k -> new LinkedHashSet<>()).add(t.to);
+        }
+
+        for (String classifier : localIds.keySet()) {
+            Set<String> inherited = inheritedIds.get(classifier);
+            if (inherited == null || inherited.isEmpty()) continue;
+            Set<String> local = localIds.get(classifier);
+            if (local == null) continue;
+
+            for (String lm : local) {
+                Map<String, String> lAttrs = model.atomAttrs.get(lm);
+                if (lAttrs == null) continue;
+                String lKey = methodKey(lAttrs);
+                String lScope = lAttrs.get("scope");
+
+                for (String im : inherited) {
+                    Map<String, String> iAttrs = model.atomAttrs.get(im);
+                    if (iAttrs == null) continue;
+                    String iKey = methodKey(iAttrs);
+                    if (!lKey.equals(iKey)) continue;
+                    // Scope match is a precondition of override in the Alloy
+                    // model (overrides predicate, kernel line 348). Mismatched
+                    // scope means no override occurs — not a violation.
+                    if (lScope != null && !lScope.equals(iAttrs.get("scope"))) continue;
+
+                    // O-09: return-type covariance — the overriding method's
+                    // return type must be equal to or a proper subtype of the
+                    // inherited method's return type.
+                    String lRetType = lAttrs.get("returnType");
+                    String iRetType = iAttrs.get("returnType");
+                    if (lRetType != null && iRetType != null
+                            && !lRetType.equals(iRetType)
+                            && !isSubtypeOf(lRetType, iRetType, model)) {
+                        violations.add(new ViolationInfo("OverridePolicy",
+                                "Override " + lm + " (returnType " + lRetType
+                                        + ") in " + classifier
+                                        + " is not a subtype of inherited " + im
+                                        + " (returnType " + iRetType + ")"));
+                    }
+
+                    boolean isAbstract = "Yes".equals(lAttrs.get("isAbstract"));
+                    if (!isAbstract && !isClassAtom(classifier)) {
+                        violations.add(new ViolationInfo("OverridePolicy",
+                                "Override " + lm + " in " + classifier
+                                        + " is non-abstract but classifier is not a Class"));
                     }
                 }
             }
         }
     }
 
-    private void checkGeneralizationKindPolicy(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("classParent")) {
-            if (t.to != null) {
-                String child = t.from;
-                String parent = t.to;
-                Map<String, String> childAttrs = model.atomAttrs.get(child);
-                Map<String, String> parentAttrs = model.atomAttrs.get(parent);
-                String childKind = childAttrs != null ? childAttrs.get("kind") : null;
-                String parentKind = parentAttrs != null ? parentAttrs.get("kind") : null;
-                if (childKind == null || parentKind == null) continue;
-
-                if ("interface".equals(childKind) && !"interface".equals(parentKind)) {
-                    violations.add(new ViolationInfo("GeneralizationKindPolicy",
-                            "Interface " + child + " extends non-interface " + parent));
-                }
-            }
-        }
+    static class MethodBodyInfo {
+        final String atom;
+        MethodBodyInfo(String atom) { this.atom = atom; }
     }
 
     static class AieModel {
@@ -224,7 +709,6 @@ public class InvariantChecker {
         }
 
         void addTuple(String relation, String from, String to) {
-            atoms.add("null");
             atoms.add(from);
             if (to != null && !to.equals("null")) {
                 atoms.add(to);
@@ -274,7 +758,7 @@ public class InvariantChecker {
             }
 
             if (inRoot) {
-                if (line.startsWith("classes = {")) {
+                if (line.startsWith("classifiers = {")) {
                     String inner = extractBraces(line);
                     if (inner != null) {
                         for (String s : inner.split(",")) {
@@ -318,6 +802,7 @@ public class InvariantChecker {
         if (inner.endsWith("}")) inner = inner.substring(0, inner.length() - 1);
         for (String part : inner.split(",")) {
             part = part.trim();
+            if (part.isEmpty()) continue;
             if (part.contains("=")) {
                 String[] kv = part.split("=", 2);
                 String key = kv[0].trim();

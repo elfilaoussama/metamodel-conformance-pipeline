@@ -1,0 +1,8 @@
+-- Static abstract method violation
+Root = {
+  classifiers = {Class0}
+  Class0 = { name = "Foo", isAbstract = "No", cid = ClassifierID0 }
+  Method0 = { memberName = "bar", returnType = "void", isAbstract = "Yes", visibility = Pub, scope = Static, mid = MethodID0, paramTypes = {} }
+  classParent[Class0] = null
+  localMethods[Class0] = {Method0}
+}

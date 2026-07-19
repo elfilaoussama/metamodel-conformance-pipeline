@@ -1,0 +1,14 @@
+-- O-02 violation: Method in two localMethods sets
+Root = {
+  classifiers = {Class0, Class1}
+  Class0 = { name = "Foo", isAbstract = "No", cid = ClassifierID0 }
+  Class1 = { name = "Bar", isAbstract = "No", cid = ClassifierID1 }
+  Method0 = { memberName = "shared", returnType = "void", isAbstract = "No", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }
+  MethodBody0 = {}
+  ImplementationBinding0 = { implementer = Class0, target = Method0, body = MethodBody0 }
+  ImplementationBinding1 = { implementer = Class1, target = Method0, body = MethodBody0 }
+  classParent[Class0] = null
+  classParent[Class1] = null
+  localMethods[Class0] = {Method0}
+  localMethods[Class1] = {Method0}
+}

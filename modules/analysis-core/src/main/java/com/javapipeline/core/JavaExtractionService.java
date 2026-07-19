@@ -12,4 +12,8 @@ public interface JavaExtractionService {
             ProgressListener progress,
             CancellationToken cancellation
     ) throws JavaExtractionException;
+
+    default Language getLanguage() {
+        return Language.JAVA;
+    }
 }

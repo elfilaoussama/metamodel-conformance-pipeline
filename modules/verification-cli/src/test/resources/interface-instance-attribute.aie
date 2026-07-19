@@ -1,0 +1,8 @@
+-- O-07 violation: Interface with instance-scoped attribute
+Root = {
+  classifiers = {Interface0}
+  Interface0 = { name = "IBar", isAbstract = "Yes", cid = ClassifierID0 }
+  Attribute0 = { memberName = "x", type = "int", visibility = Pub, scope = Instance, aid = AttributeID0 }
+  classParent[Interface0] = null
+  localAttributes[Interface0] = {Attribute0}
+}

@@ -1,0 +1,16 @@
+-- O-08 violation: Inherited method conflict (two ancestors with same method name)
+Root = {
+  classifiers = {Interface0, Interface1, Class0}
+  Interface0 = { name = "IA", isAbstract = "Yes", cid = ClassifierID0 }
+  Interface1 = { name = "IB", isAbstract = "Yes", cid = ClassifierID1 }
+  Class0 = { name = "Foo", isAbstract = "No", cid = ClassifierID0 }
+  Method0 = { memberName = "conflict", returnType = "void", isAbstract = "Yes", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }
+  Method1 = { memberName = "conflict", returnType = "int", isAbstract = "Yes", visibility = Pub, scope = Instance, mid = MethodID1, paramTypes = {} }
+  classParent[Interface0] = null
+  classParent[Interface1] = null
+  classParent[Class0] = null
+  interfaceParents[Class0] = {Interface0, Interface1}
+  localMethods[Interface0] = {Method0}
+  localMethods[Interface1] = {Method1}
+  inheritedMethods[Class0] = {Method0, Method1}
+}

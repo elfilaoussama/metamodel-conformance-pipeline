@@ -17,6 +17,8 @@
         <module>modules/github-ingestion</module>
         <module>modules/github-search</module>
         <module>modules/spoon-extraction</module>
+        <module>modules/python-extraction</module>
+        <module>modules/cpp-extraction</module>
         <module>modules/verification-integration</module>
         <module>apps/swing-desktop</module>
     </modules>
@@ -52,6 +54,16 @@
             <dependency>
                 <groupId>com.javapipeline</groupId>
                 <artifactId>spoon-extraction</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javapipeline</groupId>
+                <artifactId>python-extraction</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.javapipeline</groupId>
+                <artifactId>cpp-extraction</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
