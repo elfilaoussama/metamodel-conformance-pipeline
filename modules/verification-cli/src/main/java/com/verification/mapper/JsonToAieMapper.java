@@ -92,7 +92,7 @@ public class JsonToAieMapper {
                     String mvis = visibilityToEnum(getString(m, "visibility", "public"));
                     String mstatic = getString(m, "staticExecutable", "false");
                     String scope = booleanToScope(mstatic);
-                    String returnType = getString(m, "returnType", "void");
+                    String returnType = getString(m, "returnType", "unknown");
 
                     Map<String, String> attrs = new LinkedHashMap<>();
                     attrs.put("memberName", mname);
@@ -264,7 +264,8 @@ public class JsonToAieMapper {
             Set<Integer> ancestors = ancestorsCache.get(ti);
             computeAndWriteInherited(aie, ti, id, ancestors, typeList, total,
                     localMethods, allMethodAttrs, localAttrs, allAttrAttrs,
-                    atomIds, ancestorsCache, isInterface);
+                    atomIds, ancestorsCache, isInterface,
+                    parentClassMap, parentInterfacesMap);
         }
 
         aie.append("}\n");
@@ -276,10 +277,12 @@ public class JsonToAieMapper {
             Map<Integer, List<String>> localMethods, Map<String, Map<String, String>> allMethodAttrs,
             Map<Integer, List<String>> localAttrs, Map<String, Map<String, String>> allAttrAttrs,
             List<String> atomIds, List<Set<Integer>> ancestorsCache,
-            List<Boolean> isInterface) {
+            List<Boolean> isInterface,
+            Map<Integer, Integer> parentClassMap, Map<Integer, List<String>> parentInterfacesMap) {
 
         List<String> inheritedMethods = computeInheritedMethods(ti, ancestors, typeList,
-                localMethods, allMethodAttrs, atomIds, ancestorsCache, isInterface);
+                localMethods, allMethodAttrs, atomIds, ancestorsCache, isInterface,
+                parentClassMap, parentInterfacesMap);
         if (!inheritedMethods.isEmpty()) {
             aie.append("  inheritedMethods[").append(id).append("] = {");
             for (int i = 0; i < inheritedMethods.size(); i++) {
@@ -290,7 +293,8 @@ public class JsonToAieMapper {
         }
 
         List<String> inheritedAttrs = computeInheritedAttributes(ti, ancestors, typeList,
-                localAttrs, allAttrAttrs, atomIds, ancestorsCache, isInterface);
+                localAttrs, allAttrAttrs, atomIds, ancestorsCache, isInterface,
+                parentClassMap, parentInterfacesMap);
         if (!inheritedAttrs.isEmpty()) {
             aie.append("  inheritedAttributes[").append(id).append("] = {");
             for (int i = 0; i < inheritedAttrs.size(); i++) {
@@ -305,11 +309,12 @@ public class JsonToAieMapper {
             List<JsonObject> typeList, Map<Integer, List<String>> localMethods,
             Map<String, Map<String, String>> allMethodAttrs,
             List<String> atomIds, List<Set<Integer>> ancestorsCache,
-            List<Boolean> isInterface) {
+            List<Boolean> isInterface,
+            Map<Integer, Integer> parentClassMap, Map<Integer, List<String>> parentInterfacesMap) {
 
         Set<Integer> sorted = new LinkedHashSet<>();
         List<Integer> topo = new ArrayList<>();
-        collectNodes(ancestors, typeList, new HashMap<>(), new HashMap<>(), topo);
+        collectNodes(ancestors, typeList, parentClassMap, parentInterfacesMap, topo);
         for (int a : topo) sorted.add(a);
 
         Map<String, String> seen = new LinkedHashMap<>();
@@ -322,19 +327,10 @@ public class JsonToAieMapper {
                 if ("Priv".equals(attrs.get("visibility"))) continue;
                 String key = methodKey(attrs);
                 if (key == null) continue;
-                String earlier = seen.get(key);
-                if (earlier != null) {
-                    int earlierIdx = findAncestorContaining(earlier, ancestors, typeList,
-                            localMethods, allMethodAttrs, atomIds);
-                    if (earlierIdx >= 0 && ancestors.contains(earlierIdx)) {
-                        Set<Integer> earlierAncs = ancestorsCache.get(earlierIdx);
-                        if (earlierAncs != null && earlierAncs.contains(ai)) {
-                            seen.put(key, mid);
-                        }
-                    }
-                } else {
-                    seen.put(key, mid);
-                }
+                // Ascending depth order (root first): later entries are nearer
+                // to the target class and always override earlier ones with the
+                // same key, matching O-04 nearer-ancestor priority.
+                seen.put(key, mid);
             }
         }
 
@@ -355,11 +351,12 @@ public class JsonToAieMapper {
             List<JsonObject> typeList, Map<Integer, List<String>> localAttrs,
             Map<String, Map<String, String>> allAttrAttrs,
             List<String> atomIds, List<Set<Integer>> ancestorsCache,
-            List<Boolean> isInterface) {
+            List<Boolean> isInterface,
+            Map<Integer, Integer> parentClassMap, Map<Integer, List<String>> parentInterfacesMap) {
 
         Set<Integer> sorted = new LinkedHashSet<>();
         List<Integer> topo = new ArrayList<>();
-        collectNodes(ancestors, typeList, new HashMap<>(), new HashMap<>(), topo);
+        collectNodes(ancestors, typeList, parentClassMap, parentInterfacesMap, topo);
         for (int a : topo) sorted.add(a);
 
         Map<String, String> seen = new LinkedHashMap<>();
@@ -426,19 +423,30 @@ public class JsonToAieMapper {
     private void collectNodes(Set<Integer> nodes, List<JsonObject> typeList,
             Map<Integer, Integer> parentClassMap, Map<Integer, List<String>> parentInterfacesMap,
             List<Integer> result) {
-        Set<Integer> visited = new LinkedHashSet<>();
-        for (int n : nodes) {
-            if (visited.add(n)) result.add(n);
-            Integer pc = parentClassMap.get(n);
-            if (pc != null && visited.add(pc)) result.add(pc);
-            List<String> intfs = parentInterfacesMap.get(n);
-            if (intfs != null) {
-                for (String istr : intfs) {
-                    int idx = extractIndex(istr);
-                    if (idx >= 0 && visited.add(idx)) result.add(idx);
-                }
+        Map<Integer, Integer> depth = new LinkedHashMap<>();
+        for (int n : nodes) depth.put(n, nodeDepth(n, parentClassMap, parentInterfacesMap, new LinkedHashSet<>()));
+        // Sort by depth ASCENDING (root first). Inherited methods are computed
+        // top-down so that nearer ancestors' methods override farther ancestors'
+        // methods with the same key, matching O-04's nearer-ancestor priority.
+        List<Integer> sorted = new ArrayList<>(nodes);
+        sorted.sort((a, b) -> Integer.compare(depth.getOrDefault(a, 0), depth.getOrDefault(b, 0)));
+        result.addAll(sorted);
+    }
+
+    private int nodeDepth(int n, Map<Integer, Integer> parentClassMap,
+            Map<Integer, List<String>> parentInterfacesMap, Set<Integer> visited) {
+        if (!visited.add(n)) return 0;
+        int maxParent = 0;
+        Integer pc = parentClassMap.get(n);
+        if (pc != null) maxParent = Math.max(maxParent, 1 + nodeDepth(pc, parentClassMap, parentInterfacesMap, visited));
+        List<String> intfs = parentInterfacesMap.get(n);
+        if (intfs != null) {
+            for (String istr : intfs) {
+                int idx = extractIndex(istr);
+                if (idx >= 0) maxParent = Math.max(maxParent, 1 + nodeDepth(idx, parentClassMap, parentInterfacesMap, visited));
             }
         }
+        return maxParent;
     }
 
     private Set<Integer> computeAncestors(int start, Map<Integer, Integer> parentClassMap,
