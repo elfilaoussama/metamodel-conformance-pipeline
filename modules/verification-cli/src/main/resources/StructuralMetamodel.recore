@@ -1,0 +1,104 @@
+import ecore : 'http://www.eclipse.org/emf/2002/Ecore';
+
+package structural_metamodel : sm = 'http://example.com/structural_metamodel'
+{
+    enum Visibility { literal Pub = 0; literal Priv = 1; literal Prot = 2; literal Pkg = 3; }
+    enum YesNo { literal Yes = 0; literal No = 1; }
+    enum Scope { literal Instance = 0; literal Static = 1; }
+
+    class Method
+    {
+        attribute mid : String {id};
+        attribute memberName : String;
+        attribute returnType : String;
+        attribute paramTypes : String;
+        attribute visibility : Visibility;
+        attribute scope : Scope;
+        attribute isAbstract : YesNo;
+    }
+
+    class Attribute
+    {
+        attribute aid : String {id};
+        attribute memberName : String;
+        attribute type : String;
+        attribute visibility : Visibility;
+        attribute scope : Scope;
+    }
+
+    class MethodBody;
+
+    class ImplementationBinding
+    {
+        property implementer : Classifier;
+        property target : Method;
+        property body : MethodBody;
+    }
+
+    class Classifier
+    {
+        attribute cid : String {id};
+        attribute name : String;
+        attribute isAbstract : YesNo;
+        property classParent : Classifier;
+        property localMethods : Method[*] {composes};
+        property localAttributes : Attribute[*] {composes};
+        property inheritedMethods : Method[*];
+        property inheritedAttributes : Attribute[*];
+        property directInstances : Object[*];
+    }
+
+    class Object { attribute oid : String {id}; }
+
+    class Root
+    {
+        property contents : Classifier[*] {composes};
+    }
+
+    -- O-01
+    invariant UniqueCids : all c1, c2 : Classifier | c1 != c2 implies c1.cid != c2.cid;
+    invariant UniqueMids : all m1, m2 : Method | m1 != m2 implies m1.mid != m2.mid;
+    invariant UniqueAids : all a1, a2 : Attribute | a1 != a2 implies a1.aid != a2.aid;
+
+    -- O-02
+    invariant ExclusiveMethodOwner : all m : Method | one c : Classifier | m in c.localMethods;
+    invariant ExclusiveAttributeOwner : all a : Attribute | one c : Classifier | a in c.localAttributes;
+
+    -- O-03
+    invariant AcyclicParents : no c : Classifier | c in c.^classParent;
+
+    -- O-04
+    invariant InheritedMethodView : all c : Classifier |
+        c.inheritedMethods = {m : Method | some anc : c.^classParent |
+            m in anc.localMethods and m.visibility != Priv};
+
+    -- O-05
+    invariant DisjointMethods : all c : Classifier | no c.localMethods & c.inheritedMethods;
+    invariant DisjointAttributes : all c : Classifier | no c.localAttributes & c.inheritedAttributes;
+
+    -- O-06
+    invariant BindingTargetValid : all b : ImplementationBinding |
+        b.target in b.implementer.localMethods + b.implementer.inheritedMethods;
+    invariant NoOrphanBodies : all mb : MethodBody | one b : ImplementationBinding | b.body = mb;
+    invariant SingleBinding : all c : Classifier | all m : Method |
+        lone b : ImplementationBinding | b.implementer = c and b.target = m;
+    invariant AbstractNoLocal : all c : Classifier | all m : c.localMethods |
+        m.isAbstract = Yes implies no b : ImplementationBinding | b.implementer = c and b.target = m;
+    invariant NonAbstractHasBinding : all c : Classifier | all m : c.localMethods |
+        m.isAbstract = No implies one b : ImplementationBinding | b.implementer = c and b.target = m;
+
+    -- O-07
+    invariant AbstractNoDirectInstances : all c : Classifier | c.isAbstract = Yes implies no c.directInstances;
+    invariant ObjectsInOneClass : all o : Object | one c : Classifier | o in c.directInstances;
+    invariant StaticNotAbstract : all m : Method | not (m.scope = Static and m.isAbstract = Yes);
+
+    -- O-08
+    invariant LocalMethodNamespace : all c : Classifier | all m1, m2 : c.localMethods |
+        m1 != m2 implies (m1.memberName != m2.memberName or m1.paramTypes != m2.paramTypes);
+    invariant LocalAttributeNamespace : all c : Classifier | all a1, a2 : c.localAttributes |
+        a1 != a2 implies a1.memberName != a2.memberName;
+    invariant InheritedMethodNoConflict : all c : Classifier | all m1, m2 : c.inheritedMethods |
+        m1 != m2 implies (m1.memberName != m2.memberName or m1.paramTypes != m2.paramTypes);
+    invariant InheritedAttributeNoConflict : all c : Classifier | all a1, a2 : c.inheritedAttributes |
+        a1 != a2 implies a1.memberName != a2.memberName;
+}

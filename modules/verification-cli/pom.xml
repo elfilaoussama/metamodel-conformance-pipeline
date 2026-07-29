@@ -8,17 +8,20 @@
     <version>1.0-SNAPSHOT</version>
 
     <properties>
-        <maven.compiler.release>17</maven.compiler.release>
+<maven.compiler.source>17</maven.compiler.source>
+<maven.compiler.target>17</maven.compiler.target>
         <alloyinecore.lib.dir>lib</alloyinecore.lib.dir>
     </properties>
 
     <dependencies>
+        <!-- The AlloyInEcore core dependency installed in WSL ~/.m2 -->
         <dependency>
             <groupId>eu.modelwriter.core</groupId>
             <artifactId>alloyinecore</artifactId>
             <version>1.0-SNAPSHOT</version>
         </dependency>
 
+        <!-- System dependencies from AlloyInEcore -->
         <dependency>
             <groupId>kodkod</groupId>
             <artifactId>kodkod</artifactId>
@@ -61,33 +64,32 @@
             <scope>system</scope>
             <systemPath>${project.basedir}/${alloyinecore.lib.dir}/org.eclipse.emf.compare_3.5.0.201706130827.jar</systemPath>
         </dependency>
+        <!-- ANTLR4 runtime — must match version used to compile AlloyInEcore (4.7) -->
         <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>antlr4-runtime</artifactId>
             <version>4.7</version>
         </dependency>
+        <!-- Transitive requirement for AlloyInEcore EcoreTranslator -->
         <dependency>
             <groupId>org.antlr</groupId>
             <artifactId>ST4</artifactId>
             <version>4.0.8</version>
         </dependency>
+        <!-- JSON Parsing for java-metamodel integration -->
         <dependency>
             <groupId>com.google.code.gson</groupId>
             <artifactId>gson</artifactId>
             <version>2.10.1</version>
         </dependency>
+
+        <!-- SAT4J (pure Java solver) used as a portable fallback when native prover libs are unavailable -->
         <dependency>
             <groupId>org.sat4j</groupId>
             <artifactId>org.sat4j.core</artifactId>
             <version>2.3.1</version>
             <scope>system</scope>
             <systemPath>${project.basedir}/${alloyinecore.lib.dir}/org.sat4j.core-2.3.1.jar</systemPath>
-        </dependency>
-        <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <version>5.11.4</version>
-            <scope>test</scope>
         </dependency>
     </dependencies>
 
@@ -113,6 +115,7 @@
                         <additionalClasspathElement>${project.basedir}/${alloyinecore.lib.dir}/org.eclipse.emf.ecore.xmi_2.12.0.v20160420-0247.jar</additionalClasspathElement>
                         <additionalClasspathElement>${project.basedir}/${alloyinecore.lib.dir}/org.eclipse.emf.compare_3.5.0.201706130827.jar</additionalClasspathElement>
                         <additionalClasspathElement>${project.basedir}/${alloyinecore.lib.dir}/org.sat4j.core-2.3.1.jar</additionalClasspathElement>
+                        <!-- Also adding ANTLR implicitly needed by AlloyInEcore at runtime -->
                         <additionalClasspathElement>${project.basedir}/${alloyinecore.lib.dir}/antlr4-runtime-4.6.jar</additionalClasspathElement>
                         <additionalClasspathElement>${project.basedir}/${alloyinecore.lib.dir}/antlr4-4.6.jar</additionalClasspathElement>
                     </additionalClasspathElements>
