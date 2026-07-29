@@ -35,7 +35,7 @@ public record GitHubSearchCriteria(
         topic = clean(topic);
         license = clean(license);
         forkMode = Objects.requireNonNullElse(forkMode, ForkMode.EXCLUDE);
-        archiveMode = Objects.requireNonNullElse(archiveMode, ArchiveMode.EXCLUDE);
+        archiveMode = Objects.requireNonNullElse(archiveMode, ArchiveMode.INCLUDE);
         sort = Objects.requireNonNullElse(sort, Sort.BEST_MATCH);
         order = Objects.requireNonNullElse(order, Order.DESCENDING);
         requireRange(minStars, maxStars, "stars");

@@ -35,7 +35,7 @@ public final class BatchSearchRunner {
     private static final Path WORKSPACE = Path.of("workspace/repositories");
     private static final Path VERIFIER = Path.of("modules/verification-cli");
     private static final Path METAMODEL =
-            VERIFIER.resolve("src/main/resources/kernel_v2_obligation.als");
+            VERIFIER.resolve("src/main/resources/metamodel.als");
 
     private final Path outputRoot;
     private final Path combinedCsv;

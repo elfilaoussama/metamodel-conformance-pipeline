@@ -1,6 +1,7 @@
 package com.javapipeline.desktop;
 
 import com.javapipeline.core.*;
+import com.javapipeline.core.search.GitHubRepositorySummary;
 import com.javapipeline.cpp.CppExtractionService;
 import com.javapipeline.github.JGitHubRepositoryIngestionService;
 import com.javapipeline.python.PythonExtractionService;
@@ -26,6 +27,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.prefs.BackingStoreException;
@@ -37,7 +39,7 @@ final class AnalysisFrame extends JFrame {
     private static final String DEFAULT_WORKSPACE = "workspace/repositories";
     private static final String DEFAULT_OUTPUT = "analysis-output";
     private static final String DEFAULT_VERIFIER = "modules/verification-cli";
-    private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/kernel_v2_obligation.als";
+    private static final String DEFAULT_METAMODEL = DEFAULT_VERIFIER + "/src/main/resources/metamodel.als";
     private static final String PREF_WORKSPACE = "workspace";
     private static final String PREF_OUTPUT = "output";
     private static final String PREF_VERIFIER = "verifier";
@@ -70,9 +72,9 @@ final class AnalysisFrame extends JFrame {
     private final JButton searchGitHubButton = new JButton("Search GitHub...");
     private final JButton removeButton = new JButton("Remove selected");
     private final JButton clearButton = new JButton("Clear");
-    private final JButton startButton = new JButton("Start");
+    private final JButton startButton = new JButton("Ingest");
     private final JButton cancelButton = new JButton("Cancel");
-    private final JButton verifyExistingButton = new JButton("Verify existing");
+    private final JButton verifyButton = new JButton("Verify");
     private final JTabbedPane resultTabs = new JTabbedPane();
     private SwingWorker<Void, UiEvent> activeWorker;
 
@@ -141,6 +143,10 @@ final class AnalysisFrame extends JFrame {
         JMenuItem exportSummaryItem = new JMenuItem("Verification summary as text...");
         exportSummaryItem.addActionListener(e -> exportVerification("txt"));
         exportMenu.add(exportSummaryItem);
+        exportMenu.addSeparator();
+        JMenuItem exportQueueItem = new JMenuItem("Ingestion queue as CSV...");
+        exportQueueItem.addActionListener(e -> exportQueue());
+        exportMenu.add(exportQueueItem);
         bar.add(exportMenu);
 
         JMenu helpMenu = new JMenu("Help");
@@ -193,7 +199,7 @@ final class AnalysisFrame extends JFrame {
                             VerificationOutcome outcome = verifier.readExisting(verificationDir);
                             item.status = outcome.status() == VerificationOutcome.Status.UNSAT
                                     ? RepositoryQueueModel.Status.VIOLATIONS : RepositoryQueueModel.Status.COMPLETED;
-                            item.activity = outcome.status() + " — " + outcome.violations().size() + " violation(s)";
+                            item.activity = outcome.status() + " ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ " + outcome.violations().size() + " violation(s)";
                             verificationModel.add(repoName, outcome);
                             updateVerificationTabBadge();
                         } catch (Exception ex) {
@@ -213,6 +219,58 @@ final class AnalysisFrame extends JFrame {
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void exportQueue() {
+        Path outputBase = Path.of(outputField.getText().trim()).toAbsolutePath().normalize();
+        JFileChooser chooser = new JFileChooser(outputBase.toString());
+        chooser.setSelectedFile(new java.io.File("ingestion-queue.csv"));
+        chooser.setFileFilter(new javax.swing.filechooser.FileNameExtensionFilter(
+                "CSV file (*.csv)", "csv"));
+        if (chooser.showSaveDialog(this) != JFileChooser.APPROVE_OPTION) return;
+        Path target = chooser.getSelectedFile().toPath();
+        if (!target.getFileName().toString().contains(".")) {
+            target = target.resolveSibling(target.getFileName() + ".csv");
+        }
+        try {
+            writeQueueCsv(target);
+            appendLog("Exported ingestion queue to " + target);
+            statusLabel.setText("Exported " + target.getFileName());
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, "Export failed: " + ex.getMessage(),
+                    "Export error", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private void autoSaveQueue() {
+        try {
+            Path outputBase = Path.of(outputField.getText().trim()).toAbsolutePath().normalize();
+            if (!Files.isDirectory(outputBase)) return;
+            Files.createDirectories(outputBase);
+            Path target = outputBase.resolve("ingestion-export.csv");
+            writeQueueCsv(target);
+        } catch (Exception ignored) { }
+    }
+
+    private void writeQueueCsv(Path target) throws java.io.IOException {
+        StringBuilder csv = new StringBuilder("Repository,Language,Status,Activity,Types,Output\n");
+        for (RepositoryQueueModel.Item item : queueModel.snapshot()) {
+            csv.append(escapeCsvCell(item.url)).append(",");
+            csv.append(item.language).append(",");
+            csv.append(item.status).append(",");
+            csv.append(escapeCsvCell(item.activity)).append(",");
+            csv.append(item.typeCount != null ? item.typeCount : "").append(",");
+            csv.append(item.output != null ? item.output.toString() : "").append("\n");
+        }
+        Files.writeString(target, csv.toString(), StandardCharsets.UTF_8);
+    }
+
+    private static String escapeCsvCell(String value) {
+        if (value == null) return "";
+        if (value.contains(",") || value.contains("\"") || value.contains("\n")) {
+            return "\"" + value.replace("\"", "\"\"") + "\"";
+        }
+        return value;
     }
 
     private void exportVerification(String format) {
@@ -394,7 +452,7 @@ final class AnalysisFrame extends JFrame {
         JButton openOutput = new JButton("Open output");
         openOutput.addActionListener(event -> openOutputFolder());
         queueActions.add(openOutput);
-        queueActions.add(verifyExistingButton);
+        queueActions.add(verifyButton);
 
         JPanel queuePanel = new JPanel(new BorderLayout(5, 5));
         queuePanel.add(queueActions, BorderLayout.NORTH);
@@ -514,9 +572,9 @@ final class AnalysisFrame extends JFrame {
                     requiredPath(outputField.getText(), "Analysis output"),
                     (Integer) depthSpinner.getValue(),
                     (Integer) complianceSpinner.getValue(),
-                    includeTestsBox.isSelected(), reuseBox.isSelected(), verifyBox.isSelected(),
-                    verifyBox.isSelected() ? requiredPath(verifierField.getText(), "Verifier module") : null,
-                    verifyBox.isSelected() ? requiredPath(metamodelField.getText(), "Alloy metamodel") : null);
+                    includeTestsBox.isSelected(), reuseBox.isSelected(), true,
+                    requiredPath(verifierField.getText(), "Verifier module"),
+                    requiredPath(metamodelField.getText(), "Alloy metamodel"));
             Files.createDirectories(configuration.workspace());
             Files.createDirectories(configuration.output());
             savePreferences();
@@ -573,12 +631,12 @@ final class AnalysisFrame extends JFrame {
                 new GitHubSearchDialog(this, this::addSearchResults).setVisible(true));
         removeButton.addActionListener(event -> removeSelected());
         clearButton.addActionListener(event -> queueModel.clear());
-        startButton.addActionListener(event -> startAnalysis());
+        startButton.addActionListener(event -> startIngestion());
         cancelButton.addActionListener(event -> {
-            if (activeWorker != null) activeWorker.cancel(false);
+            if (activeWorker != null) activeWorker.cancel(true);
         });
         verifyBox.addActionListener(event -> updateVerificationControls());
-        verifyExistingButton.addActionListener(event -> verifyExistingRepos());
+        verifyButton.addActionListener(event -> startVerification());
     }
 
     private void installFieldValidation() {
@@ -611,51 +669,6 @@ final class AnalysisFrame extends JFrame {
         });
     }
 
-    private void verifyExistingRepos() {
-        Path outputBase = Path.of(outputField.getText().trim()).toAbsolutePath().normalize();
-        if (!Files.isDirectory(outputBase)) {
-            JOptionPane.showMessageDialog(this, "Output directory does not exist: " + outputBase,
-                    "Cannot verify", JOptionPane.WARNING_MESSAGE);
-            return;
-        }
-        try {
-            verifyBox.setSelected(true);
-            Path verifier = requiredPath(verifierField.getText(), "Verifier module");
-            Path metamodel = requiredPath(metamodelField.getText(), "Alloy metamodel");
-            List<Path> extractionJsons;
-            try (Stream<Path> stream = Files.list(outputBase)) {
-                extractionJsons = stream
-                        .filter(Files::isDirectory)
-                        .map(dir -> dir.resolve("extraction.json"))
-                        .filter(Files::isRegularFile)
-                        .sorted()
-                        .toList();
-            }
-            if (extractionJsons.isEmpty()) {
-                JOptionPane.showMessageDialog(this, "No extraction.json files found in " + outputBase,
-                        "Nothing to verify", JOptionPane.INFORMATION_MESSAGE);
-                return;
-            }
-            for (Path extraction : extractionJsons) {
-                String repoName = extraction.getParent().getFileName().toString();
-                queueModel.add(repoName);
-            }
-            RunConfiguration configuration = new RunConfiguration(
-                    requiredPath(workspaceField.getText(), "Clone workspace"),
-                    outputBase, 1, 17, false, true, true, verifier, metamodel);
-            savePreferences();
-            progressBar.setValue(0);
-            progressBar.setMaximum(extractionJsons.size());
-            progressBar.setIndeterminate(false);
-            setBusy(true);
-            verificationModel.clear();
-            activeWorker = new ExistingVerificationWorker(extractionJsons, configuration);
-            activeWorker.execute();
-        } catch (Exception ex) {
-            JOptionPane.showMessageDialog(this, ex.getMessage(), "Error", JOptionPane.ERROR_MESSAGE);
-        }
-    }
-
     private void addUrls(ActionEvent ignored) {
         int depth = (Integer) depthSpinner.getValue();
         for (String line : urlsArea.getText().lines().toList()) {
@@ -678,22 +691,37 @@ final class AnalysisFrame extends JFrame {
         }
     }
 
-    private void addSearchResults(List<String> urls) {
+    private void addSearchResults(List<GitHubRepositorySummary> repos) {
         int added = 0;
-        for (String url : urls) {
+        for (GitHubRepositorySummary repo : repos) {
+            String url = repo.cloneUrl();
+            if (url.isBlank()) continue;
             int before = queueModel.getRowCount();
             queueModel.add(url);
-            if (queueModel.getRowCount() > before) added++;
+            if (queueModel.getRowCount() > before) {
+                RepositoryQueueModel.Item item = queueModel.get(url);
+                if (item != null) item.language = githubLanguage(repo.language());
+                added++;
+            }
         }
-        appendLog("GitHub search added " + added + " new repositories (" + (urls.size() - added)
+        appendLog("GitHub search added " + added + " new repositories (" + (repos.size() - added)
                 + " duplicates skipped).");
     }
 
-    private void startAnalysis() {
-        List<RepositoryQueueModel.Item> items = queueModel.snapshot();
+    private static Language githubLanguage(String ghLang) {
+        if (ghLang == null) return Language.JAVA;
+        return switch (ghLang.toLowerCase()) {
+            case "python" -> Language.PYTHON;
+            case "c++", "c", "cpp", "objective-c", "objective-c++" -> Language.CPP;
+            default -> Language.JAVA;
+        };
+    }
+
+    private void startIngestion() {
+        List<RepositoryQueueModel.Item> items = selectedOrAll();
         if (items.isEmpty()) {
-            JOptionPane.showMessageDialog(this, "Add at least one GitHub repository.",
-                    "Nothing to analyze", JOptionPane.INFORMATION_MESSAGE);
+            JOptionPane.showMessageDialog(this, "Add at least one repository.",
+                    "Nothing to ingest", JOptionPane.INFORMATION_MESSAGE);
             return;
         }
         try {
@@ -702,9 +730,7 @@ final class AnalysisFrame extends JFrame {
                     requiredPath(outputField.getText(), "Analysis output"),
                     (Integer) depthSpinner.getValue(),
                     (Integer) complianceSpinner.getValue(),
-                    includeTestsBox.isSelected(), reuseBox.isSelected(), verifyBox.isSelected(),
-                    verifyBox.isSelected() ? requiredPath(verifierField.getText(), "Verifier module") : null,
-                    verifyBox.isSelected() ? requiredPath(metamodelField.getText(), "Alloy metamodel") : null);
+                    includeTestsBox.isSelected(), reuseBox.isSelected(), false);
             Files.createDirectories(configuration.workspace());
             Files.createDirectories(configuration.output());
             savePreferences();
@@ -712,12 +738,56 @@ final class AnalysisFrame extends JFrame {
             progressBar.setMaximum(items.size());
             progressBar.setIndeterminate(false);
             setBusy(true);
-            verificationModel.clear();
-            activeWorker = new AnalysisWorker(items, configuration);
+            activeWorker = new AnalysisWorker(items, configuration, false);
             activeWorker.execute();
         } catch (Exception ex) {
             JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid configuration", JOptionPane.ERROR_MESSAGE);
         }
+    }
+
+    private void startVerification() {
+        List<RepositoryQueueModel.Item> selected = selectedOrAll();
+        List<RepositoryQueueModel.Item> completable = selected.stream()
+                .filter(it -> it.status == RepositoryQueueModel.Status.COMPLETED && it.output != null
+                        && Files.isRegularFile(it.output))
+                .toList();
+        if (completable.isEmpty()) {
+            JOptionPane.showMessageDialog(this,
+                    "No ingested repositories to verify. Click Ingest first.",
+                    "Nothing to verify", JOptionPane.INFORMATION_MESSAGE);
+            return;
+        }
+        try {
+            Path verifier = requiredPath(verifierField.getText(), "Verifier module");
+            Path metamodel = requiredPath(metamodelField.getText(), "Alloy metamodel");
+            RunConfiguration configuration = new RunConfiguration(
+                    requiredPath(workspaceField.getText(), "Clone workspace"),
+                    requiredPath(outputField.getText(), "Analysis output"),
+                    (Integer) depthSpinner.getValue(),
+                    (Integer) complianceSpinner.getValue(),
+                    false, true, false, verifier, metamodel);
+            savePreferences();
+            progressBar.setValue(0);
+            progressBar.setMaximum(completable.size());
+            progressBar.setIndeterminate(false);
+            setBusy(true);
+            verificationModel.clear();
+            activeWorker = new VerificationWorker(completable, configuration);
+            activeWorker.execute();
+        } catch (Exception ex) {
+            JOptionPane.showMessageDialog(this, ex.getMessage(), "Invalid configuration", JOptionPane.ERROR_MESSAGE);
+        }
+    }
+
+    private List<RepositoryQueueModel.Item> selectedOrAll() {
+        int[] selected = queueTable.getSelectedRows();
+        if (selected.length == 0) return queueModel.snapshot();
+        List<RepositoryQueueModel.Item> items = new ArrayList<>();
+        for (int viewRow : selected) {
+            RepositoryQueueModel.Item item = queueModel.itemAt(queueTable.convertRowIndexToModel(viewRow));
+            if (item != null) items.add(item);
+        }
+        return items.isEmpty() ? queueModel.snapshot() : items;
     }
 
     private static Path requiredPath(String raw, String label) {
@@ -731,7 +801,7 @@ final class AnalysisFrame extends JFrame {
         searchGitHubButton.setEnabled(!busy);
         removeButton.setEnabled(!busy);
         clearButton.setEnabled(!busy);
-        verifyExistingButton.setEnabled(!busy);
+        verifyButton.setEnabled(!busy);
         cancelButton.setEnabled(busy);
         verifyBox.setEnabled(!busy);
         if (!busy) updateVerificationControls();
@@ -842,7 +912,12 @@ final class AnalysisFrame extends JFrame {
     private record RunConfiguration(
             Path workspace, Path output, int depth, int compliance, boolean includeTests, boolean reuse,
             boolean verify, Path verifierHome, Path metamodel
-    ) { }
+    ) {
+        RunConfiguration(Path workspace, Path output, int depth, int compliance,
+                         boolean includeTests, boolean reuse, boolean verify) {
+            this(workspace, output, depth, compliance, includeTests, reuse, verify, null, null);
+        }
+    }
 
     private record UiEvent(
             RepositoryQueueModel.Item item,
@@ -860,18 +935,21 @@ final class AnalysisFrame extends JFrame {
                     .filter(Files::isRegularFile)
                     .filter(p -> {
                         String name = p.getFileName().toString().toLowerCase();
-                        return name.endsWith(".py") || name.endsWith(".java") || name.endsWith(".cpp");
+                        return name.endsWith(".py") || name.endsWith(".java")
+                                || name.endsWith(".cpp") || name.endsWith(".cc") || name.endsWith(".cxx")
+                                || name.endsWith(".h") || name.endsWith(".hpp");
                     })
                     .toList();
             long pyCount = files.stream().filter(p -> p.toString().endsWith(".py")).count();
             long javaCount = files.stream().filter(p -> p.toString().endsWith(".java")).count();
             long cppCount = files.stream().filter(p -> {
                 String n = p.toString().toLowerCase();
-                return n.endsWith(".cpp") || n.endsWith(".cc") || n.endsWith(".cxx")
-                        || n.endsWith(".h") || n.endsWith(".hpp");
+                return n.endsWith(".cpp") || n.endsWith(".cc") || n.endsWith(".cxx");
             }).count();
-            if (pyCount > javaCount && pyCount > cppCount && pyCount > 0) return Language.PYTHON;
-            if (cppCount > javaCount && cppCount > 0) return Language.CPP;
+            long total = pyCount + javaCount + cppCount;
+            if (total == 0) return Language.JAVA;
+            if (cppCount >= total * 0.5) return Language.CPP;
+            if (pyCount >= total * 0.5) return Language.PYTHON;
             if (javaCount > 0) return Language.JAVA;
         } catch (Exception ignored) { }
         return Language.JAVA;
@@ -880,6 +958,7 @@ final class AnalysisFrame extends JFrame {
     private final class AnalysisWorker extends SwingWorker<Void, UiEvent> {
         private final List<RepositoryQueueModel.Item> items;
         private final RunConfiguration configuration;
+        private final boolean withVerification;
         private final RepositoryIngestionService ingestion = new JGitHubRepositoryIngestionService();
         private final JavaExtractionService javaExtraction = new SpoonJavaExtractionService();
         private final JavaExtractionService pythonExtraction = new PythonExtractionService();
@@ -889,8 +968,14 @@ final class AnalysisFrame extends JFrame {
         private volatile int completed;
 
         private AnalysisWorker(List<RepositoryQueueModel.Item> items, RunConfiguration configuration) {
+            this(items, configuration, true);
+        }
+
+        private AnalysisWorker(List<RepositoryQueueModel.Item> items, RunConfiguration configuration,
+                               boolean withVerification) {
             this.items = items;
             this.configuration = configuration;
+            this.withVerification = withVerification;
         }
 
         private JavaExtractionService selectExtractor(Language lang) {
@@ -962,7 +1047,7 @@ final class AnalysisFrame extends JFrame {
                         cache.recordExtraction(extractionKey, typeCount);
                     }
                     VerificationOutcome verificationOutcome = null;
-                    if (configuration.verify()) {
+                    if (withVerification && configuration.verify()) {
                         publish(new UiEvent(item, RepositoryQueueModel.Status.VERIFYING,
                                 "Checking AlloyInEcore constraints", typeCount, output,
                                 "Verifying " + request.coordinate() + " with " + configuration.metamodel(), null));
@@ -986,8 +1071,9 @@ final class AnalysisFrame extends JFrame {
                     RepositoryQueueModel.Status finalStatus = verificationOutcome != null
                             && verificationOutcome.status() == VerificationOutcome.Status.UNSAT
                             ? RepositoryQueueModel.Status.VIOLATIONS : RepositoryQueueModel.Status.COMPLETED;
-                    String activity = verificationOutcome == null ? "Extraction completed"
-                            : verificationOutcome.status() + " — " + verificationOutcome.violations().size() + " violation(s)";
+                    String activity = verificationOutcome == null
+                            ? (withVerification ? "Extraction completed" : "Ingested")
+                            : verificationOutcome.status() + " ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ " + verificationOutcome.violations().size() + " violation(s)";
                     publish(new UiEvent(item, finalStatus, activity, typeCount, output,
                             "Completed " + request.coordinate() + ": " + typeCount + " types; " + activity,
                             verificationOutcome));
@@ -1049,6 +1135,7 @@ final class AnalysisFrame extends JFrame {
         protected void done() {
             try {
                 get();
+                autoSaveQueue();
                 statusLabel.setText(isCancelled() ? "Cancelled" : "Finished");
             } catch (CancellationException ex) {
                 statusLabel.setText("Cancelled");
@@ -1063,37 +1150,48 @@ final class AnalysisFrame extends JFrame {
         }
     }
 
-    private final class ExistingVerificationWorker extends SwingWorker<Void, UiEvent> {
-        private final List<Path> extractionJsons;
-        private final RunConfiguration configuration;
+    private final class VerificationWorker extends SwingWorker<Void, UiEvent> {
+        private final List<RepositoryQueueModel.Item> items;
+        private final Path metamodel;
+        private final Path verifierHome;
         private final AlloyInEcoreVerificationService verification = new AlloyInEcoreVerificationService();
         private volatile int completed;
 
-        private ExistingVerificationWorker(List<Path> extractionJsons, RunConfiguration configuration) {
-            this.extractionJsons = extractionJsons;
-            this.configuration = configuration;
+        private VerificationWorker(List<RepositoryQueueModel.Item> items, RunConfiguration configuration) {
+            this.items = items;
+            this.metamodel = configuration.metamodel();
+            this.verifierHome = configuration.verifierHome();
         }
 
         @Override
         protected Void doInBackground() {
-            for (Path extraction : extractionJsons) {
+            for (RepositoryQueueModel.Item item : items) {
                 if (isCancelled()) break;
-                String repoName = extraction.getParent().getFileName().toString();
+                if (item.output == null || !Files.isRegularFile(item.output)) {
+                    completed++;
+                    publish(new UiEvent(item, RepositoryQueueModel.Status.FAILED,
+                            "No extraction.json", null, null,
+                            "Skipped " + item.url + ": no extraction found", null));
+                    continue;
+                }
+                String repoName = item.output.getParent().getFileName().toString();
                 try {
+                    publish(new UiEvent(item, RepositoryQueueModel.Status.VERIFYING,
+                            "Verifying " + repoName, null, null, null, null));
                     VerificationOutcome outcome = verification.verify(new VerificationRequest(
-                                    configuration.verifierHome(), configuration.metamodel(),
-                                    extraction, extraction.getParent().resolve("verification")),
+                                    verifierHome, metamodel,
+                                    item.output, item.output.getParent().resolve("verification")),
                             event -> { }, this::isCancelled);
                     completed++;
                     RepositoryQueueModel.Status st = outcome.status() == VerificationOutcome.Status.UNSAT
                             ? RepositoryQueueModel.Status.VIOLATIONS : RepositoryQueueModel.Status.COMPLETED;
-                    publish(new UiEvent(null, st,
-                            outcome.status() + " — " + outcome.violations().size() + " violation(s)",
+                    publish(new UiEvent(item, st,
+                            outcome.status() + " ط£آ¢أ¢â€ڑآ¬أ¢â‚¬â€Œ " + outcome.violations().size() + " violation(s)",
                             null, null, "Verified " + repoName + ": " + outcome.status(), outcome));
                 } catch (Exception ex) {
                     if (isCancelled()) break;
                     completed++;
-                    publish(new UiEvent(null, RepositoryQueueModel.Status.FAILED,
+                    publish(new UiEvent(item, RepositoryQueueModel.Status.FAILED,
                             ex.getMessage(), null, null, "Failed " + repoName + ": " + ex.getMessage(), null));
                 }
             }
@@ -1103,18 +1201,19 @@ final class AnalysisFrame extends JFrame {
         @Override
         protected void process(List<UiEvent> chunks) {
             for (UiEvent event : chunks) {
+                if (event.item() != null) {
+                    event.item().status = event.status();
+                    event.item().activity = event.activity();
+                    queueModel.changed(event.item());
+                }
                 if (event.log() != null) appendLog(event.log());
                 if (event.verification() != null) {
-                    verificationModel.add(event.log() != null
-                            ? event.log().replaceFirst("^Verified ", "").replaceFirst(":.*", "")
-                            : "unknown", event.verification());
+                    verificationModel.add(event.item() != null ? event.item().url : "unknown", event.verification());
                     updateVerificationTabBadge();
                 }
-                if (!resultTabs.isShowing() || resultTabs.getSelectedIndex() == TAB_ACTIVITY) {
-                    statusLabel.setText(event.activity());
-                }
+                statusLabel.setText(event.activity());
             }
-            int total = extractionJsons.size();
+            int total = items.size();
             int c = completed;
             progressBar.setValue(Math.min(c, total));
             progressBar.setString(c + " / " + total);
@@ -1124,12 +1223,13 @@ final class AnalysisFrame extends JFrame {
         protected void done() {
             try {
                 get();
-                statusLabel.setText(isCancelled() ? "Cancelled" : "Finished verifying existing repos");
+                autoSaveQueue();
+                statusLabel.setText(isCancelled() ? "Cancelled" : "Verification finished");
             } catch (CancellationException ex) {
                 statusLabel.setText("Cancelled");
             } catch (Exception ex) {
-                statusLabel.setText("Unexpected failure");
-                appendLog("Unexpected worker failure: " + ex.getMessage());
+                statusLabel.setText("Verification failed");
+                appendLog("Verification worker failure: " + ex.getMessage());
             } finally {
                 progressBar.setIndeterminate(false);
                 setBusy(false);

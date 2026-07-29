@@ -123,7 +123,7 @@ flowchart TB
     subgraph Verify["Verification"]
         VI[verification-integration<br/>subprocess orchestrator]
         CLI[verification-cli<br/>standalone verifier]
-        ALS[kernel_v2_obligation.als<br/>Alloy formal model]
+        ALS[metamodel.als<br/>Alloy formal model]
     end
 
     subgraph UI["Desktop Application"]
@@ -271,7 +271,7 @@ A Swing-based graphical user interface that composes all platform services. Pack
 
 ### Class-Level Structural Kernel
 
-The verification metamodel is defined in [`modules/verification-cli/src/main/resources/kernel_v2_obligation.als`](modules/verification-cli/src/main/resources/kernel_v2_obligation.als). This is an Alloy formal model that captures the essential structural elements of object-oriented classifiers (classes and interfaces), organized around 10 formal obligations (O-01 through O-09), with accompanying verification commands in [`verification_v2.als`](modules/verification-cli/src/main/resources/verification_v2.als).
+The verification metamodel is defined in [`modules/verification-cli/src/main/resources/metamodel.als`](modules/verification-cli/src/main/resources/metamodel.als). This is an Alloy formal model that captures the essential structural elements of object-oriented classifiers (classes and interfaces), organized around 10 formal obligations (O-01 through O-09), with accompanying verification commands in [`verification_v2.als`](modules/verification-cli/src/main/resources/verification_v2.als).
 
 The model defines:
 
@@ -357,7 +357,7 @@ The desktop application starts with a default workspace path (`workspace/reposit
 | `-l, --language <lang>` | `java`, `python`, or `cpp` | auto-detected |
 | `-o, --output <dir>` | Analysis output directory | `analysis-output` |
 | `-w, --workspace <dir>` | Clone workspace | `workspace/repositories` |
-| `-m, --metamodel <file>` | Alloy .als metamodel path | `modules/verification-cli/.../kernel_v2_obligation.als` |
+| `-m, --metamodel <file>` | Alloy .als metamodel path | `modules/verification-cli/.../metamodel.als` |
 | `-v, --verifier <dir>` | Verification modules directory | `modules/verification-cli` |
 | `-d, --depth <n>` | Clone depth | `1` |
 | `--no-verify` | Skip structural verification | *(verification enabled)* |
@@ -386,11 +386,11 @@ The desktop application starts with a default workspace path (`workspace/reposit
 ```bash
 # Windows
 cd modules/verification-cli
-.\run.ps1 -r src/main/resources/kernel_v2_obligation.als -i path/to/extraction.json -o output
+.\run.ps1 -r src/main/resources/metamodel.als -i path/to/extraction.json -o output
 
 # Linux / macOS
 cd modules/verification-cli
-./run.sh -r src/main/resources/kernel_v2_obligation.als -i path/to/extraction.json -o output
+./run.sh -r src/main/resources/metamodel.als -i path/to/extraction.json -o output
 ```
 
 ---

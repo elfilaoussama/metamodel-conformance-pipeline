@@ -17,7 +17,7 @@ import java.util.function.Consumer;
 import java.util.prefs.Preferences;
 
 final class GitHubSearchDialog extends JDialog {
-    private final Consumer<List<String>> addToQueue;
+    private final Consumer<List<GitHubRepositorySummary>> addToQueue;
     private final GitHubSearchTableModel resultsModel = new GitHubSearchTableModel();
     private final JTable resultsTable = new JTable(resultsModel);
 
@@ -58,7 +58,7 @@ final class GitHubSearchDialog extends JDialog {
     private final Preferences preferences = Preferences.userNodeForPackage(GitHubSearchDialog.class);
     private SearchWorker worker;
 
-    GitHubSearchDialog(Window owner, Consumer<List<String>> addToQueue) {
+    GitHubSearchDialog(Window owner, Consumer<List<GitHubRepositorySummary>> addToQueue) {
         super(owner, "Search GitHub repositories", ModalityType.APPLICATION_MODAL);
         this.addToQueue = addToQueue;
         setDefaultCloseOperation(WindowConstants.DISPOSE_ON_CLOSE);
@@ -235,10 +235,13 @@ final class GitHubSearchDialog extends JDialog {
         progressBar.setPreferredSize(new Dimension(300, 20));
         JButton close = new JButton("Close");
         close.addActionListener(event -> dispose());
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        left.add(addButton);
         JPanel right = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         right.add(progressBar);
         right.add(close);
         JPanel panel = new JPanel(new BorderLayout(8, 0));
+        panel.add(left, BorderLayout.WEST);
         panel.add(statusLabel, BorderLayout.CENTER);
         panel.add(right, BorderLayout.EAST);
         return panel;
@@ -276,14 +279,14 @@ final class GitHubSearchDialog extends JDialog {
             if (worker != null) worker.cancel(true);
         });
         addButton.addActionListener(event -> {
-            List<String> urls = resultsModel.selectedCloneUrls();
-            if (urls.isEmpty()) {
+            List<GitHubRepositorySummary> selected = resultsModel.selectedRepositories();
+            if (selected.isEmpty()) {
                 JOptionPane.showMessageDialog(this, "Select at least one repository.",
                         "No repositories selected", JOptionPane.INFORMATION_MESSAGE);
                 return;
             }
-            addToQueue.accept(urls);
-            statusLabel.setText("Added " + urls.size() + " repositories to the ingestion queue.");
+            addToQueue.accept(selected);
+            statusLabel.setText("Added " + selected.size() + " repositories to the ingestion queue.");
         });
     }
 

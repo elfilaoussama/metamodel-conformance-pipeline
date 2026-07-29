@@ -184,6 +184,75 @@ class InvariantCheckerTest {
         assertEquals(expectedResult, report.getResult());
     }
 
+    @Test
+    void inheritedNonAbstractMethodWithBindingInParentIsSat() throws Exception {
+        String aie = "Root = {\n" +
+                "  classifiers = {Class0, Class1}\n" +
+                "  Class0 = { name = \"Parent\", isAbstract = \"No\", cid = ClassifierID0 }\n" +
+                "  Class1 = { name = \"Child\", isAbstract = \"No\", cid = ClassifierID1 }\n" +
+                "  Method0 = { memberName = \"foo\", returnType = \"void\", isAbstract = \"No\", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }\n" +
+                "  MethodBody0 = {}\n" +
+                "  ImplementationBinding0 = { implementer = Class0, target = Method0, body = MethodBody0 }\n" +
+                "  ClassifierID0 = {}\n  ClassifierID1 = {}\n  MethodID0 = {}\n" +
+                "  classParent[Class0] = null\n" +
+                "  classParent[Class1] = Class0\n" +
+                "  localMethods[Class0] = {Method0}\n" +
+                "  inheritedMethods[Class1] = {Method0}\n" +
+                "}";
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("SAT", report.getResult(),
+                "Child inheriting non-abstract method from Parent with binding should be SAT, got: "
+                        + report.getViolations().stream().map(VerificationReport.Violation::getDescription).toList());
+    }
+
+    @Test
+    void threeLevelInheritanceBindingVisibilityIsSat() throws Exception {
+        String aie = "Root = {\n" +
+                "  classifiers = {Class0, Class1, Class2}\n" +
+                "  Class0 = { name = \"Grandparent\", isAbstract = \"No\", cid = ClassifierID0 }\n" +
+                "  Class1 = { name = \"Parent\", isAbstract = \"No\", cid = ClassifierID1 }\n" +
+                "  Class2 = { name = \"Child\", isAbstract = \"No\", cid = ClassifierID2 }\n" +
+                "  Method0 = { memberName = \"foo\", returnType = \"void\", isAbstract = \"No\", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }\n" +
+                "  MethodBody0 = {}\n" +
+                "  ImplementationBinding0 = { implementer = Class0, target = Method0, body = MethodBody0 }\n" +
+                "  ClassifierID0 = {}\n  ClassifierID1 = {}\n  ClassifierID2 = {}\n  MethodID0 = {}\n" +
+                "  classParent[Class0] = null\n" +
+                "  classParent[Class1] = Class0\n" +
+                "  classParent[Class2] = Class1\n" +
+                "  localMethods[Class0] = {Method0}\n" +
+                "  inheritedMethods[Class1] = {Method0}\n" +
+                "  inheritedMethods[Class2] = {Method0}\n" +
+                "}";
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("SAT", report.getResult(),
+                "Grandchild inheriting from grandparent via parent should be SAT, got: "
+                        + report.getViolations().stream().map(VerificationReport.Violation::getDescription).toList());
+    }
+
+    @Test
+    void siblingBindingNotFoundInAncestorChainIsUnsat() throws Exception {
+        String aie = "Root = {\n" +
+                "  classifiers = {Class0, Class1, Class2}\n" +
+                "  Class0 = { name = \"Grandparent\", isAbstract = \"No\", cid = ClassifierID0 }\n" +
+                "  Class1 = { name = \"Parent\", isAbstract = \"No\", cid = ClassifierID1 }\n" +
+                "  Class2 = { name = \"Child\", isAbstract = \"No\", cid = ClassifierID2 }\n" +
+                "  Method0 = { memberName = \"foo\", returnType = \"void\", isAbstract = \"No\", visibility = Pub, scope = Instance, mid = MethodID0, paramTypes = {} }\n" +
+                "  MethodBody0 = {}\n" +
+                "  ImplementationBinding0 = { implementer = Class1, target = Method0, body = MethodBody0 }\n" +
+                "  ClassifierID0 = {}\n  ClassifierID1 = {}\n  ClassifierID2 = {}\n  MethodID0 = {}\n" +
+                "  classParent[Class0] = null\n" +
+                "  classParent[Class2] = Class0\n" +
+                "  localMethods[Class1] = {Method0}\n" +
+                "  inheritedMethods[Class2] = {Method0}\n" +
+                "}";
+        VerificationReport report = checker.check(aie, "");
+        assertEquals("UNSAT", report.getResult(),
+                "Child inheriting method from Parent not in ancestor chain (bindings invisible), should be UNSAT");
+        assertTrue(report.getViolations().stream()
+                .anyMatch(v -> v.getDescription().contains("no ImplementationBinding visible in ancestor chain")),
+                "Should flag invisible binding, got: " + report.getViolations());
+    }
+
     private static String loadResource(String name) throws IOException, URISyntaxException {
         URL url = InvariantCheckerTest.class.getResource("/" + name);
         if (url == null) throw new IOException("Resource not found: " + name);

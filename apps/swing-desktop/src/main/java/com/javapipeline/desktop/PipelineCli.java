@@ -24,7 +24,7 @@ import java.util.List;
  *   [--language java|python|cpp]
  *   [--output analysis-output]
  *   [--workspace workspace/repositories]
- *   [--metamodel modules/verification-cli/src/main/resources/kernel_v2_obligation.als]
+ *   [--metamodel modules/verification-cli/src/main/resources/metamodel.als]
  *   [--verifier modules/verification-cli]
  *   [--depth 1]
  *   [--no-verify]
@@ -37,7 +37,7 @@ public final class PipelineCli {
     private static final String DEFAULT_OUTPUT = "analysis-output";
     private static final String DEFAULT_VERIFIER = "modules/verification-cli";
     private static final String DEFAULT_METAMODEL =
-            DEFAULT_VERIFIER + "/src/main/resources/kernel_v2_obligation.als";
+            DEFAULT_VERIFIER + "/src/main/resources/metamodel.als";
 
     private final PrintStream out;
     private final PrintStream err;

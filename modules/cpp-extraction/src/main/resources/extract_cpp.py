@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 C++ structural extraction using libclang.
-Reads .cpp/.h/.hpp files from a repository directory, emits extraction.json to stdout.
+Reads headers from a repository directory, emits extraction.json to stdout.
 
 Requirements: pip install libclang
 
@@ -14,23 +14,32 @@ from pathlib import Path
 
 try:
     from clang import cindex
-    from clang.cindex import CursorKind, AccessSpecifier, TypeKind
+    from clang.cindex import CursorKind, AccessSpecifier, TranslationUnit
 except ImportError:
     print(json.dumps({"error": "libclang not installed. Run: pip install libclang"}), file=sys.stderr)
     sys.exit(1)
 
-
+# Parse all C++ source files — declarations can be in headers, .cpp, .cc, etc.
 CPP_EXTENSIONS = {".cpp", ".cc", ".cxx", ".h", ".hpp", ".hxx"}
+
+# Directories to skip during traversal.
+SKIP_DIRS = {
+    "build", "cmake-build-debug", "cmake-build-release", "cmake-build-minsizerel",
+    "cmake-build-relwithdebinfo", "out", ".git", ".svn", "third_party", "thirdparty",
+    "external", "extern", "deps", "node_modules", "__pycache__", "venv", ".venv",
+    "vendor", "_build", "bazel-bin", "bazel-out", "bazel-testlogs", "conan",
+    ".conan2", "vcpkg", "vcpkg_installed",
+}
 
 
 def extract_from_repo(repo_dir):
     repo_path = Path(repo_dir).resolve()
     files = sorted(
-        [p for p in repo_path.rglob("*") if p.suffix.lower() in CPP_EXTENSIONS],
+        [p for p in _walk_filtered(repo_path) if p.suffix.lower() in CPP_EXTENSIONS],
         key=lambda p: str(p),
     )
     if not files:
-        return _empty_result(repo_path, "No C++ source files found")
+        return _empty_result(repo_path, "No C++ headers found")
 
     index = cindex.Index.create()
     types = []
@@ -38,9 +47,11 @@ def extract_from_repo(repo_dir):
 
     for filepath in files:
         try:
+            # Skip function bodies — we only need declarations
             tu = index.parse(
                 str(filepath),
                 args=["-std=c++17", "-I" + str(repo_path)],
+                options=TranslationUnit.PARSE_SKIP_FUNCTION_BODIES,
             )
         except Exception:
             continue
@@ -61,13 +72,21 @@ def extract_from_repo(repo_dir):
             {
                 "severity": "INFO",
                 "code": "CPP_EXTRACTION",
-                "message": "Extracted {} types from {} files".format(
+                "message": "Extracted {} types from {} headers".format(
                     len(types), len(files)
                 ),
             }
         ],
     }
     return result
+
+
+def _walk_filtered(root):
+    """Walk root, skipping build/dependency directories."""
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for fname in filenames:
+            yield Path(dirpath) / fname
 
 
 def _empty_result(repo_path, message):
@@ -100,21 +119,25 @@ class CppVisitor:
         ns = self._namespace
         return ns + "::" + name if ns else name
 
-    def visit(self, cursor, depth=0):
-        if cursor.kind == CursorKind.NAMESPACE:
-            self._visit_namespace(cursor)
-        elif cursor.kind in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL):
-            if cursor.is_definition():
-                self._visit_class(cursor)
-        else:
-            for child in cursor.get_children():
-                self.visit(child, depth + 1)
+    def visit(self, cursor):
+        for child in cursor.get_children():
+            if child.kind == CursorKind.NAMESPACE:
+                self._visit_namespace(child)
+            elif child.kind in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL):
+                if child.is_definition():
+                    self._visit_class(child)
+            elif child.kind == CursorKind.CLASS_TEMPLATE:
+                for tc in child.get_children():
+                    if tc.kind in (CursorKind.CLASS_DECL, CursorKind.STRUCT_DECL):
+                        if tc.is_definition():
+                            self._visit_class(tc)
+            else:
+                self.visit(child)
 
     def _visit_namespace(self, cursor):
         name = cursor.spelling or "<anonymous>"
         self._ns_stack.append(name)
-        for child in cursor.get_children():
-            self.visit(child)
+        self.visit(cursor)
         self._ns_stack.pop()
 
     def _visit_class(self, cursor):
@@ -127,7 +150,6 @@ class CppVisitor:
 
         is_struct = cursor.kind == CursorKind.STRUCT_DECL
         is_abstract = self._has_pure_virtual(cursor)
-        kind = "class"
 
         fields = []
         executables = []
@@ -150,8 +172,6 @@ class CppVisitor:
                     fields.append(self._map_field(child, is_struct))
 
             elif child_kind == CursorKind.CXX_METHOD:
-                if not child.is_virtual_method():
-                    pass
                 ex = self._map_method(child, is_struct)
                 executables.append(ex)
 
@@ -159,7 +179,7 @@ class CppVisitor:
         t = {
             "qualifiedName": qname_norm,
             "simpleName": name,
-            "kind": kind,
+            "kind": "class",
             "superClass": superclass,
             "interfaces": interfaces,
             "fields": fields,
@@ -214,9 +234,7 @@ class CppVisitor:
         for child in cursor.get_children():
             if child.kind == CursorKind.PARM_DECL:
                 ptype = child.type.spelling if child.type else "unknown"
-                params.append(
-                    {"name": child.spelling or "", "type": ptype}
-                )
+                params.append({"name": child.spelling or "", "type": ptype})
         return {
             "name": name,
             "returnType": return_type,

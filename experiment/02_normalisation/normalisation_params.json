@@ -1,0 +1,60 @@
+{
+  "languages": {
+    "C++": {
+      "interval": [
+        193,
+        386
+      ],
+      "tertiles": [
+        193,
+        237,
+        293,
+        386
+      ],
+      "target_per_tertile": 25
+    },
+    "Java": {
+      "interval": [
+        23,
+        209
+      ],
+      "tertiles": [
+        23,
+        48,
+        99,
+        209
+      ],
+      "target_per_tertile": 25
+    },
+    "Python": {
+      "interval": [
+        20,
+        283
+      ],
+      "tertiles": [
+        20,
+        48,
+        122,
+        283
+      ],
+      "target_per_tertile": 25
+    }
+  },
+  "common_n": 75,
+  "intervals": {
+    "C++": {
+      "min_types": 193,
+      "max_types": 386
+    },
+    "Java": {
+      "min_types": 23,
+      "max_types": 209
+    },
+    "Python": {
+      "min_types": 20,
+      "max_types": 283
+    }
+  },
+  "target_n": 75,
+  "violation_normalisation": "violation_rate = violation_count / type_count"
+}

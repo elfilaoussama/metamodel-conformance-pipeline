@@ -1,9 +1,9 @@
 // ==========================================================================
 // verification_v2.als
-// Verification commands mapped to obligations O-01 through O-09.
+// Verification commands mapped to conditions O-01 through O-09.
 // Protocol: NV witnesses → diagnostic probes → assertions → stress checks.
 // ==========================================================================
-open kernel_v2_obligation
+open metamodel
 
 // ==========================================================================
 // PART 1: Non-Vacuity Witnesses (NV)
@@ -14,7 +14,7 @@ open kernel_v2_obligation
 // O-01, O-02, O-06, O-07: Simple non-abstract class with method, attribute,
 // body, binding, and direct instance.
 pred NV_SimpleNonAbstractClass {
-    some c : Class, m : Method, a : Attribute, mb : MethodBody,
+    some c : Classifier, m : Method, a : Attribute, mb : MethodBody,
          b : ImplementationBinding, o : Object |
         c.isAbstract = No and
         m in c.localMethods and m.isAbstract = No and
@@ -23,18 +23,18 @@ pred NV_SimpleNonAbstractClass {
         o in c.directInstances
 }
 run NV_SimpleNonAbstractClass for 6 but
-    exactly 1 Class, exactly 0 Interface,
+    exactly 1 Classifier,
     exactly 1 Method, exactly 1 Attribute, exactly 1 MethodBody,
     exactly 1 ImplementationBinding, exactly 1 Object,
     4 int expect 1
 
 // O-03: Three-class linear inheritance chain.
 pred NV_InheritanceChain {
-    some disj root, mid, leaf : Class |
+    some disj root, mid, leaf : Classifier |
         root in mid.classParent and mid in leaf.classParent
 }
 run NV_InheritanceChain for 6 but
-    exactly 3 Class, exactly 0 Interface,
+    exactly 3 Classifier,
     exactly 0 Method, exactly 0 Attribute, exactly 0 MethodBody,
     exactly 0 ImplementationBinding, exactly 0 Object,
     4 int expect 1
@@ -42,7 +42,7 @@ run NV_InheritanceChain for 6 but
 // O-07, O-03: Abstract base class with abstract method, concrete subclass
 // provides implementation.
 pred NV_AbstractMethodImplementedBySubclass {
-    some base : Class, derived : Class, m : Method, mb : MethodBody,
+    some base : Classifier, derived : Classifier, m : Method, mb : MethodBody,
          b : ImplementationBinding |
         base != derived and
         base in derived.classParent and
@@ -53,23 +53,23 @@ pred NV_AbstractMethodImplementedBySubclass {
         derived.isAbstract = No
 }
 run NV_AbstractMethodImplementedBySubclass for 6 but
-    exactly 2 Class, exactly 0 Interface,
+    exactly 2 Classifier,
     exactly 1 Method, exactly 0 Attribute,
     exactly 1 MethodBody, exactly 1 ImplementationBinding,
     exactly 0 Object, 4 int expect 1
 
-// O-03: Class implementing an interface method with a concrete body.
-pred NV_InterfaceImplementation {
-    some i : Interface, c : Class, m : Method, mb : MethodBody,
+// O-03: Abstract parent with method inherited and implemented.
+pred NV_AbstractParentImplementation {
+    some pi : Classifier, c : Classifier, m : Method, mb : MethodBody,
          b : ImplementationBinding |
-        i in c.interfaceParents and
-        m in i.localMethods and
+        pi in c.interfaceParents and
+        m in pi.localMethods and
         m in c.inheritedMethods and
         b.implementer = c and b.target = m and b.body = mb and
-        c.isAbstract = No
+        pi.isAbstract = Yes and c.isAbstract = No
 }
-run NV_InterfaceImplementation for 6 but
-    exactly 1 Class, exactly 1 Interface,
+run NV_AbstractParentImplementation for 6 but
+    exactly 2 Classifier,
     exactly 1 Method, exactly 0 Attribute,
     exactly 1 MethodBody, exactly 1 ImplementationBinding,
     exactly 0 Object, 4 int expect 1
@@ -77,21 +77,21 @@ run NV_InterfaceImplementation for 6 but
 // O-08: Two methods in same class, same name, different parameter types
 // (legal overloading).
 pred NV_MethodOverloadingBySignature {
-    some c : Class, disj m1, m2 : Method |
+    some c : Classifier, disj m1, m2 : Method |
         m1 in c.localMethods and m2 in c.localMethods and
         m1.memberName = m2.memberName and
         m1.paramTypes != m2.paramTypes and
         m1.isAbstract = No and m2.isAbstract = No
 }
 run NV_MethodOverloadingBySignature for 7 but
-    exactly 1 Class, exactly 0 Interface,
+    exactly 1 Classifier,
     exactly 2 Method, exactly 0 Attribute,
     exactly 2 MethodBody, exactly 2 ImplementationBinding,
     exactly 0 Object, 4 int expect 1
 
 // O-09: Override with same return type (legal, isSubtype holds by equality).
 pred NV_OverrideWithSameReturnType {
-    some base, derived : Class, inherited, local : Method,
+    some base, derived : Classifier, inherited, local : Method,
          mb : MethodBody, b : ImplementationBinding |
         base != derived and
         base in derived.classParent and
@@ -103,14 +103,14 @@ pred NV_OverrideWithSameReturnType {
         b.implementer = derived and b.target = local and b.body = mb
 }
 run NV_OverrideWithSameReturnType for 7 but
-    exactly 2 Class, exactly 0 Interface,
+    exactly 2 Classifier,
     exactly 2 Method, exactly 0 Attribute,
     exactly 2 MethodBody, exactly 2 ImplementationBinding,
     exactly 0 Object, 4 int expect 1
 
 // O-09: Override with covariant return type (proper subtype).
 pred NV_OverrideWithCovariantReturnType {
-    some base, derived : Class, inherited, local : Method,
+    some base, derived : Classifier, inherited, local : Method,
          r1, r2 : ClassifierType, mb : MethodBody, b : ImplementationBinding |
         base != derived and
         base in derived.classParent and
@@ -123,42 +123,42 @@ pred NV_OverrideWithCovariantReturnType {
         b.implementer = derived and b.target = local and b.body = mb
 }
 run NV_OverrideWithCovariantReturnType for 8 but
-    exactly 2 Class, exactly 0 Interface,
+    exactly 2 Classifier,
     exactly 2 Method, exactly 0 Attribute,
     exactly 2 MethodBody, exactly 2 ImplementationBinding,
     exactly 0 Object, 4 int expect 1
 
-// O-03: Class implementing methods from two distinct interfaces.
-pred NV_MultipleInterfaceParents {
-    some c : Class, disj i1, i2 : Interface, disj m1, m2 : Method,
+// O-03: Classifier implementing methods from two abstract parents.
+pred NV_MultipleAbstractParents {
+    some c : Classifier, disj p1, p2 : Classifier, disj m1, m2 : Method,
          disj b1, b2 : ImplementationBinding |
-        i1 in c.interfaceParents and i2 in c.interfaceParents and
-        m1 in i1.localMethods and m2 in i2.localMethods and
+        p1 in c.interfaceParents and p2 in c.interfaceParents and
+        m1 in p1.localMethods and m2 in p2.localMethods and
         not sameMethodKey[m1, m2] and
         b1.implementer = c and b1.target = m1 and
         b2.implementer = c and b2.target = m2 and
-        c.isAbstract = No
+        p1.isAbstract = Yes and p2.isAbstract = Yes and c.isAbstract = No
 }
-run NV_MultipleInterfaceParents for 8 but
-    exactly 1 Class, exactly 2 Interface,
+run NV_MultipleAbstractParents for 8 but
+    exactly 3 Classifier,
     exactly 2 Method, exactly 0 Attribute,
     exactly 2 MethodBody, exactly 2 ImplementationBinding,
     exactly 0 Object, 4 int expect 1
 
 // O-07: Non-abstract class with direct instance.
 pred NV_ObjectInNonAbstractClass {
-    some c : Class, o : Object |
+    some c : Classifier, o : Object |
         c.isAbstract = No and o in c.directInstances
 }
 run NV_ObjectInNonAbstractClass for 4 but
-    exactly 1 Class, exactly 0 Interface,
+    exactly 1 Classifier,
     exactly 0 Method, exactly 0 Attribute, exactly 0 MethodBody,
     exactly 0 ImplementationBinding, exactly 1 Object,
     4 int expect 1
 
 // ==========================================================================
 // PART 2: Diagnostic Probes (Bad_*)
-// Each probe encodes a malformed structure that the obligations should block.
+// Each probe encodes a malformed structure that the conditions should block.
 // expect 0 = expects UNSAT (no bad instance exists within scope).
 // ==========================================================================
 
@@ -204,11 +204,6 @@ pred Bad_InheritanceCycle {
     some c : Classifier | c in c.^(classParent + interfaceParents)
 }
 run Bad_InheritanceCycle for 5 expect 0
-
-pred Bad_InterfaceWithClassParent {
-    some i : Interface | some i.classParent
-}
-run Bad_InterfaceWithClassParent for 4 expect 0
 
 // --- O-04: Private method inherited (should be excluded) ---
 
@@ -261,21 +256,21 @@ pred Bad_OrphanMethodBody {
 run Bad_OrphanMethodBody for 5 expect 0
 
 pred Bad_DoubleBindingSameClassMethod {
-    some disj b1, b2 : ImplementationBinding, c : Class, m : Method |
+    some disj b1, b2 : ImplementationBinding, c : Classifier, m : Method |
         b1.implementer = c and b1.target = m and
         b2.implementer = c and b2.target = m
 }
 run Bad_DoubleBindingSameClassMethod for 5 expect 0
 
 pred Bad_AbstractLocalMethodWithDeclaringBody {
-    some c : Class, m : Method, b : ImplementationBinding |
+    some c : Classifier, m : Method, b : ImplementationBinding |
         m in c.localMethods and m.isAbstract = Yes and
         b.implementer = c and b.target = m
 }
 run Bad_AbstractLocalMethodWithDeclaringBody for 6 expect 0
 
 pred Bad_NonAbstractLocalMethodWithoutBody {
-    some c : Class, m : Method |
+    some c : Classifier, m : Method |
         m in c.localMethods and m.isAbstract = No and
         no b : ImplementationBinding | b.implementer = c and b.target = m
 }
@@ -290,15 +285,10 @@ pred Bad_AbstractClassDirectInstance {
 run Bad_AbstractClassDirectInstance for 5 expect 0
 
 pred Bad_NonAbstractWithUnresolvedMethod {
-    some c : Class, m : Method |
+    some c : Classifier, m : Method |
         c.isAbstract = No and unresolvedMethod[c, m]
 }
 run Bad_NonAbstractWithUnresolvedMethod for 6 expect 0
-
-pred Bad_InterfaceWithInstanceAttribute {
-    some i : Interface, a : i.localAttributes | a.scope = Instance
-}
-run Bad_InterfaceWithInstanceAttribute for 5 expect 0
 
 // --- O-08: Namespace violations ---
 
@@ -342,15 +332,21 @@ pred Bad_OverrideReturnNotSubtype {
 }
 run Bad_OverrideReturnNotSubtype for 7 expect 0
 
-pred Bad_OverrideScopeMismatch {
+// --- O-09: Override without abstract marker or concrete binding ---
+pred Bad_OverrideWithoutDisposition {
     some c : Classifier, inherited, local : Method |
-        inherited in (ancestors[c].localMethods) and
-        inherited.visibility != Priv and
-        local in c.localMethods and
-        sameMethodKey[inherited, local] and
-        inherited.scope != local.scope
+        overrides[c, inherited, local] and
+        local.isAbstract = No and
+        no b : ImplementationBinding |
+            b.implementer = c and b.target = local
 }
-run Bad_OverrideScopeMismatch for 7 expect 0
+run Bad_OverrideWithoutDisposition for 7 expect 0
+
+// --- O-07: Static and abstract method (ill-formed) ---
+pred Bad_StaticAbstractMethod {
+    some m : Method | m.scope = Static and m.isAbstract = Yes
+}
+run Bad_StaticAbstractMethod for 5 expect 0
 
 // --- O-04/O-08 impl: Parameter well-formedness ---
 
@@ -408,11 +404,6 @@ assert A_AcyclicGeneralization {
 }
 check A_AcyclicGeneralization for 8 expect 0
 
-assert A_InterfaceHasNoClassParent {
-    no i : Interface | some i.classParent
-}
-check A_InterfaceHasNoClassParent for 8 expect 0
-
 // --- O-04: Inherited member derivation correctness ---
 
 assert A_InheritedMethodsFromVisibleAncestors {
@@ -457,7 +448,7 @@ assert A_NoOrphanMethodBodies {
 check A_NoOrphanMethodBodies for 8 expect 0
 
 assert A_SingleBindingPerClassMethod {
-    all c : Class, m : Method |
+    all c : Classifier, m : Method |
         lone b : ImplementationBinding |
             b.implementer = c and b.target = m
 }
@@ -476,17 +467,8 @@ assert A_NonAbstractHasNoUnresolvedMethods {
 }
 check A_NonAbstractHasNoUnresolvedMethods for 8 expect 0
 
-assert A_InterfaceRestrictions {
-    all i : Interface | {
-        i.isAbstract = Yes
-        no i.directInstances
-        all a : i.localAttributes | a.scope = Static
-    }
-}
-check A_InterfaceRestrictions for 8 expect 0
-
 assert A_ObjectsInExactlyOneClass {
-    all o : Object | one c : Class | o in c.directInstances
+    all o : Object | one c : Classifier | o in c.directInstances
 }
 check A_ObjectsInExactlyOneClass for 8 expect 0
 

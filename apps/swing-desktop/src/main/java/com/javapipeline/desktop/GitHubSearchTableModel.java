@@ -76,6 +76,11 @@ final class GitHubSearchTableModel extends AbstractTableModel {
                 .map(row -> row.repository.cloneUrl()).filter(url -> !url.isBlank()).toList();
     }
 
+    List<GitHubRepositorySummary> selectedRepositories() {
+        return rows.stream().filter(row -> row.selected)
+                .map(row -> row.repository).toList();
+    }
+
     int selectedCount() {
         return (int) rows.stream().filter(row -> row.selected).count();
     }

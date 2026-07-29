@@ -73,7 +73,7 @@ public final class GitHubRestRepositorySearchService implements GitHubRepository
                         .map(Integer::valueOf).orElse(rateRemaining);
                 rateReset = response.headers().firstValue("x-ratelimit-reset")
                         .map(Long::parseLong).map(Instant::ofEpochSecond).orElse(rateReset);
-                if (response.statusCode() != 200) throw apiFailure(response);
+                if (response.statusCode() != 200) throw apiFailure(response, uri);
 
                 JsonObject payload = JsonParser.parseString(response.body()).getAsJsonObject();
                 totalCount = payload.get("total_count").getAsLong();
@@ -97,7 +97,7 @@ public final class GitHubRestRepositorySearchService implements GitHubRepository
             Thread.currentThread().interrupt();
             throw new GitHubSearchException("GitHub search was interrupted", ex);
         } catch (GitHubSearchException ex) {
-            throw ex;
+            throw new GitHubSearchException(ex.getMessage() + " [query was: " + query + "]", ex);
         } catch (Exception ex) {
             throw new GitHubSearchException("GitHub search failed: " + ex.getMessage(), ex);
         }
@@ -130,14 +130,21 @@ public final class GitHubRestRepositorySearchService implements GitHubRepository
         return URI.create(uri.toString());
     }
 
-    private static GitHubSearchException apiFailure(HttpResponse<String> response) {
+    private static GitHubSearchException apiFailure(HttpResponse<String> response, URI uri) {
         String message = "HTTP " + response.statusCode();
         try {
             JsonObject body = JsonParser.parseString(response.body()).getAsJsonObject();
             if (body.has("message")) message += ": " + body.get("message").getAsString();
+            if (body.has("errors")) {
+                var errors = body.getAsJsonArray("errors");
+                if (errors != null && !errors.isEmpty()) {
+                    message += "; details: " + errors.get(0).getAsJsonObject().get("message").getAsString();
+                }
+            }
         } catch (RuntimeException ignored) { }
         if (response.statusCode() == 401) message += " (check the access token)";
         if (response.statusCode() == 403) message += " (rate limit or access policy)";
+        if (response.statusCode() == 422) message += " [query: " + uri.getRawQuery() + "]";
         return new GitHubSearchException(message);
     }
 

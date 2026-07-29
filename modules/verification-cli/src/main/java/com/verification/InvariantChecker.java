@@ -362,7 +362,6 @@ public class InvariantChecker {
     }
 
     private void checkUnresolvedMethods(AieModel model, List<ViolationInfo> violations) {
-        // Build a map: method atom -> set of implementer Classifier atoms that bind it
         Map<String, Set<String>> methodToImplementers = new LinkedHashMap<>();
         for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
             if (attr.getKey().startsWith("ImplementationBinding")) {
@@ -383,12 +382,16 @@ public class InvariantChecker {
             }
         }
 
+        Map<String, String> classParentMap = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) classParentMap.put(t.from, t.to);
+        }
+
         for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
             String atom = attr.getKey();
             if (!isClassifierAtom(atom)) continue;
             if ("Yes".equals(attr.getValue().get("isAbstract"))) continue;
 
-            // Collect all methods available to this classifier (local + inherited)
             Set<String> allMethods = new LinkedHashSet<>();
             for (TupleEntry t : model.getTuples("localMethods")) {
                 if (atom.equals(t.from) && t.to != null) allMethods.add(t.to);
@@ -397,18 +400,12 @@ public class InvariantChecker {
                 if (atom.equals(t.from) && t.to != null) allMethods.add(t.to);
             }
 
-            // Compute the set of Classifiers in this classifier's ancestor chain
-            // (including itself) — only bindings from these implementers are visible.
             Set<String> visibleImplementers = new LinkedHashSet<>();
             visibleImplementers.add(atom);
-            Map<String, String> cAttrs = model.atomAttrs.get(atom);
-            if (cAttrs != null) {
-                String parent = cAttrs.get("classParent");
-                while (parent != null) {
-                    if (!visibleImplementers.add(parent)) break; // cycle guard
-                    Map<String, String> pAttrs = model.atomAttrs.get(parent);
-                    parent = pAttrs != null ? pAttrs.get("classParent") : null;
-                }
+            String parent = classParentMap.get(atom);
+            while (parent != null) {
+                if (!visibleImplementers.add(parent)) break;
+                parent = classParentMap.get(parent);
             }
 
             for (String m : allMethods) {
@@ -420,7 +417,6 @@ public class InvariantChecker {
                                     + m + " without any ImplementationBinding"));
                     continue;
                 }
-                // Check if at least one binding comes from a visible implementer
                 boolean visible = false;
                 for (String impl : implementers) {
                     if (visibleImplementers.contains(impl)) {
@@ -567,19 +563,21 @@ public class InvariantChecker {
         }
         if (localAtoms.isEmpty() || inheritedAtoms.isEmpty()) return false;
 
-        // Walk classParent chain: local's classifier must be a descendant
-        // of inherited's classifier
+        Map<String, String> classParentMap = new LinkedHashMap<>();
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) classParentMap.put(t.from, t.to);
+        }
+
         for (String localAtom : localAtoms) {
             for (String inheritedAtom : inheritedAtoms) {
-                    if (localAtom.equals(inheritedAtom)) return true;
-                    String current = localAtom;
-                    Set<String> visited = new LinkedHashSet<>();
-                    while (current != null && visited.add(current)) {
-                        Map<String, String> cattrs = model.atomAttrs.get(current);
-                        String parent = cattrs != null ? cattrs.get("classParent") : null;
-                        if (inheritedAtom.equals(parent)) return true;
-                        current = parent;
-                    }
+                if (localAtom.equals(inheritedAtom)) return true;
+                String current = localAtom;
+                Set<String> visited = new LinkedHashSet<>();
+                while (current != null && visited.add(current)) {
+                    String parent = classParentMap.get(current);
+                    if (inheritedAtom.equals(parent)) return true;
+                    current = parent;
+                }
             }
         }
         return false;

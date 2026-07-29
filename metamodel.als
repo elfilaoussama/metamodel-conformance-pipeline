@@ -1,9 +1,9 @@
 // ==========================================================================
-// kernel_v2_obligation.als
-// Built purely from the ten obligations (Section III).
-// Each construct marked with the obligation that demands it.
+// metamodel.als
+// Minimal class-level OO metamodel built from the structural conditions
+// synthesised in Section III. Each construct marked with its condition.
 // ==========================================================================
-module kernel_v2_obligation
+module metamodel
 
 // ==========================================================================
 // O-01: Distinct Structural Carriers
@@ -35,11 +35,11 @@ enum Flag { Yes, No }                      // O-07 (isAbstract binary marker)
 
 // --- Classifiers (O-01 carrier, O-03 parent relations) ---
 
-abstract sig Classifier {               // O-01
+sig Classifier {                        // O-01
     cid                 : one ClassifierID,                   // O-01
     name                : one Name,                          // O-01
-    classParent         : set Class,   // O-03 (class parents)
-    interfaceParents    : set Interface,// O-03 (multiple interface parents)
+    classParent         : lone Classifier,                    // O-03 (single class parent)
+    interfaceParents    : set Classifier,                     // O-03 (multiple interface parents)
     localMethods        : set Method,   // O-01, O-02
     localAttributes     : set Attribute,// O-01, O-02
     inheritedMethods    : set Method,   // O-04
@@ -47,10 +47,6 @@ abstract sig Classifier {               // O-01
     isAbstract          : one Flag,     // O-07
     directInstances     : set Object    // O-07
 }
-
-sig Class extends Classifier {}         // O-03 (needed to distinguish class
-                                        //        parent from interface parent)
-sig Interface extends Classifier {}     // O-03
 
 // --- Members (O-01 carriers, O-04 visibility, O-09 scope) ---
 
@@ -76,10 +72,10 @@ sig Attribute extends Member {          // O-01
 
 sig MethodBody {}                       // O-01 carrier, O-06 binding target
                                         // No reads/calls/exprs: not demanded
-                                        // by any obligation
+                                        // by any condition
 
 sig ImplementationBinding {             // O-01, O-06
-    implementer : one Class,           // O-06 (class that provides the body)
+    implementer : one Classifier,       // O-06 (class that provides the body)
     target      : one Method,          // O-06 (method being implemented)
     body        : one MethodBody       // O-06 (the concrete body)
 }
@@ -119,16 +115,12 @@ fact ExclusiveDeclarationOwnership {    // O-02
 
 // ==========================================================================
 // O-03: Explicit Acyclic Inheritance
-// "Must name which kinds of inheritance are supported (class parents,
+// "Must name which kinds of inheritance are supported (single class parent,
 //  multiple interface parents)." Acyclicity. Closures for ancestors.
 // ==========================================================================
 
 fact AcyclicGeneralization {            // O-03
     no c : Classifier | c in c.^(classParent + interfaceParents)
-}
-
-fact GeneralizationKindPolicy {         // O-03 (guards interfaces from
-    no i : Interface | some i.classParent  //   having class parents)
 }
 
 fun ancestors[c : Classifier] : set Classifier {   // O-03, O-04
@@ -244,7 +236,7 @@ fact InheritedConflictPolicy {          // O-08
 //  Abstract methods get no local body. Non-abstract local methods get one."
 // ==========================================================================
 
-fun bindingsOf[c : Class] : set ImplementationBinding {  // O-06 helper
+fun bindingsOf[c : Classifier] : set ImplementationBinding {  // O-06 helper
     { b : ImplementationBinding | b.implementer = c }
 }
 
@@ -252,7 +244,7 @@ fun implementedMethodsVisibleTo[c : Classifier] : set Method { // O-06 helper
     { m : Method |
         some b : ImplementationBinding |
             b.target = m and
-            b.implementer in c.*(classParent + interfaceParents) & Class
+            b.implementer in c.*(classParent + interfaceParents) & Classifier
     }
 }
 
@@ -272,18 +264,18 @@ fact ImplementationBindingPolicy {      // O-06
         one b : ImplementationBinding | b.body = mb
 
     // At most one binding per method per class
-    all c : Class, m : Method |
+    all c : Classifier, m : Method |
         lone b : ImplementationBinding |
             b.implementer = c and b.target = m
 
     // Abstract methods: no local binding from declaring class
-    all c : Class, m : c.localMethods |
+    all c : Classifier, m : c.localMethods |
         m.isAbstract = Yes implies
             no b : ImplementationBinding |
                 b.implementer = c and b.target = m
 
     // Non-abstract local methods: exactly one binding from declaring class
-    all c : Class, m : c.localMethods |
+    all c : Classifier, m : c.localMethods |
         m.isAbstract = No implies
             one b : ImplementationBinding |
                 b.implementer = c and b.target = m
@@ -293,8 +285,6 @@ fact ImplementationBindingPolicy {      // O-06
 // O-07: Abstraction and Instantiation Consistency
 // "Abstract classifiers: no direct instances. Abstract methods: no local 
 //  body from declaring class. Non-abstract: no unresolved methods."
-// "Interfaces inherently abstract, no direct instances, no instance-scoped 
-//  attributes."
 // ==========================================================================
 
 fact AbstractionPolicy {                // O-07
@@ -307,23 +297,17 @@ fact AbstractionPolicy {                // O-07
     all c : Classifier |
         c.isAbstract = No implies
             no m : Method | unresolvedMethod[c, m]
-
-    // Interfaces are inherently abstract
-    all i : Interface | i.isAbstract = Yes
-}
-
-fact InterfacePolicy {                  // O-07
-    all i : Interface | {
-        no i.directInstances           // no direct instances
-        all a : i.localAttributes | a.scope = Static  // no instance-scoped attrs
-    }
 }
 
 fact DirectInstancePolicy {             // O-07
-    all o : Object | one c : Class | o in c.directInstances
+    all o : Object | one c : Classifier | o in c.directInstances
     all c : Classifier |
         c.isAbstract = Yes implies no c.directInstances
-    all i : Interface | no i.directInstances
+}
+
+// Static and abstract incompatible (derived from O-04, O-07)
+fact StaticMethodPolicy {
+    all m : Method | not (m.scope = Static and m.isAbstract = Yes)
 }
 
 // ==========================================================================
@@ -354,7 +338,7 @@ fact OverridePolicy {                   // O-09
             isSubtype[local.returnType, inherited.returnType]
             local.isAbstract = Yes or
             some b : ImplementationBinding |
-                c in Class and
+                c in Classifier and
                 b.implementer = c and
                 b.target = local
         }

@@ -190,8 +190,12 @@ public class JsonToAieMapper {
             String superClass = getString(t, "superClass", getString(t, "superclass", null));
             if (superClass != null) {
                 for (int pi = 0; pi < total; pi++) {
-                    String pname = getString(typeList.get(pi), "qualifiedName", getString(typeList.get(pi), "name", ""));
-                    if (superClass.equals(pname)) {
+                    JsonObject pt = typeList.get(pi);
+                    String pQualName = getString(pt, "qualifiedName", null);
+                    String pSimpleName = getString(pt, "simpleName", null);
+                    if (superClass.equals(pQualName)
+                            || (pSimpleName != null && superClass.equals(pSimpleName))
+                            || superClass.equals(getString(pt, "name", null))) {
                         parentClassMap.put(ti, pi);
                         break;
                     }
@@ -204,11 +208,13 @@ public class JsonToAieMapper {
                 for (JsonElement ie : interfaces) {
                     String intfName = ie.getAsString();
                     for (int pi = 0; pi < total; pi++) {
-                        String pname = getString(typeList.get(pi), "qualifiedName", getString(typeList.get(pi), "name", ""));
-                        if (intfName.equals(pname)) {
-                            if (isInterface.get(pi)) {
-                                intfIds.add(atomIds.get(pi));
-                            }
+                        JsonObject pt = typeList.get(pi);
+                        String pQualName = getString(pt, "qualifiedName", null);
+                        String pSimpleName = getString(pt, "simpleName", null);
+                    if (intfName.equals(pQualName)
+                            || (pSimpleName != null && intfName.equals(pSimpleName))
+                            || intfName.equals(getString(pt, "name", null))) {
+                            intfIds.add(atomIds.get(pi));
                             break;
                         }
                     }

@@ -25,7 +25,14 @@ final class GitHubSearchQueryBuilder {
             }
         }
         qualifier(terms, "topic", criteria.topic());
-        qualifier(terms, "license", criteria.license());
+        if (!criteria.license().isBlank()) {
+            for (String token : criteria.license().split("[\\s,;|]+")) {
+                String t = token.trim();
+                if (!t.isEmpty() && !t.equalsIgnoreCase("OR") && !t.equalsIgnoreCase("AND")) {
+                    terms.add("license:" + t);
+                }
+            }
+        }
         range(terms, "stars", criteria.minStars(), criteria.maxStars());
         range(terms, "forks", criteria.minForks(), criteria.maxForks());
         range(terms, "size", criteria.minSizeKb(), criteria.maxSizeKb());
