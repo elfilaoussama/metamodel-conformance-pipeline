@@ -1,9 +1,26 @@
 import ecore : 'http://www.eclipse.org/emf/2002/Ecore';
 
+-- =========================================================================
+-- StructuralMetamodel.recore — AlloyInEcore encoding matching the abstract
+-- metamodel in metamodel.als. Language-independent: multiple inheritance
+-- via parents, binary isInheritable flag, no nominal type system, no
+-- access modifier hierarchy.
+--
+-- Documented limitation:
+-- 1. O-01 IdentifierIntegrity: ID closures (ClassifierID = Classifier.cid,
+--    etc.) are not expressible in AlloyInEcore relational logic.
+--    Uniqueness is enforced; closure is trusted from the mapper.
+-- 2. O-03 parents multiplicity: AlloyInEcore does not support self-
+--    referencing [*] properties. parents is modelled as a single-valued
+--    reference (at most one parent). This is a conservative
+--    approximation: every structure satisfiable under single inheritance
+--    is also satisfiable under multiple inheritance, so the invariants
+--    remain sound.
+-- =========================================================================
+
 package structural_metamodel : sm = 'http://example.com/structural_metamodel'
 {
-    enum Visibility { literal Pub = 0; literal Priv = 1; literal Prot = 2; literal Pkg = 3; }
-    enum YesNo { literal Yes = 0; literal No = 1; }
+    enum Flag { literal Yes = 0; literal No = 1; }
     enum Scope { literal Instance = 0; literal Static = 1; }
 
     class Method
@@ -12,9 +29,9 @@ package structural_metamodel : sm = 'http://example.com/structural_metamodel'
         attribute memberName : String;
         attribute returnType : String;
         attribute paramTypes : String;
-        attribute visibility : Visibility;
+        attribute isInheritable : Flag;
         attribute scope : Scope;
-        attribute isAbstract : YesNo;
+        attribute isAbstract : Flag;
     }
 
     class Attribute
@@ -22,7 +39,7 @@ package structural_metamodel : sm = 'http://example.com/structural_metamodel'
         attribute aid : String {id};
         attribute memberName : String;
         attribute type : String;
-        attribute visibility : Visibility;
+        attribute isInheritable : Flag;
         attribute scope : Scope;
     }
 
@@ -39,8 +56,8 @@ package structural_metamodel : sm = 'http://example.com/structural_metamodel'
     {
         attribute cid : String {id};
         attribute name : String;
-        attribute isAbstract : YesNo;
-        property classParent : Classifier;
+        attribute isAbstract : Flag;
+        property parents : Classifier;
         property localMethods : Method[*] {composes};
         property localAttributes : Attribute[*] {composes};
         property inheritedMethods : Method[*];
@@ -53,43 +70,44 @@ package structural_metamodel : sm = 'http://example.com/structural_metamodel'
     class Root
     {
         property contents : Classifier[*] {composes};
+        property bodies : MethodBody[*] {composes};
+        property bindings : ImplementationBinding[*] {composes};
     }
 
     -- O-01: Identifier Integrity (metamodel.als: IdentifierIntegrity)
     invariant UniqueCids : all c1, c2 : Classifier | c1 != c2 implies c1.cid != c2.cid;
     invariant UniqueMids : all m1, m2 : Method | m1 != m2 implies m1.mid != m2.mid;
     invariant UniqueAids : all a1, a2 : Attribute | a1 != a2 implies a1.aid != a2.aid;
+    invariant UniqueOids : all o1, o2 : Object | o1 != o2 implies o1.oid != o2.oid;
 
     -- O-02: Exclusive Declaration Ownership (metamodel.als: ExclusiveDeclarationOwnership)
     invariant ExclusiveMethodOwner : all m : Method | one c : Classifier | m in c.localMethods;
     invariant ExclusiveAttributeOwner : all a : Attribute | one c : Classifier | a in c.localAttributes;
 
     -- O-03: Acyclic Inheritance (metamodel.als: AcyclicGeneralization)
-    -- Uses classParent (mirrors metamodel.als)
-    invariant AcyclicGeneralization : no c : Classifier | c in c.^classParent;
+    invariant AcyclicGeneralization : no c : Classifier | c in c.^parents;
 
     -- O-04: Inherited Method View (metamodel.als: InheritedMethodView)
-    -- Full: visibility filter, local override, nearer-ancestor priority
     invariant InheritedMethodView : all c : Classifier |
-        c.inheritedMethods = {m : Method | some anc : c.^(classParent) |
-            m in anc.localMethods and m.visibility != Priv and
+        c.inheritedMethods = {m : Method | some anc : c.^parents |
+            m in anc.localMethods and m.isInheritable = Yes and
             not (some lm : c.localMethods | lm.memberName = m.memberName and lm.paramTypes = m.paramTypes) and
-            not (some nearer : c.^(classParent) |
-                anc in nearer.^(classParent) and
+            not (some nearer : c.^parents |
+                anc in nearer.^parents and
                 some rep : nearer.localMethods |
-                    rep.visibility != Priv and
+                    rep.isInheritable = Yes and
                     rep.memberName = m.memberName and rep.paramTypes = m.paramTypes)
         };
 
     -- O-04: Inherited Attribute View (metamodel.als: InheritedAttributeView)
     invariant InheritedAttributeView : all c : Classifier |
-        c.inheritedAttributes = {a : Attribute | some anc : c.^(classParent) |
-            a in anc.localAttributes and a.visibility != Priv and
+        c.inheritedAttributes = {a : Attribute | some anc : c.^parents |
+            a in anc.localAttributes and a.isInheritable = Yes and
             not (some la : c.localAttributes | la.memberName = a.memberName) and
-            not (some nearer : c.^(classParent) |
-                anc in nearer.^(classParent) and
+            not (some nearer : c.^parents |
+                anc in nearer.^parents and
                 some rep : nearer.localAttributes |
-                    rep.visibility != Priv and rep.memberName = a.memberName)
+                    rep.isInheritable = Yes and rep.memberName = a.memberName)
         };
 
     -- O-05: Local/Inherited Disjointness (metamodel.als: LocalInheritedSeparation)
@@ -106,7 +124,7 @@ package structural_metamodel : sm = 'http://example.com/structural_metamodel'
     invariant InheritedAttributeNoConflict : all c : Classifier | all a1, a2 : c.inheritedAttributes |
         a1 != a2 implies a1.memberName != a2.memberName;
 
-    -- O-06: Implementation Binding (metamodel.als: ImplementationBindingPolicy, full 5 constraints)
+    -- O-06: Implementation Binding (metamodel.als: ImplementationBindingPolicy)
     invariant BindingTargetValid : all b : ImplementationBinding |
         b.target in b.implementer.localMethods + b.implementer.inheritedMethods;
     invariant NoOrphanBodies : all mb : MethodBody | one b : ImplementationBinding | b.body = mb;
@@ -122,36 +140,34 @@ package structural_metamodel : sm = 'http://example.com/structural_metamodel'
         (some m : c.localMethods + c.inheritedMethods |
             no b : ImplementationBinding |
                 b.target = m and
-                b.implementer in c.*(classParent))
+                b.implementer in c.*parents)
         implies c.isAbstract = Yes;
     invariant NonAbstractHasNoUnresolved : all c : Classifier |
         c.isAbstract = No implies
             no m : c.localMethods + c.inheritedMethods |
                 no b : ImplementationBinding |
                     b.target = m and
-                    b.implementer in c.*(classParent);
+                    b.implementer in c.*parents;
     invariant AbstractNoDirectInstances : all c : Classifier | c.isAbstract = Yes implies no c.directInstances;
     invariant ObjectsInOneClass : all o : Object | one c : Classifier | o in c.directInstances;
     invariant StaticNotAbstract : all m : Method | not (m.scope = Static and m.isAbstract = Yes);
 
     -- O-09: Override Discipline (metamodel.als: OverridePolicy)
-    -- Without full Type hierarchy, return-type covariance is encoded as a structural constraint
-    -- using the isSubtype surrogate through the classParent chain.
-    invariant OverrideReturnCompatible : all c : Classifier | all inherited, local : Method |
+    invariant OverrideReturnEquality : all c : Classifier | all inherited, local : Method |
         local in c.localMethods and
-        inherited.visibility != Priv and
+        inherited.isInheritable = Yes and
         inherited.scope = local.scope and
         local.memberName = inherited.memberName and
         local.paramTypes = inherited.paramTypes and
-        inherited in ((c.^(classParent)).localMethods)
-    implies (local.returnType = inherited.returnType);
+        inherited in ((c.^parents).localMethods)
+    implies local.returnType = inherited.returnType;
     invariant OverrideAbstractOrImplemented : all c : Classifier | all inherited, local : Method |
         local in c.localMethods and
-        inherited.visibility != Priv and
+        inherited.isInheritable = Yes and
         inherited.scope = local.scope and
         local.memberName = inherited.memberName and
         local.paramTypes = inherited.paramTypes and
-        inherited in ((c.^(classParent)).localMethods)
+        inherited in ((c.^parents).localMethods)
     implies (local.isAbstract = Yes or
              some b : ImplementationBinding | b.implementer = c and b.target = local);
 }

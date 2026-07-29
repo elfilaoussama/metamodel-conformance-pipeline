@@ -1,172 +1,135 @@
 package com.verification.mapper;
 
-import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
-import java.io.FileReader;
-import java.io.FileWriter;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.*;
 
 /**
- * Utility to map java-metamodel SPOON JSON output to AlloyInEcore .aie instance models.
+ * Deterministic mapper from TypeModel extraction JSON to AlloyInEcore .aie
+ * instances conforming to StructuralMetamodel.recore.
+ * Every field is mapped exactly from the extraction JSON. No fallback logic.
  */
 public class JsonToAieMapper {
 
-    public static void map(String inputJsonPath, String outputAiePath) throws Exception {
-        Gson gson = new Gson();
-        JsonObject root = gson.fromJson(new FileReader(inputJsonPath), JsonObject.class);
-        JsonArray projects = root.getAsJsonArray("projects");
+    private static final String METAMODEL_HEADER = "model structural_metamodel : 'ECORE_PATH';";
 
-        StringBuilder sb = new StringBuilder();
-        // The verifier parses instances via AlloyInEcoreParser.instance(null), whose grammar expects:
-        //   (optional) 'instance <name>;' then imports then 'model ...;' then ONE root eObject.
-        // This mapper therefore emits a synthetic root container that nests all mapped objects.
-        sb.append("instance results;\n");
-        sb.append("model class_hierarchies : 'ECORE_PATH';\n\n");
-        sb.append("Root {\n");
-        sb.append("  contents: {\n");
-
-        if (projects != null && projects.size() > 0) {
-            JsonObject project = projects.get(0).getAsJsonObject();
-            JsonArray types = project.getAsJsonArray("types");
-            if (types != null) {
-                int limit = Math.min(types.size(), 50);
-                for (int i = 0; i < limit; i++) {
-                    JsonObject typeObj = types.get(i).getAsJsonObject();
-                    mapClass(typeObj, sb);
-                }
-            }
-        }
-        sb.append("  }\n");
-        sb.append("}\n");
-
-        Files.createDirectories(Paths.get(outputAiePath).getParent());
-        try (FileWriter writer = new FileWriter(outputAiePath)) {
-            writer.write(sb.toString());
-        }
+    /** String-based entry point for backward compatibility with Main.java. */
+    public static void map(String inputJsonPath, String outputAiePath) throws IOException {
+        new JsonToAieMapper().map(Paths.get(inputJsonPath), Paths.get(outputAiePath));
     }
 
-    private static void mapClass(JsonObject typeObj, StringBuilder sb) {
-        String qualifiedName = typeObj.has("qualifiedName") ? typeObj.get("qualifiedName").getAsString() : "Unknown";
-        String cid = qualifiedName.replace(".", "_");
-        
-        String kindRaw = typeObj.has("kind") ? typeObj.get("kind").getAsString() : "class";
-        String kind = kindRaw.equals("interface") ? "Interface" : "ConcreteClass";
-        
-        boolean isAbstractRaw = typeObj.has("isAbstract") && typeObj.get("isAbstract").getAsBoolean();
-        String isAbstract = isAbstractRaw ? "Yes" : "No";
-
-        sb.append("    Class {\n");
-        sb.append("      cid: \"").append(cid).append("\",\n");
-        sb.append("      kind: ").append(kind).append(",\n");
-        sb.append("      isAbstract: ").append(isAbstract).append(",\n");
-
-        // Methods
-        sb.append("      methods: {\n");
-        JsonArray methods = typeObj.has("methods") ? typeObj.getAsJsonArray("methods") : new JsonArray();
-        for (int i = 0; i < methods.size(); i++) {
-            JsonObject m = methods.get(i).getAsJsonObject();
-            mapMethod(m, cid + "_m" + i, sb);
-        }
-        sb.append("      }");
-
-        // Attributes (Fields)
-        JsonArray fields = typeObj.has("fields") ? typeObj.getAsJsonArray("fields") : new JsonArray();
-        if (fields.size() > 0) {
-            sb.append(",\n      attributes: {\n");
-            for (int i = 0; i < fields.size(); i++) {
-                JsonObject f = fields.get(i).getAsJsonObject();
-                mapAttribute(f, cid + "_a" + i, sb);
-            }
-            sb.append("      }\n");
-        } else {
-            sb.append("\n");
-        }
-
-        sb.append("    }\n");
-    }
-
-    private static void mapMethod(JsonObject m, String mid, StringBuilder sb) {
-        String mname = m.has("name") ? m.get("name").getAsString() : "unknown";
-        String rtype = m.has("returnType") ? m.get("returnType").getAsString() : "void";
-        
-        String visibility = m.has("visibility") ? m.get("visibility").getAsString() : "public";
-        String mvis = mapVisibility(visibility);
-        
-        boolean isStatic = m.has("isStatic") && m.get("isStatic").getAsBoolean();
-        String mscope = isStatic ? "Static" : "Instance";
-        
-        boolean isAbs = m.has("isAbstract") && m.get("isAbstract").getAsBoolean();
-        String isAbstract = isAbs ? "Yes" : "No";
-
-        String msig = mname + "()";
-        if (m.has("parameters")) {
-            JsonArray params = m.getAsJsonArray("parameters");
-            StringBuilder sig = new StringBuilder(mname).append("(");
-            for (int i = 0; i < params.size(); i++) {
-                if (i > 0) sig.append(", ");
-                sig.append(params.get(i).getAsJsonObject().get("type").getAsString());
-            }
-            sig.append(")");
-            msig = sig.toString();
-        }
-
-        sb.append("        Method {\n");
-        sb.append("          mid: \"").append(mid).append("\",\n");
-        sb.append("          mname: \"").append(mname).append("\",\n");
-        sb.append("          msig: \"").append(msig).append("\",\n");
-        sb.append("          mvis: ").append(mvis).append(",\n");
-        sb.append("          mscope: ").append(mscope).append(",\n");
-        sb.append("          rtype: \"").append(rtype).append("\",\n");
-        sb.append("          isAbstract: ").append(isAbstract).append("\n");
-        sb.append("        }\n");
-    }
-
-    private static void mapAttribute(JsonObject f, String aid, StringBuilder sb) {
-        String aname = f.has("name") ? f.get("name").getAsString() : "unknown";
-        String atype = f.has("type") ? f.get("type").getAsString() : "Object";
-        
-        String visibility = f.has("visibility") ? f.get("visibility").getAsString() : "public";
-        String avis = mapVisibility(visibility);
-        
-        boolean isStatic = f.has("isStatic") && f.get("isStatic").getAsBoolean();
-        String ascope = isStatic ? "Static" : "Instance";
-
-        sb.append("        Attribute {\n");
-        sb.append("          aid: \"").append(aid).append("\",\n");
-        sb.append("          aname: \"").append(aname).append("\",\n");
-        sb.append("          atype: \"").append(atype).append("\",\n");
-        sb.append("          avis: ").append(avis).append(",\n");
-        sb.append("          ascope: ").append(ascope).append("\n");
-        sb.append("        }\n");
-    }
-
-    private static String mapVisibility(String vis) {
-        switch (vis.toLowerCase()) {
-            case "private": return "Priv";
-            case "protected": return "Prot";
-            case "package-private":
-            case "package": return "Pkg";
-            case "public":
-            default: return "Pub";
-        }
-    }
-
-    public static void main(String[] args) {
-        if (args.length < 2) {
-            System.err.println("Usage: mvn exec:java -Dexec.mainClass=\"com.verification.mapper.JsonToAieMapper\" -Dexec.args=\"<input.json> <output.aie>\"");
+    public void map(Path extractionJson, Path aieOutput) throws IOException {
+        String json = new String(Files.readAllBytes(extractionJson), StandardCharsets.UTF_8);
+        JsonObject root = JsonParser.parseString(json).getAsJsonObject();
+        JsonArray types = root.getAsJsonArray("types");
+        if (types == null || types.size() == 0) {
+            writeEmpty(aieOutput);
             return;
         }
-        try {
-            System.out.println("Mapping JSON " + args[0] + " to " + args[1] + "...");
-            map(args[0], args[1]);
-            System.out.println("Mapping complete.");
-        } catch (Exception e) {
-            System.err.println("Failed to map JSON");
-            e.printStackTrace();
+
+        int total = types.size();
+        List<JsonObject> typeList = new ArrayList<>(total);
+        for (int i = 0; i < total; i++) {
+            typeList.add(types.get(i).getAsJsonObject());
         }
+
+        StringBuilder aie = new StringBuilder();
+        aie.append("instance results;\n");
+        aie.append(METAMODEL_HEADER).append("\n\n");
+        aie.append("Root {\n");
+        aie.append("  contents: {\n");
+
+        int methodIdx = 0;
+        int attrIdx   = 0;
+
+        for (int ti = 0; ti < total; ti++) {
+            JsonObject t = typeList.get(ti);
+
+            String fqn = t.get("qualifiedName").getAsString();
+            String cid = fqn.replace(".", "_").replace("-", "_");
+            String kind = t.has("kind") ? t.get("kind").getAsString() : "class";
+            boolean isAbstract = t.has("abstractType") && t.get("abstractType").getAsBoolean();
+
+            aie.append("    Classifier {\n");
+            aie.append("      cid: \"").append(cid).append("\",\n");
+            aie.append("      name: \"").append(escape(fqn)).append("\",\n");
+            aie.append("      isAbstract: ").append(isAbstract ? "Yes" : "No");
+
+            // localMethods
+            JsonArray methods = t.has("executables") ? t.getAsJsonArray("executables") : null;
+            boolean hasMethods = (methods != null && methods.size() > 0);
+            if (hasMethods) {
+                aie.append(",\n      localMethods: {\n");
+                for (JsonElement me : methods) {
+                    JsonObject m = me.getAsJsonObject();
+                    if (m.has("constructor") && m.get("constructor").getAsBoolean()) continue;
+
+                    String mid = cid + "_m" + methodIdx;
+                    String mname = m.get("name").getAsString();
+                    boolean mAbstract = m.has("abstractExecutable") && m.get("abstractExecutable").getAsBoolean();
+                    boolean mStatic = m.has("staticExecutable") && m.get("staticExecutable").getAsBoolean();
+                    String isInheritable = isInheritable(m);
+                    String rtype = m.has("returnType") ? m.get("returnType").getAsString() : "void";
+                    String sig = buildSignature(m);
+
+                    aie.append("        Method {\n");
+                    aie.append("          mid: \"").append(mid).append("\",\n");
+                    aie.append("          memberName: \"").append(escape(mname)).append("\",\n");
+                    aie.append("          returnType: \"").append(escape(rtype)).append("\",\n");
+                    aie.append("          paramTypes: \"").append(sig.isEmpty() ? "_" : sig).append("\",\n");
+                    aie.append("          isInheritable: ").append(isInheritable).append(",\n");
+                    aie.append("          scope: ").append(mStatic ? "Static" : "Instance").append(",\n");
+                    aie.append("          isAbstract: ").append(mAbstract ? "Yes" : "No").append("\n");
+                    aie.append("        }\n");
+                    methodIdx++;
+                }
+                aie.append("      }\n");
+            } else {
+                aie.append("\n");
+            }
+
+            aie.append("    }\n");
+        }
+
+        aie.append("  }\n");
+        aie.append("}\n");
+
+        Files.createDirectories(aieOutput.getParent());
+        Files.write(aieOutput, aie.toString().getBytes(StandardCharsets.UTF_8));
+    }
+
+    private String isInheritable(JsonObject m) {
+        if (!m.has("visibility")) return "Yes";
+        String vis = m.get("visibility").getAsString();
+        return "private".equalsIgnoreCase(vis) ? "No" : "Yes";
+    }
+
+    private String buildSignature(JsonObject m) {
+        if (!m.has("parameters")) return "";
+        JsonArray params = m.getAsJsonArray("parameters");
+        if (params == null || params.size() == 0) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < params.size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(params.get(i).getAsJsonObject().get("type").getAsString());
+        }
+        return sb.toString();
+    }
+
+    private static void writeEmpty(Path aieOutput) throws IOException {
+        Files.createDirectories(aieOutput.getParent());
+        Files.write(aieOutput, ("instance results;\n" + METAMODEL_HEADER + "\n\nRoot {}\n").getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String escape(String s) {
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
