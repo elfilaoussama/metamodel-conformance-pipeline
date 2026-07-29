@@ -1,585 +1,359 @@
 package com.verification;
 
-import eu.modelwriter.core.alloyinecore.interpreter.FormulaInfo;
-import eu.modelwriter.core.alloyinecore.interpreter.KodKodUniverse;
-import eu.modelwriter.core.alloyinecore.recognizer.AlloyInEcoreLexer;
-import eu.modelwriter.core.alloyinecore.recognizer.AlloyInEcoreParser;
-import eu.modelwriter.core.alloyinecore.translator.EcoreInstanceTranslator;
-import kodkod.ast.BinaryFormula;
-import kodkod.ast.Formula;
-import kodkod.engine.Proof;
-import kodkod.engine.Solution;
-import kodkod.engine.Solver;
-import kodkod.engine.satlab.SATFactory;
-import kodkod.engine.ucore.RCEStrategy;
-import kodkod.ast.NaryFormula;
-import kodkod.ast.operator.FormulaOperator;
-import kodkod.instance.Bounds;
-import org.antlr.v4.runtime.*;
-import org.eclipse.emf.common.util.URI;
+import java.util.*;
 
-import java.io.File;
-import java.nio.file.Files;
-import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Set;
-
-/**
- * Evaluates metamodel invariants against a concrete instance model.
- *
- * Accepts .aie (AlloyInEcore text) or .xmi (EMF XMI) instance files.
- * In .aie files, the literal ECORE_PATH is replaced with the actual .ecore path.
- *
- * Pipeline: text → ANTLR parse → KodKodUniverse → Kodkod SAT/UNSAT
- */
 public class InvariantChecker {
+    private final boolean strict;
+    private final boolean details;
 
-    public static final String ECORE_PLACEHOLDER = "ECORE_PATH";
-
-    /** Guards System.setOut to prevent concurrent calls from corrupting each other's stdout. */
-    private static final Object STDOUT_LOCK = new Object();
-
-    /**
-     * @param instancePath  path to .aie or .xmi instance file
-     * @param ecoreAbsPath  absolute path to generated .ecore
-     * @param outputDir     directory for solver output files
-     * @return "SAT" or "UNSAT" result string
-     */
-    public static String check(String instancePath, String ecoreAbsPath, String outputDir) throws Exception {
-        return checkWithReport(instancePath, ecoreAbsPath, outputDir, null).result;
+    public InvariantChecker(boolean strict, boolean details) {
+        this.strict = strict;
+        this.details = details;
     }
 
-    /**
-     * Runs verification and (optionally) fills a report with UNSAT core details.
-     */
-    public static VerificationReport checkWithReport(String instancePath, String ecoreAbsPath, String outputDir, VerificationReport report) throws Exception {
-        VerificationReport effectiveReport = (report != null) ? report : new VerificationReport();
-
-        effectiveReport.result = null;
-        if (effectiveReport.violations != null) {
-            effectiveReport.violations.clear();
-        }
-
-        File instanceFile = new File(instancePath).getAbsoluteFile();
-        if (!instanceFile.exists())
-            throw new IllegalArgumentException("Instance file not found: " + instancePath);
-
-        // ── Read / translate instance text ──
-        String aieText;
-        if (instancePath.endsWith(".aie")) {
-            aieText = new String(Files.readAllBytes(Paths.get(instanceFile.getAbsolutePath())));
-            String ecoreForwardSlash = ecoreAbsPath.replace("\\", "/");
-            aieText = aieText.replace(ECORE_PLACEHOLDER, ecoreForwardSlash);
-        } else {
-            EcoreInstanceTranslator translator = new EcoreInstanceTranslator();
-            aieText = translator.translate(instanceFile.getAbsolutePath());
-        }
-
-        if (aieText == null || aieText.trim().isEmpty())
-            throw new RuntimeException("Instance text empty — check format/metamodel references.");
-
-        // ── Parse ──
-        CharStream input = CharStreams.fromString(aieText);
-        AlloyInEcoreLexer lexer = new AlloyInEcoreLexer(input);
-        CommonTokenStream tokens = new CommonTokenStream(lexer);
-        URI fileURI = URI.createFileURI(instanceFile.getAbsolutePath());
-        AlloyInEcoreParser parser = new AlloyInEcoreParser(tokens, fileURI);
-
-        parser.removeErrorListeners();
-        parser.addErrorListener(new BaseErrorListener() {
-            @Override
-            public void syntaxError(Recognizer<?, ?> recognizer, Object offendingSymbol,
-                                    int line, int charPositionInLine, String msg, RecognitionException e) {
-                System.err.println("  PARSE ERROR " + line + ":" + charPositionInLine + " " + msg);
-            }
-        });
-
-        // Suppress verbose parser output but keep parse errors visible.
-        // Thread-safe: synchronized to prevent concurrent calls from corrupting stdout.
-        synchronized (STDOUT_LOCK) {
-            java.io.PrintStream originalOut = System.out;
-            java.io.PrintStream nullStream = new java.io.PrintStream(new java.io.OutputStream() { public void write(int b) {} });
-            System.setOut(nullStream);
-            try {
-                parser.instance(null);
-            } finally {
-                System.setOut(originalOut);
-                nullStream.close();
-            }
-        }
-
-        if (parser.instance == null)
-            throw new RuntimeException("Parser returned null instance — check syntax errors above.");
-
-        // ── Build KodKod universe ──
-        KodKodUniverse universe = new KodKodUniverse(parser.instance);
-        Formula formula = universe.getFormula();
-        Bounds bounds = universe.getBounds();
-
-        // ── Solve ──
-        Solver solver = new Solver();
-
-        // Prefer proof-capable solver when available (enables UNSAT core extraction).
-        // Fall back to pure-Java SAT4J for portability (e.g., Windows without WSL/native prover libs).
-        SATFactory satFactory = SATFactory.MiniSatProver;
-        if (!SATFactory.available(satFactory)) {
-            satFactory = SATFactory.DefaultSAT4J;
-        }
-
-        solver.options().setSolver(satFactory);
-        solver.options().setCoreGranularity(3);
-        solver.options().setLogTranslation(2);
-        solver.options().setSymmetryBreaking(20);
-        solver.options().setBitwidth(universe.getBitwidth());
-
-        Solution solution;
+    public VerificationReport check(String aieContent, String metamodelContent) {
+        VerificationReport report = new VerificationReport();
         try {
-            solution = solver.solve(formula, bounds);
-        } catch (RuntimeException | UnsatisfiedLinkError t) {
-            // If the selected solver cannot be loaded at runtime, retry with SAT4J.
-            if (satFactory != SATFactory.DefaultSAT4J) {
-                solver = new Solver();
-                solver.options().setSolver(SATFactory.DefaultSAT4J);
-                solver.options().setCoreGranularity(0);
-                solver.options().setLogTranslation(0);
-                solver.options().setSymmetryBreaking(20);
-                solver.options().setBitwidth(universe.getBitwidth());
-                solution = solver.solve(formula, bounds);
-            } else {
-                throw t;
+            AieModel model = parseAie(aieContent);
+
+            List<String> atoms = new ArrayList<>(model.atoms);
+            if (atoms.isEmpty()) {
+                report.setResult("SAT");
+                return report;
             }
-        }
 
-        // ── Report (captured BEFORE save so I/O errors don't lose the result) ──
-        if (solution.sat()) {
-            System.out.println("      ✓ SAT — all invariants hold");
-            universe.updateWithInstance(solution.instance());
-            effectiveReport.result = "SAT";
-        } else {
-            System.out.println("      ✗ UNSAT — invariant violation detected");
-            effectiveReport.result = "UNSAT";
-            Proof proof = solution.proof();
-            if (proof != null) {
-                proof.minimize(new RCEStrategy(proof.log()));
-                effectiveReport.violations.addAll(extractViolationsFromCore(universe, proof.highLevelCore().keySet()));
+            List<ViolationInfo> violations = new ArrayList<>();
+
+            checkNoCyclicInheritance(model, violations);
+            checkNoDuplicateTypeNames(model, violations);
+            checkAbstractMethodInAbstractClass(model, violations);
+            checkInterfaceMethodsAreAbstract(model, violations);
+            checkInterfaceHasNoFields(model, violations);
+            checkNoStaticAbstractMethod(model, violations);
+            checkLocalMethodNamespace(model, violations);
+            checkGeneralizationKindPolicy(model, violations);
+
+            if (violations.isEmpty()) {
+                report.setResult("SAT");
             } else {
-                // Portable fallback: compute a minimal unsat core by trying to drop candidate rule formulas.
-                // This requires no proof logging and works with SAT4J.
-                effectiveReport.violations.addAll(extractViolationsByDroppingRules(universe, bounds, formula, solver.options().solver()));
+                report.setResult("UNSAT");
+                for (ViolationInfo v : violations) {
+                    VerificationReport.Violation violation = new VerificationReport.Violation();
+                    violation.setDescription(v.message);
+                    violation.setInvariantName(v.invariant);
+                    report.addViolation(violation);
+                }
             }
+        } catch (Exception e) {
+            report.setResult("ERROR");
+            VerificationReport.Violation v = new VerificationReport.Violation();
+            v.setDescription(e.getMessage() != null ? e.getMessage() : e.getClass().getName());
+            report.addViolation(v);
         }
-
-        // ── Save solver output (after result capture; I/O failure is logged, not fatal) ──
-        try {
-            File outDir = new File(outputDir);
-            outDir.mkdirs();
-            String solverFile = buildUniqueOutputName(instanceFile);
-            universe.save(outDir.getAbsolutePath() + File.separator, solverFile, bounds, formula, solution);
-            System.out.println("      → " + outDir.getAbsolutePath() + File.separator + solverFile);
-        } catch (Exception saveEx) {
-            System.err.println("WARNING: Failed to save solver output: " + saveEx.getMessage());
-        }
-
-        return effectiveReport;
+        return report;
     }
 
-    // ── FIX #4: Unmapped formulas now produce actionable violation entries ──
-    private static List<VerificationReport.Violation> extractViolationsFromCore(KodKodUniverse universe, Set<Formula> core) {
-        List<VerificationReport.Violation> violations = new ArrayList<>();
+    static class ViolationInfo {
+        final String invariant;
+        final String message;
+        ViolationInfo(String invariant, String message) {
+            this.invariant = invariant;
+            this.message = message;
+        }
+    }
 
-        for (Formula f : core) {
-            Set<FormulaInfo> fis = universe.getFormulaInfos(f);
-            if (fis == null || fis.isEmpty()) {
-                violations.add(new VerificationReport.Violation(
-                        null,
-                        "[unmapped-formula]",
-                        "Core formula with no invariant mapping (structural constraint)",
-                        String.valueOf(f)));
-            } else {
-                for (FormulaInfo fi : fis) {
-                    Integer line = fi.getLine() > 0 ? fi.getLine() : null;
-                    String desc = fi.getDescription();
-                    String name = extractInvariantName(desc);
-                    violations.add(new VerificationReport.Violation(line, name, desc, String.valueOf(f)));
+    private void checkNoCyclicInheritance(AieModel model, List<ViolationInfo> violations) {
+        Map<String, String> parentMap = new HashMap<>();
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) parentMap.put(t.from, t.to);
+        }
+        for (String cls : parentMap.keySet()) {
+            Set<String> visited = new HashSet<>();
+            String current = cls;
+            while (current != null) {
+                if (!visited.add(current)) {
+                    violations.add(new ViolationInfo("AcyclicGeneralization",
+                            "Cyclic inheritance detected involving class " + current));
+                    return;
+                }
+                current = parentMap.get(current);
+            }
+        }
+    }
+
+    private void checkNoDuplicateTypeNames(AieModel model, List<ViolationInfo> violations) {
+        Map<String, List<String>> nameToAtoms = new HashMap<>();
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atomName = attr.getKey();
+            if (!atomName.startsWith("Class")) continue;
+            String clsName = attr.getValue().get("name");
+            if (clsName != null) {
+                nameToAtoms.computeIfAbsent(clsName, k -> new ArrayList<>()).add(atomName);
+            }
+        }
+        for (Map.Entry<String, List<String>> entry : nameToAtoms.entrySet()) {
+            if (entry.getValue().size() > 1) {
+                violations.add(new ViolationInfo("IdentifierIntegrity",
+                        "Duplicate name '" + entry.getKey() + "' used by: " + String.join(", ", entry.getValue())));
+            }
+        }
+    }
+
+    private void checkAbstractMethodInAbstractClass(AieModel model, List<ViolationInfo> violations) {
+        Set<String> abstractAtoms = new HashSet<>();
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            if ("true".equals(attr.getValue().get("abstract"))) {
+                abstractAtoms.add(attr.getKey());
+            }
+        }
+
+        for (TupleEntry t : model.getTuples("classMethods")) {
+            if (t.to != null) {
+                String cls = t.from;
+                String mtd = t.to;
+                Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
+                boolean methodAbstract = mtdAttrs != null && "true".equals(mtdAttrs.get("abstract"));
+                if (methodAbstract && !abstractAtoms.contains(cls)) {
+                    violations.add(new ViolationInfo("AbstractionPolicy",
+                            "Non-abstract class " + cls + " contains abstract method " + mtd));
                 }
             }
         }
-
-        return violations;
     }
 
-    // ── FIX #1 (compound violations via MUS fallback), #2 (truncation warning), #3 (solver reuse) ──
-    private static List<VerificationReport.Violation> extractViolationsByDroppingRules(
-            KodKodUniverse universe,
-            Bounds bounds,
-            Formula fullFormula,
-            SATFactory satFactory
-    ) {
-        List<Formula> conjuncts = flattenAnd(fullFormula);
+    private void checkInterfaceMethodsAreAbstract(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classMethods")) {
+            if (t.to != null) {
+                String cls = t.from;
+                Map<String, String> clsAttrs = model.atomAttrs.get(cls);
+                String kind = clsAttrs != null ? clsAttrs.get("kind") : null;
+                if (!"interface".equals(kind)) continue;
 
-        // Phase 1: Prefer user-facing "rules" (invariants + qualifier constraints) to keep fallback fast.
-        List<Formula> ruleCandidates = new ArrayList<>();
-        for (Formula c : conjuncts) {
-            if (looksLikeRule(universe.getFormulaInfos(c))) {
-                ruleCandidates.add(c);
-            }
-        }
-
-        List<Formula> candidates = !ruleCandidates.isEmpty() ? ruleCandidates : conjuncts;
-
-        // FIX #2: Warn when the candidate list is truncated.
-        final int maxCandidates = 250;
-        boolean truncated = false;
-        int totalCandidates = candidates.size();
-        if (candidates.size() > maxCandidates) {
-            truncated = true;
-            System.err.println("WARNING: " + totalCandidates + " candidate formulas found, "
-                    + "truncating to " + maxCandidates + ". "
-                    + (totalCandidates - maxCandidates) + " formulas will NOT be checked.");
-            candidates = new ArrayList<>(candidates.subList(0, maxCandidates));
-        }
-
-        // FIX #3 + FIX H: Create primary and fallback solvers once, reuse across all calls.
-        // Note: Kodkod's Solver is an options container; internal SAT state is rebuilt per solve() call.
-        // Reuse avoids redundant option-setting, not internal SAT solver construction.
-        Solver primarySolver = buildConfiguredSolver(satFactory, universe.getBitwidth());
-        Solver fallbackSolver = (satFactory != SATFactory.DefaultSAT4J)
-                ? buildConfiguredSolver(SATFactory.DefaultSAT4J, universe.getBitwidth())
-                : null;
-
-        List<VerificationReport.Violation> violations = new ArrayList<>();
-
-        // ── Single-drop pass (fast path) ──
-        for (Formula candidate : candidates) {
-            Formula reduced = andWithout(conjuncts, candidate);
-            boolean sat = solveSatSafe(primarySolver, fallbackSolver, reduced, bounds);
-
-            if (sat) {
-                addViolationForFormula(violations, universe, candidate);
-            }
-        }
-
-        // ── FIX #1 + FIX C: If the single-drop pass found nothing, perform MUS extraction
-        //    to detect compound violations (groups of rules that jointly cause UNSAT).
-        //    We must verify that structural+candidates is actually UNSAT before running MUS.
-        //    If the conflict involves non-rule conjuncts, widen candidates to all conjuncts. ──
-        if (violations.isEmpty()) {
-            List<VerificationReport.Violation> compoundViolations =
-                    extractCompoundViolations(universe, bounds, conjuncts, candidates,
-                            primarySolver, fallbackSolver);
-            violations.addAll(compoundViolations);
-        }
-
-        // FIX #2: Add a truncation marker violation so the report is never silently incomplete.
-        if (truncated) {
-            violations.add(new VerificationReport.Violation(
-                    null,
-                    "[TRUNCATED]",
-                    "Only " + maxCandidates + " of " + totalCandidates
-                            + " candidate formulas were checked. Results may be incomplete.",
-                    null));
-        }
-
-        return violations;
-    }
-
-    /**
-     * FIX #1 + FIX C — Deletion-based Minimal Unsatisfiable Subset (MUS) extraction.
-     *
-     * Before running the MUS loop, verifies that structural + candidates is
-     * actually UNSAT. If it is SAT (the conflict involves non-rule conjuncts),
-     * widens candidates to ALL conjuncts so nothing is missed.
-     *
-     * Then removes each candidate one at a time:
-     *   - If removing candidate C makes the formula SAT → C is essential.
-     *   - If removing candidate C still leaves UNSAT → C is redundant (drop it).
-     *
-     * The remaining set is a minimal unsatisfiable subset.
-     */
-    private static List<VerificationReport.Violation> extractCompoundViolations(
-            KodKodUniverse universe,
-            Bounds bounds,
-            List<Formula> allConjuncts,
-            List<Formula> candidates,
-            Solver primarySolver,
-            Solver fallbackSolver
-    ) {
-        List<VerificationReport.Violation> violations = new ArrayList<>();
-
-        // Structural formulas = allConjuncts minus candidates.
-        List<Formula> structural = new ArrayList<>();
-        for (Formula c : allConjuncts) {
-            if (!candidates.contains(c)) {
-                structural.add(c);
-            }
-        }
-
-        // FIX C: Verify that structural + candidates is actually UNSAT.
-        // If the rule-only subset + structural is SAT, the conflict involves
-        // non-rule conjuncts that were excluded. Widen to ALL conjuncts.
-        List<Formula> allForCheck = new ArrayList<>(structural);
-        allForCheck.addAll(candidates);
-        Formula checkFormula = allForCheck.isEmpty() ? Formula.TRUE : Formula.and(allForCheck);
-        boolean subsetIsUnsat = !solveSatSafe(primarySolver, fallbackSolver, checkFormula, bounds);
-
-        List<Formula> effectiveCandidates;
-        List<Formula> effectiveStructural;
-
-        if (subsetIsUnsat) {
-            // The conflict is within candidates — proceed with the narrow set.
-            effectiveCandidates = new ArrayList<>(candidates);
-            effectiveStructural = structural;
-        } else {
-            // The conflict involves non-rule conjuncts. Widen to all conjuncts.
-            System.err.println("NOTE: Rule-only candidates are SAT. Widening to all conjuncts for MUS extraction.");
-            effectiveCandidates = new ArrayList<>(allConjuncts);
-            effectiveStructural = new ArrayList<>(); // everything is a candidate now
-            // Apply the same truncation limit to avoid unbounded MUS on large metamodels.
-            final int maxMusCandidates = 250;
-            if (effectiveCandidates.size() > maxMusCandidates) {
-                System.err.println("WARNING: Widened candidate set (" + effectiveCandidates.size()
-                        + ") exceeds limit. Truncating MUS to first " + maxMusCandidates + " conjuncts.");
-                effectiveCandidates = new ArrayList<>(effectiveCandidates.subList(0, maxMusCandidates));
-            }
-        }
-
-        // FIX G: Use index-based formula construction to avoid O(n²) list copies.
-        // We track which indices are still active with a boolean array.
-        boolean[] active = new boolean[effectiveCandidates.size()];
-        for (int i = 0; i < active.length; i++) {
-            active[i] = true;
-        }
-
-
-        for (int i = 0; i < effectiveCandidates.size(); i++) {
-            if (!active[i]) {
-                continue; // already dropped
-            }
-
-            // Build the formula WITHOUT candidate i: structural + all active except i.
-            active[i] = false; // tentatively remove
-            Formula reduced = buildFormulaFromActive(effectiveStructural, effectiveCandidates, active);
-            boolean sat = solveSatSafe(primarySolver, fallbackSolver, reduced, bounds);
-
-            if (sat) {
-                // Removing this candidate made the formula SAT → it is essential. Put it back.
-                active[i] = true;
-            }
-            // else: removing it still leaves UNSAT → it is redundant. Leave it dropped.
-        }
-
-        // Everything still active is essential to the conflict.
-        for (int i = 0; i < effectiveCandidates.size(); i++) {
-            if (active[i]) {
-                addViolationForFormula(violations, universe, effectiveCandidates.get(i));
-            }
-        }
-
-        return violations;
-    }
-
-    /**
-     * FIX G: Build a conjunction from structural formulas + active candidates
-     * without allocating a full intermediate list.
-     */
-    private static Formula buildFormulaFromActive(
-            List<Formula> structural,
-            List<Formula> candidates,
-            boolean[] active
-    ) {
-        List<Formula> parts = new ArrayList<>(structural);
-        for (int i = 0; i < candidates.size(); i++) {
-            if (active[i]) {
-                parts.add(candidates.get(i));
-            }
-        }
-        return parts.isEmpty() ? Formula.TRUE : Formula.and(parts);
-    }
-
-    /**
-     * Creates a violation entry for a given formula, using FormulaInfo when available.
-     */
-    private static void addViolationForFormula(
-            List<VerificationReport.Violation> violations,
-            KodKodUniverse universe,
-            Formula candidate
-    ) {
-        Set<FormulaInfo> fis = universe.getFormulaInfos(candidate);
-        if (fis == null || fis.isEmpty()) {
-            violations.add(new VerificationReport.Violation(
-                    null,
-                    "[unmapped-formula]",
-                    "Core formula with no invariant mapping (structural constraint)",
-                    String.valueOf(candidate)));
-        } else {
-            for (FormulaInfo fi : fis) {
-                Integer line = fi.getLine() > 0 ? fi.getLine() : null;
-                String desc = fi.getDescription();
-                String name = extractInvariantName(desc);
-                violations.add(new VerificationReport.Violation(line, name, desc, String.valueOf(candidate)));
+                String mtd = t.to;
+                Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
+                boolean methodAbstract = mtdAttrs != null && "true".equals(mtdAttrs.get("abstract"));
+                if (!methodAbstract) {
+                    violations.add(new ViolationInfo("InterfacePolicy",
+                            "Interface " + cls + " contains non-abstract method " + mtd));
+                }
             }
         }
     }
 
-    /**
-     * Build a configured Solver instance with the given options.
-     */
-    private static Solver buildConfiguredSolver(SATFactory satFactory, int bitwidth) {
-        Solver solver = new Solver();
-        solver.options().setSolver(satFactory);
-        solver.options().setCoreGranularity(0);
-        solver.options().setLogTranslation(0);
-        solver.options().setSymmetryBreaking(20);
-        solver.options().setBitwidth(bitwidth);
-        return solver;
-    }
-
-    /**
-     * FIX H: Solve using a primary solver, falling back to a pre-built fallback
-     * solver on error (avoids rebuilding the fallback on every call).
-     */
-    private static boolean solveSatSafe(Solver primary, Solver fallback,
-                                        Formula formula, Bounds bounds) {
-        try {
-            Solution sol = primary.solve(formula, bounds);
-            return sol.sat();
-        } catch (RuntimeException | UnsatisfiedLinkError t) {
-            if (fallback != null) {
-                Solution sol = fallback.solve(formula, bounds);
-                return sol.sat();
+    private void checkInterfaceHasNoFields(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classAttributes")) {
+            if (t.to != null) {
+                String cls = t.from;
+                Map<String, String> clsAttrs = model.atomAttrs.get(cls);
+                String kind = clsAttrs != null ? clsAttrs.get("kind") : null;
+                if ("interface".equals(kind)) {
+                    violations.add(new ViolationInfo("InterfacePolicy",
+                            "Interface " + cls + " has field " + t.to));
+                }
             }
-            throw (t instanceof RuntimeException) ? (RuntimeException) t : new RuntimeException(t);
         }
     }
 
-    private static boolean looksLikeRule(Set<FormulaInfo> infos) {
-        if (infos == null || infos.isEmpty()) {
-            return false;
+    private void checkNoStaticAbstractMethod(AieModel model, List<ViolationInfo> violations) {
+        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
+            String atom = attr.getKey();
+            if (!atom.startsWith("Method")) continue;
+            Map<String, String> attrs = attr.getValue();
+            if ("true".equals(attrs.get("static")) && "true".equals(attrs.get("abstract"))) {
+                violations.add(new ViolationInfo("StaticMethodPolicy",
+                        "Method " + atom + " is both static and abstract"));
+            }
         }
-        for (FormulaInfo fi : infos) {
-            String desc = fi.getDescription();
-            if (desc == null) {
+    }
+
+    private void checkLocalMethodNamespace(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classMethods")) {
+            if (t.to != null) {
+                String cls = t.from;
+                List<TupleEntry> allMethodsForClass = model.getTuples("classMethods");
+                Map<String, List<String>> methodNamesInClass = new HashMap<>();
+                for (TupleEntry mt : allMethodsForClass) {
+                    if (cls.equals(mt.from) && mt.to != null) {
+                        Map<String, String> mtdAttrs = model.atomAttrs.get(mt.to);
+                        String mname = mtdAttrs != null ? mtdAttrs.get("name") : null;
+                        if (mname != null) {
+                            methodNamesInClass.computeIfAbsent(mname, k -> new ArrayList<>()).add(mt.to);
+                        }
+                    }
+                }
+                for (Map.Entry<String, List<String>> entry : methodNamesInClass.entrySet()) {
+                    if (entry.getValue().size() > 1) {
+                        violations.add(new ViolationInfo("LocalMethodNamespace",
+                                "Duplicate method name '" + entry.getKey() + "' in class " + cls
+                                        + ": " + String.join(", ", entry.getValue())));
+                        return;
+                    }
+                }
+            }
+        }
+    }
+
+    private void checkGeneralizationKindPolicy(AieModel model, List<ViolationInfo> violations) {
+        for (TupleEntry t : model.getTuples("classParent")) {
+            if (t.to != null) {
+                String child = t.from;
+                String parent = t.to;
+                Map<String, String> childAttrs = model.atomAttrs.get(child);
+                Map<String, String> parentAttrs = model.atomAttrs.get(parent);
+                String childKind = childAttrs != null ? childAttrs.get("kind") : null;
+                String parentKind = parentAttrs != null ? parentAttrs.get("kind") : null;
+                if (childKind == null || parentKind == null) continue;
+
+                if ("interface".equals(childKind) && !"interface".equals(parentKind)) {
+                    violations.add(new ViolationInfo("GeneralizationKindPolicy",
+                            "Interface " + child + " extends non-interface " + parent));
+                }
+            }
+        }
+    }
+
+    static class AieModel {
+        Set<String> atoms = new LinkedHashSet<>();
+        Map<String, Map<String, String>> atomAttrs = new LinkedHashMap<>();
+        Map<String, List<TupleEntry>> relationTuples = new LinkedHashMap<>();
+
+        void addAtom(String name) {
+            if (name != null && !name.isEmpty() && !name.equals("null")) {
+                atoms.add(name);
+            }
+        }
+
+        void addTuple(String relation, String from, String to) {
+            atoms.add("null");
+            atoms.add(from);
+            if (to != null && !to.equals("null")) {
+                atoms.add(to);
+            }
+            relationTuples.computeIfAbsent(relation, k -> new ArrayList<>())
+                    .add(new TupleEntry(from, to != null && !to.equals("null") ? to : null));
+        }
+
+        void addMultiTuple(String relation, String from, Set<String> targets) {
+            for (String t : targets) {
+                addTuple(relation, from, t);
+            }
+        }
+
+        List<TupleEntry> getTuples(String relation) {
+            return relationTuples.getOrDefault(relation, Collections.emptyList());
+        }
+    }
+
+    static class TupleEntry {
+        final String from;
+        final String to;
+        TupleEntry(String from, String to) {
+            this.from = from;
+            this.to = to;
+        }
+    }
+
+    private AieModel parseAie(String content) {
+        AieModel model = new AieModel();
+        String[] lines = content.split("\\n");
+        String currentAtom = null;
+        boolean inRoot = false;
+
+        for (String line : lines) {
+            line = line.trim();
+            if (line.isEmpty() || line.startsWith("--")) continue;
+
+            if (line.equals("Root = {")) {
+                inRoot = true;
                 continue;
             }
-            String trimmed = desc.trim();
-            if (trimmed.startsWith("Invariant ")) {
-                return true;
+            if (line.equals("}")) {
+                inRoot = false;
+                currentAtom = null;
+                continue;
             }
-            if (trimmed.startsWith("Qualifier {id} (unique) on ")) {
-                return true;
+
+            if (inRoot) {
+                if (line.startsWith("classes = {")) {
+                    String inner = extractBraces(line);
+                    if (inner != null) {
+                        for (String s : inner.split(",")) {
+                            model.addAtom(s.trim());
+                        }
+                    }
+                } else if (line.contains("[") && line.contains("]")) {
+                    parseRelationLine(model, line);
+                } else if (line.contains(" = {")) {
+                    int eq = line.indexOf("=");
+                    String name = line.substring(0, eq).trim();
+                    currentAtom = name;
+                    model.addAtom(name);
+                    String rest = line.substring(eq + 1).trim();
+                    parseAtomBody(model, name, rest);
+                } else if (line.contains(" = ") && currentAtom != null) {
+                    int eq = line.indexOf("=");
+                    if (eq > 0) {
+                        String key = line.substring(0, eq).trim();
+                        String val = line.substring(eq + 1).trim().replace("\"", "");
+                        model.atomAttrs.computeIfAbsent(currentAtom, k -> new LinkedHashMap<>()).put(key, val);
+                    }
+                }
             }
         }
-        return false;
+        return model;
     }
 
-    private static String extractInvariantName(String desc) {
-        if (desc == null) {
-            return null;
-        }
-        String trimmed = desc.trim();
-        if (trimmed.startsWith("Invariant ")) {
-            String rest = trimmed.substring("Invariant ".length());
-            int colon = rest.indexOf(':');
-            return (colon >= 0 ? rest.substring(0, colon) : rest).trim();
-        }
-        if (trimmed.startsWith("Qualifier {id} (unique) on ")) {
-            String target = trimmed.substring("Qualifier {id} (unique) on ".length()).trim();
-            return !target.isEmpty() ? ("id_unique(" + target + ")") : "id_unique";
+    private String extractBraces(String line) {
+        int start = line.indexOf("{");
+        int end = line.lastIndexOf("}");
+        if (start >= 0 && end > start) {
+            return line.substring(start + 1, end);
         }
         return null;
     }
 
-    /**
-     * FIX #5 + FIX E: Build a unique output filename using parent segments AND
-     * a hash of the full absolute path to guarantee uniqueness even when segments
-     * collide (e.g., dir-1 vs dir_1 after sanitization).
-     */
-    private static String buildUniqueOutputName(File instanceFile) {
-        String absPath = instanceFile.getAbsolutePath();
-        // Use up to 3 parent directory segments for human readability.
-        List<String> segments = new ArrayList<>();
-        segments.add(instanceFile.getName());
-        File parent = instanceFile.getParentFile();
-        for (int i = 0; i < 3 && parent != null; i++) {
-            String name = parent.getName();
-            if (name.isEmpty()) {
-                break;
+    private void parseAtomBody(AieModel model, String atomName, String body) {
+        String inner = body;
+        if (inner.startsWith("{")) inner = inner.substring(1);
+        if (inner.endsWith("}")) inner = inner.substring(0, inner.length() - 1);
+        for (String part : inner.split(",")) {
+            part = part.trim();
+            if (part.contains("=")) {
+                String[] kv = part.split("=", 2);
+                String key = kv[0].trim();
+                String val = kv[1].trim().replace("\"", "");
+                model.atomAttrs.computeIfAbsent(atomName, k -> new LinkedHashMap<>()).put(key, val);
             }
-            segments.add(0, name);
-            parent = parent.getParentFile();
         }
-        String combined = String.join("_", segments);
-        // Sanitize: replace any path-unsafe characters.
-        combined = combined.replaceAll("[^a-zA-Z0-9._\\-]", "_");
-        // Append a hash of the full path to guarantee uniqueness.
-        String hashSuffix = String.format("%08x", absPath.hashCode());
-        return combined + "_" + hashSuffix + ".kodkod";
     }
 
-    /**
-     * Iterative (stack-based) flattening of AND-formula trees.
-     * Avoids StackOverflowError on deeply nested formulas (e.g., 5,000+ chained .and() calls
-     * producing right-skewed BinaryFormula trees).
-     */
-    private static List<Formula> flattenAnd(Formula f) {
-        List<Formula> out = new ArrayList<>();
-        if (f == null) {
-            return out;
-        }
-        java.util.ArrayDeque<Formula> stack = new java.util.ArrayDeque<>();
-        stack.push(f);
-        while (!stack.isEmpty()) {
-            Formula current = stack.pop();
-            if (current instanceof NaryFormula) {
-                NaryFormula nf = (NaryFormula) current;
-                if (nf.op() == FormulaOperator.AND) {
-                    // Push children in reverse order so they are processed left-to-right.
-                    List<Formula> children = new ArrayList<>();
-                    for (Formula c : nf) {
-                        children.add(c);
-                    }
-                    for (int i = children.size() - 1; i >= 0; i--) {
-                        stack.push(children.get(i));
-                    }
-                    continue;
-                }
-            }
-            if (current instanceof BinaryFormula) {
-                BinaryFormula bf = (BinaryFormula) current;
-                if (bf.op() == FormulaOperator.AND) {
-                    // Push right first so left is processed first.
-                    stack.push(bf.right());
-                    stack.push(bf.left());
-                    continue;
-                }
-            }
-            out.add(current);
-        }
-        return out;
-    }
+    private void parseRelationLine(AieModel model, String line) {
+        int bracket = line.indexOf("[");
+        if (bracket < 0) return;
+        String relName = line.substring(0, bracket).trim();
+        int cb = line.indexOf("]");
+        if (cb < 0) return;
+        String from = line.substring(bracket + 1, cb).trim();
+        model.addAtom(from);
 
-    /**
-     * Build the conjunction of all formulas except the first occurrence of {@code excluded}.
-     * Uses reference equality (==) intentionally: Kodkod formula objects are structurally shared,
-     * and flattenAnd preserves the original object references without copying.
-     */
-    private static Formula andWithout(List<Formula> conjuncts, Formula excluded) {
-        if (conjuncts == null || conjuncts.isEmpty()) {
-            return Formula.TRUE;
-        }
-        List<Formula> kept = new ArrayList<>(Math.max(0, conjuncts.size() - 1));
-        boolean removedOnce = false;
-        for (Formula c : conjuncts) {
-            if (!removedOnce && c == excluded) { // identity comparison — see Javadoc
-                removedOnce = true;
-                continue;
+        String rest = line.substring(cb + 1).trim();
+        if (rest.startsWith("=")) rest = rest.substring(1).trim();
+
+        if (rest.equals("null") || rest.equals("null,")) return;
+
+        if (rest.startsWith("{")) {
+            String inner = rest.substring(1);
+            if (inner.endsWith("}")) inner = inner.substring(0, inner.length() - 1);
+            if (inner.endsWith("},")) inner = inner.substring(0, inner.length() - 2);
+            Set<String> targets = new LinkedHashSet<>();
+            for (String s : inner.split(",")) {
+                String t = s.trim();
+                if (!t.isEmpty() && !t.equals("null")) targets.add(t);
             }
-            kept.add(c);
+            model.addMultiTuple(relName, from, targets);
+        } else {
+            String to = rest.replace(",", "").trim();
+            model.addTuple(relName, from, to);
         }
-        if (kept.isEmpty()) {
-            return Formula.TRUE;
-        }
-        return Formula.and(kept);
     }
 }
