@@ -518,21 +518,22 @@ public class InvariantChecker {
     private static String sortParamTypes(String raw) {
         String inner = raw.replace("{", "").replace("}", "").trim();
         if (inner.isEmpty()) return "";
-        Map<Integer, String> map = new TreeMap<>();
+        List<String> types = new ArrayList<>();
         for (String entry : inner.split(",")) {
             String trimmed = entry.trim();
+            if (trimmed.isEmpty()) continue;
             int eq = trimmed.indexOf("=");
-            if (eq < 0) continue;
-            try {
-                int idx = Integer.parseInt(trimmed.substring(0, eq).trim());
-                String type = trimmed.substring(eq + 1).trim().replace("\"", "");
-                map.put(idx, type);
-            } catch (NumberFormatException ignored) { }
+            if (eq >= 0) {
+                types.add(trimmed.substring(eq + 1).trim().replace("\"", ""));
+            } else {
+                types.add(trimmed);
+            }
         }
+        Collections.sort(types);
         StringBuilder sb = new StringBuilder();
-        for (Map.Entry<Integer, String> e : map.entrySet()) {
+        for (String t : types) {
             if (sb.length() > 0) sb.append(",");
-            sb.append(e.getValue());
+            sb.append(t);
         }
         return sb.toString();
     }
