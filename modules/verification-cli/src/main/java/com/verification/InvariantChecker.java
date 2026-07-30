@@ -194,10 +194,8 @@ public class InvariantChecker {
     }
 
     private void checkNoCyclicInheritance(AieModel model, List<ViolationInfo> violations) {
-        List<TupleEntry> pTuples = model.getTuples("parents");
-        System.err.println("  [parents tuples: " + pTuples.size() + "]");
         Map<String, List<String>> parentMap = new HashMap<>();
-        for (TupleEntry t : pTuples) {
+        for (TupleEntry t : model.getTuples("parents")) {
             if (t.to != null) {
                 parentMap.computeIfAbsent(t.from, k -> new ArrayList<>()).add(t.to);
             }

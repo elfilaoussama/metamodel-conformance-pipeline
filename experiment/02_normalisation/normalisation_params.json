@@ -16,26 +16,26 @@
     "Java": {
       "interval": [
         23,
-        209
+        197
       ],
       "tertiles": [
         23,
-        48,
-        99,
-        209
+        42,
+        101,
+        197
       ],
       "target_per_tertile": 25
     },
     "Python": {
       "interval": [
-        20,
-        283
+        23,
+        234
       ],
       "tertiles": [
-        20,
-        48,
-        122,
-        283
+        23,
+        54,
+        106,
+        234
       ],
       "target_per_tertile": 25
     }
@@ -48,11 +48,11 @@
     },
     "Java": {
       "min_types": 23,
-      "max_types": 209
+      "max_types": 197
     },
     "Python": {
-      "min_types": 20,
-      "max_types": 283
+      "min_types": 23,
+      "max_types": 234
     }
   },
   "target_n": 75,
