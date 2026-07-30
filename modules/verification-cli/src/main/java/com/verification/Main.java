@@ -175,8 +175,8 @@ public class Main {
                 String ecoreAbsPath = new File(ecoreFile).getAbsolutePath();
                 if (details || reportPath != null) {
                     VerificationReport report = new VerificationReport();
-                    VerificationReport finalReport = InvariantChecker.checkWithReport(instancePath, ecoreAbsPath, absOutputDir, report);
-                    summaryResult = finalReport.result;
+                    VerificationReport finalReport = InvariantChecker.check(instancePath, ecoreAbsPath, absOutputDir, report);
+                    summaryResult = finalReport.getResult();
 
                     enrichInvariantNames(finalReport, recorePath);
 
@@ -222,22 +222,22 @@ public class Main {
     }
 
     private static void printBrokenRules(VerificationReport report) {
-        if (report == null || !"UNSAT".equals(report.result)) {
+        if (report == null || !"UNSAT".equals(report.getResult())) {
             return;
         }
-        if (report.violations == null || report.violations.isEmpty()) {
+        if (report.getViolations() == null || report.getViolations().isEmpty()) {
             System.out.println("\nBroken rules: (no UNSAT core details available)");
             return;
         }
         System.out.println("\nBroken rules (UNSAT core):");
-        for (VerificationReport.Violation v : report.violations) {
-            String where = (v.line != null) ? ("line " + v.line) : "(unknown line)";
-            String name = (v.invariantName != null && !v.invariantName.trim().isEmpty())
-                    ? v.invariantName.trim()
+        for (VerificationReport.Violation v : report.getViolations()) {
+            String where = (v.getLine() != null) ? ("line " + v.getLine()) : "(unknown line)";
+            String name = (v.getInvariantName() != null && !v.getInvariantName().trim().isEmpty())
+                    ? v.getInvariantName().trim()
                     : null;
-            String desc = (v.description != null && !v.description.trim().isEmpty())
-                    ? v.description.trim()
-                    : (v.formula != null ? v.formula : "(no description)");
+            String desc = (v.getDescription() != null && !v.getDescription().trim().isEmpty())
+                    ? v.getDescription().trim()
+                    : (v.getFormula() != null ? v.getFormula() : "(no description)");
             if (name != null) {
                 System.out.println("  - " + where + ": " + name + " — " + desc);
             } else {
@@ -247,7 +247,7 @@ public class Main {
     }
 
     private static void enrichInvariantNames(VerificationReport report, String recorePath) {
-        if (report == null || report.violations == null || report.violations.isEmpty()) {
+        if (report == null || report.getViolations() == null || report.getViolations().isEmpty()) {
             return;
         }
         if (recorePath == null || recorePath.trim().isEmpty()) {
@@ -264,15 +264,15 @@ public class Main {
         try {
             List<String> lines = Files.readAllLines(Paths.get(recoreFile.getAbsolutePath()), StandardCharsets.UTF_8);
 
-            for (VerificationReport.Violation v : report.violations) {
-                if (v == null || v.invariantName != null) {
+            for (VerificationReport.Violation v : report.getViolations()) {
+                if (v == null || v.getInvariantName() != null) {
                     continue;
                 }
-                if (v.line == null || v.line < 1 || v.line > lines.size()) {
+                if (v.getLine() == null || v.getLine() < 1 || v.getLine() > lines.size()) {
                     continue;
                 }
 
-                int idx = v.line - 1;
+                int idx = v.getLine() - 1;
                 String found = null;
                 // Search backwards a bit in case formatting spans lines.
                 for (int i = idx; i >= 0 && i >= idx - 10; i--) {
@@ -283,7 +283,7 @@ public class Main {
                         break;
                     }
                 }
-                v.invariantName = found;
+                v.setInvariantName(found);
             }
         } catch (IOException ignored) {
             // Best-effort enrichment; keep report usable even if file reading fails.
