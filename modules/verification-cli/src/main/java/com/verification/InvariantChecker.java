@@ -228,18 +228,6 @@ public class InvariantChecker {
         }
     }
 
-    private void checkGeneralizationKindPolicy(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("parents")) {
-            if (t.to != null) {
-                String child = t.from;
-                if (isClassifierAtom(child)) {
-                    violations.add(new ViolationInfo("GeneralizationKindPolicy",
-                            "Interface " + child + " has a classParent " + t.to));
-                }
-            }
-        }
-    }
-
     private void checkInheritedMemberDerivation(AieModel model, List<ViolationInfo> violations) {
         for (TupleEntry t : model.getTuples("inheritedMethods")) {
             if (t.to != null) {
@@ -478,37 +466,6 @@ public class InvariantChecker {
                 if (methodAbstract && clsAbstract != null && !"Yes".equals(clsAbstract)) {
                     violations.add(new ViolationInfo("AbstractionPolicy",
                             "Non-abstract classifier " + cls + " contains abstract method " + mtd));
-                }
-            }
-        }
-    }
-
-    private void checkInterfaceMethodsAreAbstract(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("localMethods")) {
-            if (t.to != null) {
-                String cls = t.from;
-                if (!isClassifierAtom(cls)) continue;
-                String mtd = t.to;
-                Map<String, String> mtdAttrs = model.atomAttrs.get(mtd);
-                boolean methodAbstract = mtdAttrs != null && "Yes".equals(mtdAttrs.get("isAbstract"));
-                if (!methodAbstract) {
-                    violations.add(new ViolationInfo("InterfacePolicy",
-                            "Interface " + cls + " contains non-abstract method " + mtd));
-                }
-            }
-        }
-    }
-
-    private void checkInterfaceHasNoInstanceFields(AieModel model, List<ViolationInfo> violations) {
-        for (TupleEntry t : model.getTuples("localAttributes")) {
-            if (t.to != null) {
-                String cls = t.from;
-                if (!isClassifierAtom(cls)) continue;
-                String attr = t.to;
-                Map<String, String> attrAttrs = model.atomAttrs.get(attr);
-                if (attrAttrs != null && "Instance".equals(attrAttrs.get("scope"))) {
-                    violations.add(new ViolationInfo("InterfacePolicy",
-                            "Interface " + cls + " has instance-scoped attribute " + attr));
                 }
             }
         }

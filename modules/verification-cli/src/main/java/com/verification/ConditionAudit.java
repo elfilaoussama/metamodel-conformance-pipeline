@@ -74,16 +74,6 @@ public class ConditionAudit {
             }
         }
 
-        System.out.println("\n=== METHOD-LEVEL CHECK ===");
-        List<String> uncalledMethods = List.of(
-            "checkGeneralizationKindPolicy",
-            "checkInterfaceMethodsAreAbstract",
-            "checkInterfaceHasNoInstanceFields"
-        );
-        for (String m : uncalledMethods) {
-            System.out.printf("  %-45s UNREACHABLE (never called from check flow)%n", m);
-        }
-
         long deadCount = ALL_CHECKED.stream().filter(inv -> !allFired.contains(inv)).count();
         System.out.printf("%nResult: %d/%d conditions alive, %d dead%n",
                 allFired.size(), ALL_CHECKED.size(), deadCount);
