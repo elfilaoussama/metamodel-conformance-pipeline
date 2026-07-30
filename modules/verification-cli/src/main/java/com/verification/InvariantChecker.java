@@ -34,6 +34,8 @@ public class InvariantChecker {
         VerificationReport report = new VerificationReport();
         try {
             AieModel model = parseAie(aieContent);
+            populateBindingAttrs(model);
+            populateParentAttrs(model);
 
             List<String> atoms = new ArrayList<>(model.atoms);
             if (atoms.isEmpty()) {
@@ -192,8 +194,10 @@ public class InvariantChecker {
     }
 
     private void checkNoCyclicInheritance(AieModel model, List<ViolationInfo> violations) {
+        List<TupleEntry> pTuples = model.getTuples("parents");
+        System.err.println("  [parents tuples: " + pTuples.size() + "]");
         Map<String, List<String>> parentMap = new HashMap<>();
-        for (TupleEntry t : model.getTuples("parents")) {
+        for (TupleEntry t : pTuples) {
             if (t.to != null) {
                 parentMap.computeIfAbsent(t.from, k -> new ArrayList<>()).add(t.to);
             }
@@ -282,39 +286,54 @@ public class InvariantChecker {
         }
     }
 
-    private void checkImplementationBinding(AieModel model, List<ViolationInfo> violations) {
-        Map<String, Map<String, String>> bindingTargets = new LinkedHashMap<>();
-        Map<String, String> bodyToBinding = new LinkedHashMap<>();
-        Map<String, List<String>> bindingsPerClassMethod = new LinkedHashMap<>();
-
-        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
-            String atom = attr.getKey();
-            if (!atom.startsWith("ImplementationBinding")) continue;
-            Map<String, String> a = attr.getValue();
-            bindingTargets.put(atom, a);
-            String body = a.get("body");
-            if (body != null) bodyToBinding.put(body, atom);
-        }
-
-        List<MethodBodyInfo> orphanBodies = new ArrayList<>();
-        for (Map.Entry<String, Map<String, String>> attr : model.atomAttrs.entrySet()) {
-            String atom = attr.getKey();
-            if (!atom.startsWith("MethodBody")) continue;
-            if (!bodyToBinding.containsKey(atom)) {
-                orphanBodies.add(new MethodBodyInfo(atom));
+    private void populateBindingAttrs(AieModel model) {
+        for (TupleEntry t : model.getTuples("implementer")) {
+            if (t.from.startsWith("ImplementationBinding")) {
+                model.atomAttrs.computeIfAbsent(t.from, k -> new LinkedHashMap<>()).put("implementer", t.to);
             }
         }
-        for (MethodBodyInfo mb : orphanBodies) {
-            violations.add(new ViolationInfo("ImplementationBindingPolicy",
-                    "Orphan MethodBody " + mb.atom + " has no ImplementationBinding"));
+        for (TupleEntry t : model.getTuples("target")) {
+            if (t.from.startsWith("ImplementationBinding")) {
+                model.atomAttrs.computeIfAbsent(t.from, k -> new LinkedHashMap<>()).put("target", t.to);
+            }
+        }
+        for (TupleEntry t : model.getTuples("body")) {
+            if (t.from.startsWith("ImplementationBinding")) {
+                model.atomAttrs.computeIfAbsent(t.from, k -> new LinkedHashMap<>()).put("body", t.to);
+            }
+        }
+    }
+
+    private void populateParentAttrs(AieModel model) {
+        for (TupleEntry t : model.getTuples("parents")) {
+            String existing = model.atomAttrs.containsKey(t.from) ?
+                    model.atomAttrs.get(t.from).get("parents") : null;
+            if (existing == null) {
+                model.atomAttrs.computeIfAbsent(t.from, k -> new LinkedHashMap<>())
+                        .put("parents", t.to);
+            }
+        }
+    }
+
+    private void checkImplementationBinding(AieModel model, List<ViolationInfo> violations) {
+        ImplementationBindingInfo bi = buildBindingInfo(model);
+        if (!bi.hasBindings()) return;
+
+        // Check for orphan MethodBody objects
+        for (String atom : model.atoms) {
+            if (!atom.startsWith("MethodBody")) continue;
+            if (!bi.bodyToBinding.containsKey(atom)) {
+                violations.add(new ViolationInfo("ImplementationBindingPolicy",
+                        "Orphan MethodBody " + atom + " has no ImplementationBinding"));
+            }
         }
 
-        for (Map.Entry<String, Map<String, String>> e : bindingTargets.entrySet()) {
-            String bindingId = e.getKey();
-            Map<String, String> b = e.getValue();
-            String implementer = b.get("implementer");
-            String target = b.get("target");
+        // Track bindings per (classifier, method) for duplicate detection
+        Map<String, List<String>> bindingsPerClassMethod = new LinkedHashMap<>();
 
+        for (String bindingId : bi.bindingToImplementer.keySet()) {
+            String implementer = bi.bindingToImplementer.get(bindingId);
+            String target = bi.bindingToTarget.get(bindingId);
             if (implementer == null || target == null) continue;
 
             String key = implementer + "::" + target;
@@ -411,7 +430,7 @@ public class InvariantChecker {
             }
 
             // Compute the set of Classifiers in this classifier's ancestor chain
-            // (including itself) Ù?¤ only bindings from these implementers are visible.
+            // (including itself) ï¿½?ï¿½ only bindings from these implementers are visible.
             Set<String> visibleImplementers = new LinkedHashSet<>();
             visibleImplementers.add(atom);
             Map<String, String> cAttrs = model.atomAttrs.get(atom);
@@ -676,10 +695,10 @@ public class InvariantChecker {
                     if (!lKey.equals(iKey)) continue;
                     // Scope match is a precondition of override in the Alloy
                     // model (overrides predicate, kernel line 348). Mismatched
-                    // scope means no override occurs Ù?¤ not a violation.
+                    // scope means no override occurs ï¿½?ï¿½ not a violation.
                     if (lScope != null && !lScope.equals(iAttrs.get("scope"))) continue;
 
-                    // O-09: return-type covariance Ù?¤ the overriding method's
+                    // O-09: return-type covariance ï¿½?ï¿½ the overriding method's
                     // return type must be equal to or a proper subtype of the
                     // inherited method's return type.
                     String lRetType = lAttrs.get("returnType");
@@ -705,9 +724,45 @@ public class InvariantChecker {
         }
     }
 
-    static class MethodBodyInfo {
-        final String atom;
-        MethodBodyInfo(String atom) { this.atom = atom; }
+    private static class ImplementationBindingInfo {
+        // Extracted from relation tuples (mapper emits relation lines)
+        final Map<String, String> bindingToImplementer = new LinkedHashMap<>();
+        final Map<String, String> bindingToTarget = new LinkedHashMap<>();
+        final Map<String, String> bindingToBody = new LinkedHashMap<>();
+        final Map<String, String> bodyToBinding = new LinkedHashMap<>();
+        final Map<String, Set<String>> methodToImplementers = new LinkedHashMap<>();
+
+        boolean hasBindings() { return !bindingToImplementer.isEmpty(); }
+    }
+
+    private ImplementationBindingInfo buildBindingInfo(AieModel model) {
+        ImplementationBindingInfo info = new ImplementationBindingInfo();
+        // Process relation tuples: implementer[BindingX], target[BindingX], body[BindingX]
+        for (TupleEntry t : model.getTuples("implementer")) {
+            String binding = t.from;
+            String cls = t.to;
+            if (binding != null && cls != null && binding.startsWith("ImplementationBinding")) {
+                info.bindingToImplementer.put(binding, cls);
+            }
+        }
+        for (TupleEntry t : model.getTuples("target")) {
+            String binding = t.from;
+            String mtd = t.to;
+            if (binding != null && mtd != null && binding.startsWith("ImplementationBinding")) {
+                info.bindingToTarget.put(binding, mtd);
+                info.methodToImplementers.computeIfAbsent(mtd, k -> new LinkedHashSet<>())
+                        .add(info.bindingToImplementer.get(binding));
+            }
+        }
+        for (TupleEntry t : model.getTuples("body")) {
+            String binding = t.from;
+            String body = t.to;
+            if (binding != null && body != null && binding.startsWith("ImplementationBinding")) {
+                info.bindingToBody.put(binding, body);
+                info.bodyToBinding.put(body, binding);
+            }
+        }
+        return info;
     }
 
     static class AieModel {

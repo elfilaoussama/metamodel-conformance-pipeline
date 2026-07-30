@@ -13,15 +13,13 @@ import java.nio.file.Paths;
 import java.util.*;
 
 /**
- * Deterministic mapper from TypeModel extraction JSON to AlloyInEcore .aie
- * instances conforming to StructuralMetamodel.recore.
- * Every field is mapped exactly from the extraction JSON. No fallback logic.
+ * Deterministic mapper from TypeModel JSON to the AIE format expected
+ * by the Java InvariantChecker parser (Root = { classifiers = {...} }).
  */
 public class JsonToAieMapper {
 
     private static final String METAMODEL_HEADER = "model structural_metamodel : 'ECORE_PATH';";
 
-    /** String-based entry point for backward compatibility with Main.java. */
     public static void map(String inputJsonPath, String outputAiePath) throws IOException {
         new JsonToAieMapper().map(Paths.get(inputJsonPath), Paths.get(outputAiePath));
     }
@@ -30,106 +28,184 @@ public class JsonToAieMapper {
         String json = new String(Files.readAllBytes(extractionJson), StandardCharsets.UTF_8);
         JsonObject root = JsonParser.parseString(json).getAsJsonObject();
         JsonArray types = root.getAsJsonArray("types");
-        if (types == null || types.size() == 0) {
-            writeEmpty(aieOutput);
-            return;
-        }
+        if (types == null || types.size() == 0) { writeEmpty(aieOutput); return; }
 
         int total = types.size();
-        List<JsonObject> typeList = new ArrayList<>(total);
+        List<JsonObject> tl = new ArrayList<>(total);
+        Map<String, Integer> fqnIdx = new HashMap<>();
         for (int i = 0; i < total; i++) {
-            typeList.add(types.get(i).getAsJsonObject());
+            JsonObject t = types.get(i).getAsJsonObject(); tl.add(t);
+            fqnIdx.put(t.get("qualifiedName").getAsString(), i);
         }
 
         StringBuilder aie = new StringBuilder();
         aie.append("instance results;\n");
         aie.append(METAMODEL_HEADER).append("\n\n");
-        aie.append("Root {\n");
-        aie.append("  contents: {\n");
+        aie.append("Root = {\n");
 
-        int methodIdx = 0;
-        int attrIdx   = 0;
+        // Classifier atoms list
+        aie.append("  classifiers = {");
+        for (int i = 0; i < total; i++) {
+            if (i > 0) aie.append(", ");
+            aie.append("Classifier").append(i);
+        }
+        aie.append("}\n");
 
-        for (int ti = 0; ti < total; ti++) {
-            JsonObject t = typeList.get(ti);
-
+        // Classifier objects — inside Root block
+        for (int i = 0; i < total; i++) {
+            JsonObject t = tl.get(i);
             String fqn = t.get("qualifiedName").getAsString();
             String cid = fqn.replace(".", "_").replace("-", "_");
-            String kind = t.has("kind") ? t.get("kind").getAsString() : "class";
-            boolean isAbstract = t.has("abstractType") && t.get("abstractType").getAsBoolean();
+            boolean abs = t.has("abstractType") && t.get("abstractType").getAsBoolean();
+            aie.append("Classifier").append(i).append(" = {")
+              .append(" cid = \"").append(cid).append("\",")
+              .append(" name = \"").append(esc(fqn)).append("\",")
+              .append(" isAbstract = ").append(abs ? "Yes" : "No")
+              .append(" }\n");
+        }
+        aie.append("\n");
 
-            aie.append("    Classifier {\n");
-            aie.append("      cid: \"").append(cid).append("\",\n");
-            aie.append("      name: \"").append(escape(fqn)).append("\",\n");
-            aie.append("      isAbstract: ").append(isAbstract ? "Yes" : "No");
-
-            // localMethods
+        // Method objects and localMethods tuples
+        int midx = 0;
+        for (int i = 0; i < total; i++) {
+            JsonObject t = tl.get(i);
             JsonArray methods = t.has("executables") ? t.getAsJsonArray("executables") : null;
-            boolean hasMethods = (methods != null && methods.size() > 0);
-            if (hasMethods) {
-                aie.append(",\n      localMethods: {\n");
-                for (JsonElement me : methods) {
-                    JsonObject m = me.getAsJsonObject();
-                    if (m.has("constructor") && m.get("constructor").getAsBoolean()) continue;
-
-                    String mid = cid + "_m" + methodIdx;
-                    String mname = m.get("name").getAsString();
-                    boolean mAbstract = m.has("abstractExecutable") && m.get("abstractExecutable").getAsBoolean();
-                    boolean mStatic = m.has("staticExecutable") && m.get("staticExecutable").getAsBoolean();
-                    String isInheritable = isInheritable(m);
-                    String rtype = m.has("returnType") ? m.get("returnType").getAsString() : "void";
-                    String sig = buildSignature(m);
-
-                    aie.append("        Method {\n");
-                    aie.append("          mid: \"").append(mid).append("\",\n");
-                    aie.append("          memberName: \"").append(escape(mname)).append("\",\n");
-                    aie.append("          returnType: \"").append(escape(rtype)).append("\",\n");
-                    aie.append("          paramTypes: \"").append(sig.isEmpty() ? "_" : sig).append("\",\n");
-                    aie.append("          isInheritable: ").append(isInheritable).append(",\n");
-                    aie.append("          scope: ").append(mStatic ? "Static" : "Instance").append(",\n");
-                    aie.append("          isAbstract: ").append(mAbstract ? "Yes" : "No").append("\n");
-                    aie.append("        }\n");
-                    methodIdx++;
-                }
-                aie.append("      }\n");
-            } else {
-                aie.append("\n");
+            if (methods == null || methods.size() == 0) continue;
+            List<String> mids = new ArrayList<>();
+            for (JsonElement me : methods) {
+                JsonObject m = me.getAsJsonObject();
+                if (m.has("constructor") && m.get("constructor").getAsBoolean()) { midx++; continue; }
+                String mid = "Method" + midx;
+                mids.add(mid);
+                aie.append(mid).append(" = {")
+                  .append(" mid = \"").append(mid).append("\",")
+                  .append(" memberName = \"").append(esc(m.get("name").getAsString())).append("\",")
+                  .append(" returnType = \"").append(esc(getStr(m, "returnType", "void"))).append("\",")
+                  .append(" paramTypes = \"").append(buildSig(m)).append("\",")
+                  .append(" isInheritable = ").append(isInheritable(m)).append(",")
+                  .append(" scope = ").append(hasBool(m, "staticExecutable") ? "Static" : "Instance").append(",")
+                  .append(" isAbstract = ").append(hasBool(m, "abstractExecutable") ? "Yes" : "No")
+                  .append(" }\n");
+                midx++;
             }
-
-            aie.append("    }\n");
+            aie.append("localMethods[Classifier").append(i).append("] = { ");
+            for (int j = 0; j < mids.size(); j++) {
+                if (j > 0) aie.append(", ");
+                aie.append(mids.get(j));
+            }
+            aie.append(" }\n");
         }
 
-        aie.append("  }\n");
+        // Attribute objects and localAttributes tuples (from fields)
+        int aidx = 0;
+        for (int i = 0; i < total; i++) {
+            JsonObject t = tl.get(i);
+            JsonArray fields = t.has("fields") ? t.getAsJsonArray("fields") : null;
+            if (fields == null || fields.size() == 0) continue;
+            List<String> aids = new ArrayList<>();
+            for (JsonElement fe : fields) {
+                JsonObject f = fe.getAsJsonObject();
+                String aid = "Attribute" + aidx;
+                aids.add(aid);
+                aie.append(aid).append(" = {")
+                  .append(" aid = \"").append(aid).append("\",")
+                  .append(" memberName = \"").append(esc(f.get("name").getAsString())).append("\",")
+                  .append(" type = \"").append(esc(getStr(f, "type", "Object"))).append("\",")
+                  .append(" isInheritable = ").append(isInheritable(f)).append(",")
+                  .append(" scope = ").append(hasBool(f, "staticField") ? "Static" : "Instance")
+                  .append(" }\n");
+                aidx++;
+            }
+            aie.append("localAttributes[Classifier").append(i).append("] = { ");
+            for (int j = 0; j < aids.size(); j++) {
+                if (j > 0) aie.append(", ");
+                aie.append(aids.get(j));
+            }
+            aie.append(" }\n");
+        }
+
+        // parents tuples
+        for (int i = 0; i < total; i++) {
+            JsonObject t = tl.get(i);
+            if (!t.has("superClass") || t.get("superClass").isJsonNull()) continue;
+            Integer pi = fqnIdx.get(t.get("superClass").getAsString());
+            if (pi == null) continue;
+            aie.append("parents[Classifier").append(i).append("] = { Classifier").append(pi).append(" }\n");
+        }
+
+        // MethodBody + ImplementationBinding for non-abstract methods
+        midx = 0;
+        int bdx = 0;
+        List<String> bodyList = new ArrayList<>();
+        List<String> bindingList = new ArrayList<>();
+        for (int i = 0; i < total; i++) {
+            JsonObject t = tl.get(i);
+            JsonArray methods = t.has("executables") ? t.getAsJsonArray("executables") : null;
+            if (methods == null) continue;
+            for (JsonElement me : methods) {
+                JsonObject m = me.getAsJsonObject();
+                if (m.has("constructor") && m.get("constructor").getAsBoolean()) { midx++; continue; }
+                if (hasBool(m, "abstractExecutable")) { midx++; continue; }
+                String mb = "MethodBody" + bdx;
+                String ib = "ImplementationBinding" + bdx;
+                bodyList.add(mb);
+                bindingList.add(ib);
+                aie.append(mb).append(" = { }\n");
+                aie.append("implementer[").append(ib).append("] = { Classifier").append(i).append(" }\n");
+                aie.append("target[").append(ib).append("] = { Method").append(midx).append(" }\n");
+                aie.append("body[").append(ib).append("] = { ").append(mb).append(" }\n");
+                bdx++; midx++;
+            }
+        }
+        // List bodies and bindings in Root compositions
+        aie.append("  bodies = {");
+        for (int i = 0; i < bodyList.size(); i++) {
+            if (i > 0) aie.append(", ");
+            aie.append(bodyList.get(i));
+        }
         aie.append("}\n");
+        aie.append("  bindings = {");
+        for (int i = 0; i < bindingList.size(); i++) {
+            if (i > 0) aie.append(", ");
+            aie.append(bindingList.get(i));
+        }
+        aie.append("}\n");
+
+        aie.append("}\n"); // close Root
 
         Files.createDirectories(aieOutput.getParent());
         Files.write(aieOutput, aie.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    private String isInheritable(JsonObject m) {
-        if (!m.has("visibility")) return "Yes";
-        String vis = m.get("visibility").getAsString();
-        return "private".equalsIgnoreCase(vis) ? "No" : "Yes";
-    }
-
-    private String buildSignature(JsonObject m) {
-        if (!m.has("parameters")) return "";
-        JsonArray params = m.getAsJsonArray("parameters");
-        if (params == null || params.size() == 0) return "";
+    private String buildSig(JsonObject m) {
+        if (!m.has("parameters")) return "_";
+        JsonArray p = m.getAsJsonArray("parameters");
+        if (p == null || p.size() == 0) return "_";
         StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < params.size(); i++) {
+        for (int i = 0; i < p.size(); i++) {
             if (i > 0) sb.append(", ");
-            sb.append(params.get(i).getAsJsonObject().get("type").getAsString());
+            sb.append(p.get(i).getAsJsonObject().get("type").getAsString());
         }
         return sb.toString();
     }
 
-    private static void writeEmpty(Path aieOutput) throws IOException {
-        Files.createDirectories(aieOutput.getParent());
-        Files.write(aieOutput, ("instance results;\n" + METAMODEL_HEADER + "\n\nRoot {}\n").getBytes(StandardCharsets.UTF_8));
+    private String isInheritable(JsonObject obj) {
+        if (!obj.has("visibility")) return "Yes";
+        return "private".equalsIgnoreCase(obj.get("visibility").getAsString()) ? "No" : "Yes";
     }
 
-    private static String escape(String s) {
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+    private String getStr(JsonObject obj, String key, String def) {
+        return obj.has(key) ? obj.get(key).getAsString() : def;
+    }
+
+    private boolean hasBool(JsonObject obj, String key) {
+        return obj.has(key) && !obj.get(key).isJsonNull() && obj.get(key).getAsBoolean();
+    }
+
+    private String esc(String s) { return s.replace("\\", "\\\\").replace("\"", "\\\""); }
+
+    private void writeEmpty(Path aieOutput) throws IOException {
+        Files.createDirectories(aieOutput.getParent());
+        Files.write(aieOutput, ("instance results;\n" + METAMODEL_HEADER + "\n\nRoot = { classifiers = {} }\n").getBytes(StandardCharsets.UTF_8));
     }
 }

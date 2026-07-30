@@ -1,0 +1,5 @@
+{
+  "types": [
+    {"qualifiedName": "A", "kind": "class", "superClass": "A", "abstractType": false, "executables": [], "fields": []}
+  ]
+}
