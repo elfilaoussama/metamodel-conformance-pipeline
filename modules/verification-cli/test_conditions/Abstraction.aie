@@ -1,0 +1,16 @@
+Root = {
+  classifiers = {Classifier0, Classifier1}
+  bodies = { MethodBody0 }
+  bindings = { ImplementationBinding0 }
+
+Classifier0 = { cid = "A", name = "A", isAbstract = No }
+Classifier1 = { cid = "B", name = "B", isAbstract = No }
+Method0 = { mid = "M0", memberName = "m", returnType = "void", paramTypes = "_", isInheritable = Yes, scope = Instance, isAbstract = No }
+localMethods[Classifier1] = { Method0 }
+parents[Classifier0] = { Classifier1 }
+inheritedMethods[Classifier0] = { Method0 }
+MethodBody0 = { }
+implementer[ImplementationBinding0] = { Classifier0 }
+target[ImplementationBinding0] = { Method0 }
+body[ImplementationBinding0] = { MethodBody0 }
+}

@@ -1,0 +1,5 @@
+Root = {
+  classifiers = {Classifier0}
+
+Classifier0 = { cid = "A", name = "A", isAbstract = No }
+}

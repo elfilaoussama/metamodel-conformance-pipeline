@@ -244,7 +244,7 @@ public class InvariantChecker {
         for (TupleEntry t : model.getTuples("inheritedMethods")) {
             if (t.to != null) {
                 Map<String, String> attrs = model.atomAttrs.get(t.to);
-                if (attrs != null && "Priv".equals(attrs.get("isInheritable"))) {
+                if (attrs != null && "No".equals(attrs.get("isInheritable"))) {
                     violations.add(new ViolationInfo("InheritedMemberDerivation",
                             "Private method " + t.to + " appears in inheritedMethods of " + t.from));
                 }
@@ -253,7 +253,7 @@ public class InvariantChecker {
         for (TupleEntry t : model.getTuples("inheritedAttributes")) {
             if (t.to != null) {
                 Map<String, String> attrs = model.atomAttrs.get(t.to);
-                if (attrs != null && "Priv".equals(attrs.get("isInheritable"))) {
+                if (attrs != null && "No".equals(attrs.get("isInheritable"))) {
                     violations.add(new ViolationInfo("InheritedMemberDerivation",
                             "Private attribute " + t.to + " appears in inheritedAttributes of " + t.from));
                 }

@@ -1,0 +1,10 @@
+Root = {
+  classifiers = {Classifier0, Classifier1}
+
+Classifier0 = { cid = "A", name = "A", isAbstract = No }
+Classifier1 = { cid = "B", name = "B", isAbstract = No }
+Method0 = { mid = "M0", memberName = "m", returnType = "void", paramTypes = "_", isInheritable = No, scope = Instance, isAbstract = No }
+localMethods[Classifier1] = { Method0 }
+parents[Classifier0] = { Classifier1 }
+inheritedMethods[Classifier0] = { Method0 }
+}
