@@ -18,6 +18,10 @@ workspace/
 analysis-output/
 pipeline-output/
 
+# Study-specific evaluation artifacts (corpus selection, batch results, figures)
+experiment/
+analysis-scripts/
+
 # Verification environment - third-party JARs and native libs
 modules/verification-cli/lib/
 

@@ -1,64 +1,34 @@
-# Experimental Design
+# Evaluation
 
 ## Overview
 
-The experiment evaluates nine structural conditions against type models extracted from 224 repositories across Java, Python, and C++. The experiment proceeds in five sequential phases, each implemented in the `experiment/` directory.
+The pipeline supports batch evaluation: running the structural condition checks against type models extracted from a set of repositories. Each repository is mapped from its extraction JSON to the intermediate representation consumed by the verification engine, which then reports whether each condition holds (SAT) or is violated (UNSAT), together with per violation descriptions.
 
-## Phase 01: Exploration
+The evaluation workflow is tooling-neutral. The `BatchRunner` entry point (`modules/verification-cli`) drives the full map-and-check cycle for a single repository, so any set of repositories with completed extraction can be evaluated.
 
-**Script:** `experiment/01_exploration/exp_01_distributions.py`
+## Running a Batch Evaluation
 
-Walks all repositories with completed extraction, reads `extraction.json` from each, and records type count, executable count, field count, abstract type count, and inheritance proxy metrics. Produces `exploration_summary.csv` and distribution figures.
+1. Build the verification CLI:
 
-## Phase 02: Normalisation
+   ```bash
+   ./modules/verification-cli/setup.ps1   # Windows
+   ./modules/verification-cli/run.ps1     # Windows
+   ```
 
-**Script:** `experiment/02_normalisation/nrm_01_intervals.py`
+   or via Maven: `mvn -pl modules/verification-cli package`.
 
-Computes IQR-based type count intervals per language (P25-P75), determines the common N (minimum repositories in IQR across all languages), and sets target N = min(100, common N). Produces `normalisation_params.json`.
+2. For each repository with a completed `extraction.json`, invoke `BatchRunner` with the repository path and language. It produces the mapped instance and the verification report.
 
-| Language | IQR Interval |
-|----------|-------------|
-| Java | [23, 197] |
-| Python | [23, 234] |
-| C++ | [193, 386] |
+3. Aggregate the per repository reports into a results table (repository, condition, outcome, violation description) for downstream analysis.
 
-## Phase 03: Selection
+## Output
 
-**Script:** `experiment/03_selection/sel_01_corpus.py`
+Verification reports record, per repository:
 
-Scans all repositories with extraction JSON, filters by IQR interval, stratifies by type count tertile (small/medium/large), and samples exactly N repositories per language (random seed 42 for reproducibility). Produces `selected_repos.csv`.
+- which conditions were satisfied,
+- which were violated, with the violating elements (for example, method names colliding after signature normalisation),
+- the total violation count.
 
-| Language | Selected | Tertiles |
-|----------|----------|----------|
-| Java | 75 | small [23,42], medium [43,101], large [102,197] |
-| Python | 75 | small [23,54], medium [55,106], large [107,234] |
-| C++ | 74 | small [193,237], medium [238,293], large [294,386] |
+## Reproducibility
 
-## Phase 04: Verification
-
-**Script:** `experiment/04_verification/batch_v2.py`
-
-Runs the `BatchRunner` against every repository in `selected_repos.csv`. For each repository, it maps the extraction JSON to AIE format, invokes the invariant checker, and records the verification outcome. Produces `batch_results_<lang>.csv`.
-
-## Phase 05: Analysis
-
-**Scripts:** `experiment/05_analysis/`
-
-- `quick_breakdown.py` — per condition per language violation counts
-- `per_repo_dist.py` — per repository distribution statistics
-- `regenerate_all_figs.py` — generates all empirical figures for the paper
-- `regenerate_figures.py` — generates type distribution figure
-
-## Corpus Design
-
-Repositories are drawn from GitHub using the search API with language as the sole content filter. Every repository satisfies: permissive license (MIT, Apache-2.0, BSD-3-Clause), not a fork, not archived, at least one commit pushed after January 2021, and repository size not exceeding 50 MB.
-
-Repositories are stratified by star bracket:
-
-| Bracket | Java/Python | C++ |
-|---------|------------|-----|
-| Average use | 25–100 stars | 10–100 stars |
-| High use | 100–1000 stars | 100–500 stars |
-| Elite | 1000+ stars | 500+ stars |
-
-The experimental corpus uses IQR bounded type count intervals to control for repository scale: only repositories whose type count falls within the central 50% of each language's distribution are eligible for selection. This excludes both trivial projects (few types, no inheritance) and outlier repositories (thousands of types from monorepos or generated code).
+Corpus definitions, selection parameters, batch results, and figure-generation scripts are study-specific artifacts and are not part of this repository. The verification engine itself is deterministic: the same extraction JSON always yields the same mapping and the same check outcome, so evaluation results are reproducible given the corpus definition and the pinned extraction pipeline version.
