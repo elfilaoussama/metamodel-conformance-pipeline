@@ -4,13 +4,13 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
 
-    <groupId>com.javapipeline</groupId>
-    <artifactId>java-analysis-platform</artifactId>
-    <version>0.2.0-SNAPSHOT</version>
+    <groupId>com.metamodel</groupId>
+    <artifactId>metamodel-conformance-pipeline</artifactId>
+    <version>0.3.0-SNAPSHOT</version>
     <packaging>pom</packaging>
 
-    <name>Java Analysis Platform</name>
-    <description>Modular desktop platform for ingesting and analyzing Java repositories.</description>
+    <name>Metamodel Conformance Pipeline</name>
+    <description>Pipeline for evaluating empirical correspondence of structural conditions against production object oriented codebases across Java, Python, and C++.</description>
 
     <modules>
         <module>modules/analysis-core</module>

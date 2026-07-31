@@ -26,7 +26,7 @@ if (Test-Path $jdk17) { $env:JAVA_HOME = $jdk17 }
 $java = if ($env:JAVA_HOME) { Join-Path $env:JAVA_HOME 'bin\java.exe' } else { 'java' }
 
 $jar = Join-Path $root 'apps\swing-desktop\target\swing-desktop-0.2.0-SNAPSHOT-all.jar'
-$metamodel = Join-Path $root 'modules\verification-cli\src\main\resources\metamodel.als'
+$metamodel = Join-Path $root 'modules\verification-cli\src\main\resources\StructuralMetamodel.recore'
 $verifierDir = Join-Path $root 'modules\verification-cli'
 $outputRoot = Join-Path $root $OutputDir
 
