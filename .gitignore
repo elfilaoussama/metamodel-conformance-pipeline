@@ -18,7 +18,7 @@ workspace/
 analysis-output/
 pipeline-output/
 
-# Verification environment — third-party JARs and native libs
+# Verification environment - third-party JARs and native libs
 modules/verification-cli/lib/
 
 # Verification environment output
@@ -27,7 +27,15 @@ modules/verification-cli/output/
 # Tool artifacts
 .agents/
 
-# Standalone analysis scripts (not part of the pipeline)
-analyze_verification.py
-plots/
+# Python cache and artifacts
+__pycache__/
+*.pyc
+*.pyo
 
+# OS artifacts
+.DS_Store
+Thumbs.db
+
+# Generated plots
+plots/
+*.png
