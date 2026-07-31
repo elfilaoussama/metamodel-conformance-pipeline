@@ -75,7 +75,7 @@ for row in rows:
 # ---------------------------------------------------------------
 # Figure 1: SAT Rates bar chart
 # ---------------------------------------------------------------
-fig, ax = plt.subplots(figsize=(4.5, 3))
+fig, ax = plt.subplots(figsize=(5.5, 3.5))
 sat_rates = []
 sat_ci_low = []
 sat_ci_high = []
@@ -143,18 +143,19 @@ for lang in LANG_ORDER:
 sorted_invs = sorted(invariant_totals.items(), key=lambda x: -x[1])
 total_v = sum(invariant_totals.values())
 
-fig, ax = plt.subplots(figsize=(5, 3))
+fig, ax = plt.subplots(figsize=(6, 3.5))
 names = [f"{inv}\n({count})" if count > 0 else inv for inv, count in sorted_invs]
 values = [c for _, c in sorted_invs]
 pcts = [c / total_v * 100 for c in values]
 colours = ["#2b83ba" if pct > 1 else "#999999" for pct in pcts]
 ax.barh(range(len(names)), pcts, color=colours, edgecolor="white")
 ax.set_yticks(range(len(names)))
-ax.set_yticklabels(names, fontsize=7)
+ax.set_yticklabels(names, fontsize=8)
 ax.set_xlabel("Percentage of all violations")
 ax.set_title(f"Violation concentration ({total_v} total)")
 ax.invert_yaxis()
 ax.grid(axis="x", alpha=0.3)
+fig.tight_layout()
 fig.savefig(PAPER_FIGDIR / "fig_violation_concentration.pdf")
 plt.close(fig)
 print("Saved: fig_violation_concentration.pdf")
