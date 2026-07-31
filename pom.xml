@@ -37,37 +37,37 @@
     <dependencyManagement>
         <dependencies>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>analysis-core</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>github-ingestion</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>github-search</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>spoon-extraction</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>python-extraction</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>cpp-extraction</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>
-                <groupId>com.javapipeline</groupId>
+                <groupId>com.metamodel</groupId>
                 <artifactId>verification-integration</artifactId>
                 <version>${project.version}</version>
             </dependency>

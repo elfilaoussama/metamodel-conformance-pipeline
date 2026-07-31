@@ -4,40 +4,40 @@
          xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
     <parent>
-        <groupId>com.javapipeline</groupId>
-        <artifactId>java-analysis-platform</artifactId>
-        <version>0.2.0-SNAPSHOT</version>
+        <groupId>com.metamodel</groupId>
+        <artifactId>metamodel-conformance-pipeline</artifactId>
+        <version>0.3.0-SNAPSHOT</version>
         <relativePath>../../pom.xml</relativePath>
     </parent>
     <artifactId>swing-desktop</artifactId>
     <name>Java Analysis Desktop</name>
     <dependencies>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>analysis-core</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>github-ingestion</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>github-search</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>spoon-extraction</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>python-extraction</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>cpp-extraction</artifactId>
         </dependency>
         <dependency>
-            <groupId>com.javapipeline</groupId>
+            <groupId>com.metamodel</groupId>
             <artifactId>verification-integration</artifactId>
         </dependency>
         <dependency>
@@ -74,7 +74,7 @@
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.javapipeline.desktop.DesktopApplication</mainClass>
+                                    <mainClass>com.metamodel.desktop.DesktopApplication</mainClass>
                                 </transformer>
                             </transformers>
                         </configuration>

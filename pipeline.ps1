@@ -12,7 +12,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$jar = Join-Path $root 'apps\swing-desktop\target\swing-desktop-0.2.0-SNAPSHOT-all.jar'
+$jar = Join-Path $root 'apps\swing-desktop\target\swing-desktop-0.3.0-SNAPSHOT-all.jar'
 
 $jdkPaths = @(
     'C:\Program Files\Java\jdk-21',
