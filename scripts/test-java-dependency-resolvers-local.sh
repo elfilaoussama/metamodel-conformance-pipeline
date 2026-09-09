@@ -50,14 +50,10 @@ elif [[ "$all" == *"__mcpObserveJavaContexts"* ]]; then
   grep -Fq "mcp.build.output is required" "$init_mount"
   grep -Fq "def observationTask = null" "$init_mount"
   grep -Fq "observationTask = project.tasks.register('__mcpObserveJavaContexts')" "$init_mount"
-  grep -Fq "ProjectComponentIdentifier" "$init_mount"
-  grep -Fq "internalArtifactProjects" "$init_mount"
-  grep -Fq "SourceSet.MAIN_SOURCE_SET_NAME" "$init_mount"
-  grep -Fq "def projectBuildRoots = []" "$init_mount"
-  grep -Fq "project.layout.buildDirectory.get().asFile.canonicalFile" "$init_mount"
-  grep -Fq "entryPath.startsWith(candidate.path)" "$init_mount"
-  grep -Fq "b.path.nameCount <=> a.path.nameCount" "$init_mount"
-  grep -Fq "entry.path.endsWith('.jar')" "$init_mount"
+  grep -Fq 'def owner = outputOwners[entry.path]' "$init_mount"
+  ! grep -Fq 'mainContextOwners' "$init_mount"
+  ! grep -Fq 'projectBuildRoots' "$init_mount"
+  ! grep -Fq "entry.path.endsWith('.jar')" "$init_mount"
   ! grep -Fq "javaCompiler.orNull" "$init_mount"
   output=''
   for argument in "$@"; do [[ "$argument" == -Dmcp.context.output=* ]] && output="${argument#*=}"; done
@@ -89,8 +85,20 @@ MAVEN_RESOLVER_IMAGE=test-maven MAVEN_DEPENDENCY_CLASSPATH_GOAL=fake:classpath \
 grep -Fq $'context\tmaven|.|compile\t.\t\t\t17\tfalse\t' "$work/maven.tsv"
 grep -Fq $'source\tmaven|.|compile\tcode/prod' "$work/maven.tsv"
 grep -Fq $'source\tmaven|.|test\tcode/check' "$work/maven.tsv"
+grep -Fq $'upstream\tmaven|.|test\tmaven|.|compile' "$work/maven.tsv"
 grep -Fq $'classpath\tmaven|.|compile\t' "$work/maven.tsv"
 ! grep -q 'src/main/java\|src/test/java' "$work/maven.tsv"
+
+# A test-only effective model must not acquire a nonexistent compile-context edge.
+test_only="$work/maven-test-only"
+mkdir -p "$test_only/code/check/app"
+printf 'package app; class Check {}\n' > "$test_only/code/check/app/Check.java"
+cp "$maven/pom.xml" "$test_only/pom.xml"
+PATH="$work/bin:$PATH" FAKE_DOCKER_ARGUMENTS="$arguments" \
+MAVEN_RESOLVER_IMAGE=test-maven MAVEN_DEPENDENCY_CLASSPATH_GOAL=fake:classpath \
+  "$repo_root/scripts/resolve-maven-dependencies.sh" "$test_only" "$work/maven-test-only.tsv"
+grep -Fq $'context\tmaven|.|test\t' "$work/maven-test-only.tsv"
+! grep -q '^upstream' "$work/maven-test-only.tsv"
 
 gradle="$work/gradle-project"
 mkdir -p "$gradle/weird/alpha/app"

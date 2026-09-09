@@ -138,6 +138,7 @@ print(sep.join(['compile',source,out,compile_source,compile_target,compile_relea
 print(sep.join(['test',test,testout,test_source_level,test_target_level,test_release,test_preview]))
 PY
 
+  observed_compile_context=''
   while IFS=$'\x1f' read -r kind source_dir output_dir source_level target_level release preview extra; do
     [[ -z "${extra:-}" ]] || { echo "invalid Maven effective-model metadata" >&2; exit 70; }
     [[ -n "$source_dir" ]] || continue
@@ -153,6 +154,15 @@ PY
     printf 'context\t%s\t%s\t%s\t%s\t%s\t%s\t\n' \
       "$context_id" "$module_key" "$source_level" "$target_level" "$release" "$preview" >> "$output_file"
     printf 'source\t%s\t%s\n' "$context_id" "$relative_source" >> "$output_file"
+    # MavenProject.getTestClasspathElements includes this module's production
+    # output before dependency artifacts. dependency:build-classpath reports only
+    # dependency artifacts, so preserve the observed production context explicitly.
+    # No edge is invented when the effective model produced no Java compile context.
+    if [[ "$kind" == compile ]]; then
+      observed_compile_context="$context_id"
+    elif [[ "$kind" == test && -n "$observed_compile_context" ]]; then
+      printf 'upstream\t%s\t%s\n' "$context_id" "$observed_compile_context" >> "$output_file"
+    fi
     if [[ -n "$output_dir" ]]; then
       case "$output_dir" in
         "$container_source"/*) host_output="$source_root/${output_dir#$container_source/}" ;;

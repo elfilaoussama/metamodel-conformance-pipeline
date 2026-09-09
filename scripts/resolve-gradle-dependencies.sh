@@ -67,9 +67,7 @@ init_script="$resolution_root/mcp-init.gradle"
 
 cat > "$init_script" <<'GRADLE'
 import org.gradle.api.tasks.SourceSetContainer
-import org.gradle.api.tasks.SourceSet
 import org.gradle.api.tasks.compile.JavaCompile
-import org.gradle.api.artifacts.component.ProjectComponentIdentifier
 import org.gradle.api.JavaVersion
 import java.util.regex.Pattern
 
@@ -110,10 +108,7 @@ gradle.projectsEvaluated {
     def outputPath = System.getProperty('mcp.context.output')
     if (outputPath == null || outputPath.trim().isEmpty()) throw new GradleException('mcp.context.output is required')
     def contexts = []
-    def projectBuildRoots = []
     gradle.rootProject.allprojects.sort { a, b -> a.path <=> b.path }.each { project ->
-                def projectBuildDir = project.layout.buildDirectory.get().asFile.canonicalFile
-                projectBuildRoots << [projectPath:project.path, path:projectBuildDir.toPath()]
                 def sourceSets = project.extensions.findByType(SourceSetContainer)
                 if (sourceSets == null) return
                 sourceSets.sort { a, b -> a.name <=> b.name }.each { sourceSet ->
@@ -145,46 +140,18 @@ gradle.projectsEvaluated {
                     def id = safe("gradle|${rel(project.projectDir)}|${project.path}|${sourceSet.name}")
                     def entries = sourceSet.compileClasspath.files.collect { it.canonicalFile }
                     def outputs = sourceSet.output.classesDirs.files.collect { it.canonicalFile }
-                    def internalArtifactProjects = [:]
-                    def compileConfiguration = project.configurations.findByName(
-                            sourceSet.compileClasspathConfigurationName)
-                    if (compileConfiguration != null && compileConfiguration.canBeResolved) {
-                        try {
-                            compileConfiguration.incoming.artifacts.artifacts.each { artifact ->
-                                def component = artifact.id.componentIdentifier
-                                if (component instanceof ProjectComponentIdentifier) {
-                                    internalArtifactProjects[artifact.file.canonicalFile.path] = component.projectPath
-                                }
-                            }
-                        } catch (Throwable ignored) {
-                            // The classpath file collection remains the authoritative fallback.
-                            // If Gradle cannot expose an internal artifact owner, an unresolved
-                            // archive stays visible and the manifest validator fails closed.
-                        }
-                    }
                     contexts << [id:id, module:rel(project.projectDir), projectPath:project.path,
                                  sourceSetName:sourceSet.name, roots:roots.collect(rel), entries:entries,
                                  outputs:outputs, source:sourceLevel, target:targetLevel, release:release,
-                                 preview:preview, platform:platform,
-                                 internalArtifactProjects:internalArtifactProjects]
+                                 preview:preview, platform:platform]
                 }
             }
             def outputOwners = [:]
             contexts.each { ctx -> ctx.outputs.each { out -> outputOwners[out.path] = ctx.id } }
-            // Gradle's standard Java project dependency selects the target project's main
-            // source-set variant. Preserve it as an upstream compilation context rather than
-            // recording a not-yet-built internal JAR as an external archive.
-            def mainContextOwners = [:]
-            contexts.findAll { ctx -> ctx.sourceSetName == SourceSet.MAIN_SOURCE_SET_NAME }.each { ctx ->
-                mainContextOwners[ctx.projectPath] = ctx.id
-            }
-            // A redirected build directory is authoritative internal-build evidence even
-            // when a Gradle version/plugin does not expose ProjectComponentIdentifier
-            // metadata through the resolved artifact collection. Prefer the most specific
-            // project root because nested projects can have nested build directories.
-            projectBuildRoots.sort { a, b ->
-                b.path.nameCount <=> a.path.nameCount ?: a.projectPath <=> b.projectPath
-            }
+            // Only an exact observed classes-directory identity establishes context
+            // ownership. Project identity or build-directory containment cannot identify
+            // archive variants (test fixtures, custom/shaded JARs, generated resources).
+            // Preserve archives, including unresolved ones, for fail-closed validation.
     observationTask.configure {
         doLast {
             def output = new File(outputPath)
@@ -199,29 +166,6 @@ gradle.projectsEvaluated {
                 def seenUpstream = [] as Set
                 ctx.entries.each { entry ->
                     def owner = outputOwners[entry.path]
-                    if (owner == null) {
-                        def internalProject = ctx.internalArtifactProjects[entry.path]
-                        if (internalProject == null) {
-                            def entryPath = entry.toPath()
-                            def buildRoot = projectBuildRoots.find { candidate ->
-                                entryPath.startsWith(candidate.path)
-                            }
-                            if (buildRoot != null) internalProject = buildRoot.projectPath
-                        }
-                        if (internalProject != null) {
-                            owner = mainContextOwners[internalProject]
-                            // A project dependency with no Java source context (for example,
-                            // an aggregator or fixture project) is still resolved evidence. Keep
-                            // existing output directories and archives on the classpath; do not
-                            // invent an upstream edge. If Gradle reports a not-yet-built internal
-                            // archive, omit that unresolved artifact so the manifest validator
-                            // can still reject genuinely external missing archives.
-                            if (owner == null && entry.path.endsWith('.jar')
-                                    && !new File(entry.path).isFile()) {
-                                return
-                            }
-                        }
-                    }
                     if (owner != null && owner != ctx.id) {
                         if (seenUpstream.add(owner)) output << "upstream\t${ctx.id}\t${owner}" + System.lineSeparator()
                     } else {
