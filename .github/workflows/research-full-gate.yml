@@ -1,0 +1,48 @@
+name: research-full-gate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-full-gate-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify Clang frontend
+        run: clang++ --version
+      - name: Verify recovered paper corpus integrity
+        run: |
+          python -m py_compile scripts/pin-paper-corpus.py
+          python scripts/pin-paper-corpus.py --validate-selection-only
+      - name: Verify
+        run: mvn --batch-mode --no-transfer-progress verify
+      - name: Verify pinned real repository
+        run: ./scripts/verify-real-repository.sh
+
+  frozen-java-corpus:
+    needs: build
+    uses: ./.github/workflows/random-java-corpus-20.yml
+
+  frozen-python-corpus:
+    needs: build
+    uses: ./.github/workflows/python-corpus-6.yml
+
+  frozen-cpp-corpus:
+    needs: build
+    uses: ./.github/workflows/cpp-corpus-4.yml

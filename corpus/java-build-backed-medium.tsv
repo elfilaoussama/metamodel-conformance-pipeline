@@ -1,0 +1,5 @@
+repository	commit	build_tool	selection_basis
+FasterXML/jackson-core	e7fcd7d209f19b443865dc8830c894c11b30eddd	maven	medium-public-maven-library
+google/gson	257bee9eff81889893ca02a6925aa1b620378e9e	maven	medium-public-maven-library
+ben-manes/caffeine	a81e8e59f3d54078f8e6d7e1f2ff891040c6957e	gradle	medium-public-gradle-library
+TNG/ArchUnit	dc7238fc7dfcfc50f5473c0cb3825de3dd9ced72	gradle	medium-public-gradle-library

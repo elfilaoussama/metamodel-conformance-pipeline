@@ -1,0 +1,51 @@
+name: Java normalization integration
+
+on:
+  push:
+    branches:
+      - integration/java-normalization-candidate
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: java-normalization-integration
+  cancel-in-progress: true
+
+env:
+  MAVEN_RESOLVER_IMAGE: maven:3.9.16-eclipse-temurin-17
+  MAVEN_DEPENDENCY_CLASSPATH_GOAL: org.apache.maven.plugins:maven-dependency-plugin:3.11.0:build-classpath
+  GRADLE_RESOLVER_IMAGE: gradle:8.14.5-jdk17
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build pipeline JAR for local smoke fixtures
+        run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - name: Validate build-neutral Java boundary
+        run: |
+          bash scripts/test-java-compilation-contexts-local.sh
+          bash scripts/test-java-dependency-resolvers-local.sh .
+          bash scripts/test-java-corpus-fallback-local.sh .
+          bash scripts/audit-no-special-cases.sh
+          bash scripts/audit-java-architecture-boundary.sh
+          bash scripts/validate-javac-semantics.sh
+      - name: Run dependency-backed project suite
+        run: mvn --batch-mode --no-transfer-progress verify
+      - name: Exercise real Maven and Gradle providers
+        run: bash scripts/test-java-build-providers-real.sh .

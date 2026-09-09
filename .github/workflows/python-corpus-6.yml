@@ -1,0 +1,155 @@
+name: python-corpus-6
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-corpus-pipeline-jar
+          path: target/metamodel-conformance-pipeline-next-*-SNAPSHOT.jar
+          if-no-files-found: error
+
+  analyze:
+    needs: build-tool
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        include:
+          - { repository: "psf/requests", commit: "5460f467b02e49471c0fd6cfc9ca0adab6351f98", artifact: "py-01-requests" }
+          - { repository: "pallets/flask", commit: "d318b683471101618febed18996405ad26462110", artifact: "py-02-flask" }
+          - { repository: "pytest-dev/pytest", commit: "51e9a9f148cd2509a31e3fa0d2b1b3204c2b0dd7", artifact: "py-03-pytest" }
+          - { repository: "pydantic/pydantic", commit: "27f473c24ed63a475903d8289c84fb81987f04e9", artifact: "py-04-pydantic" }
+          - { repository: "fastapi/fastapi", commit: "50113da16fec53b66b80d75e80a89296de4fa5a5", artifact: "py-05-fastapi" }
+          - { repository: "psf/black", commit: "8947c48ef2077c3a301b03c1e814dc2e3f78436e", artifact: "py-06-black" }
+    name: ${{ matrix.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-corpus-pipeline-jar
+          path: target
+      - name: Analyze pinned Python repository
+        run: bash ./scripts/run-python-corpus-entry.sh "${{ matrix.repository }}" "${{ matrix.commit }}" python-corpus-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: python-corpus-output
+          if-no-files-found: error
+
+  summarize:
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "py-*"
+          path: python-corpus-artifacts
+      - name: Aggregate and enforce Python corpus contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' reports < <(find python-corpus-artifacts -name report.json -print0 | sort -z)
+          if [[ ${#reports[@]} -ne 6 ]]; then
+            echo "expected 6 Python reports, found ${#reports[@]}" >&2
+            exit 1
+          fi
+
+          jq -r '.invariants[].id' src/main/resources/invariants/registry.json | sort > expected-invariants.txt
+
+          failures=0
+          for report in "${reports[@]}"; do
+            repository="$(jq -r '.repository' "${report}")"
+            outcome="$(jq -r '.toolOutcome' "${report}")"
+            verification_exit="$(jq -r '.verificationExit' "${report}")"
+
+            if [[ "${outcome}" != "ANALYZED" || "${verification_exit}" != "0" ]]; then
+              echo "${repository}: expected replayable analysis; got ${outcome}, verificationExit=${verification_exit}" >&2
+              failures=$((failures + 1))
+            fi
+
+            jq -r '.decisions[].invariantId' "${report}" | sort > actual-invariants.txt
+            if ! diff -u expected-invariants.txt actual-invariants.txt >/dev/null; then
+              echo "${repository}: decision set does not match the current invariant registry" >&2
+              diff -u expected-invariants.txt actual-invariants.txt >&2 || true
+              failures=$((failures + 1))
+            fi
+
+            parse_errors="$(jq '[.observationDiagnostics[]? | select(.kind == "PARSE_ERROR")] | length' "${report}")"
+            ownership_status="$(jq -r '([.decisions[] | select(.invariantId == "exclusive-declaration-ownership")] | .[0].status) // "MISSING"' "${report}")"
+            if [[ "${parse_errors}" == "0" && "${ownership_status}" != "CONFORMANT" ]]; then
+              echo "${repository}: parse-clean Python source must evaluate declaration ownership; got ${ownership_status}" >&2
+              failures=$((failures + 1))
+            fi
+            if [[ "${parse_errors}" != "0" && "${ownership_status}" != "NOT_EVALUATED" ]]; then
+              echo "${repository}: parse diagnostics must fail closed for declaration ownership; got ${ownership_status}" >&2
+              failures=$((failures + 1))
+            fi
+          done
+
+          if [[ ${failures} -ne 0 ]]; then
+            echo "Python corpus contract failed for ${failures} check(s)" >&2
+            exit 1
+          fi
+
+          jq -s 'sort_by(.repository)' "${reports[@]}" > python-real-6-summary.json
+          jq '
+            {
+              repositories: length,
+              pythonFiles: (map(.pythonFiles) | add),
+              analyzedRepositories: ([.[] | select(.toolOutcome == "ANALYZED")] | length),
+              externalParentsAllowlisted: (map(.externalParents // 0) | add),
+              diagnostics: (
+                [.[] | .observationDiagnostics[]?]
+                | group_by(.kind)
+                | map({key: .[0].kind, value: length})
+                | from_entries
+              ),
+              declarationOwnership: {
+                conformant: ([.[] | .decisions[] | select(.invariantId == "exclusive-declaration-ownership" and .status == "CONFORMANT")] | length),
+                nonConformant: ([.[] | .decisions[] | select(.invariantId == "exclusive-declaration-ownership" and .status == "NON_CONFORMANT")] | length),
+                notEvaluated: ([.[] | .decisions[] | select(.invariantId == "exclusive-declaration-ownership" and .status == "NOT_EVALUATED")] | length)
+              },
+              hierarchy: {
+                conformant: ([.[] | .decisions[] | select(.invariantId == "acyclic-generalization" and .status == "CONFORMANT")] | length),
+                nonConformant: ([.[] | .decisions[] | select(.invariantId == "acyclic-generalization" and .status == "NON_CONFORMANT")] | length),
+                notEvaluated: ([.[] | .decisions[] | select(.invariantId == "acyclic-generalization" and .status == "NOT_EVALUATED")] | length)
+              }
+            }
+          ' python-real-6-summary.json > python-real-6-metrics.json
+
+          jq -c '.[]' python-real-6-summary.json | sed 's/^/PYTHON_CORPUS_SUMMARY /'
+          jq -c . python-real-6-metrics.json | sed 's/^/PYTHON_CORPUS_METRICS /'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-real-6-summary
+          path: |
+            python-real-6-summary.json
+            python-real-6-metrics.json
+          if-no-files-found: error

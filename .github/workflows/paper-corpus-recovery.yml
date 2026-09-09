@@ -1,0 +1,66 @@
+name: paper-corpus-recovery
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconstruct-pins:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Verify recovered selection bytes
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=d6818780078944b5b12063c780a480dc8c8686eb
+          observed="$(git hash-object corpus/paper-224-selected.csv)"
+          test "$observed" = "$expected"
+          echo "historical selection blob verified: $observed"
+      - name: Reconstruct historical-cutoff pins
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python scripts/pin-paper-corpus.py \
+            --input corpus/paper-224-selected.csv \
+            --output paper-224-reconstructed-pins.csv \
+            --cutoff 2026-07-29T12:09:33Z
+      - name: Verify reconstructed manifest contract
+        run: |
+          python - <<'PY'
+          import csv
+          import re
+          from collections import Counter
+          from datetime import datetime, timezone
+
+          cutoff = datetime.fromisoformat('2026-07-29T12:09:33+00:00')
+          with open('paper-224-reconstructed-pins.csv', newline='', encoding='utf-8') as handle:
+              rows = list(csv.DictReader(handle))
+          assert len(rows) == 224, len(rows)
+          assert Counter(row['lang'] for row in rows) == {'Java': 75, 'Python': 75, 'C++': 74}
+          assert all(row['status'] == 'PINNED' for row in rows)
+          assert all(re.fullmatch(r'[0-9a-f]{40}', row['commit']) for row in rows)
+          assert all(row['requestedRepository'] for row in rows)
+          assert all(row['canonicalRepository'] for row in rows)
+          assert all(row['defaultBranch'] for row in rows)
+          assert all(row['provenance'] == 'RECONSTRUCTED_SELECTION_CUTOFF' for row in rows)
+          assert all(row['cutoff'] == '2026-07-29T12:09:33Z' for row in rows)
+          commit_dates = [datetime.fromisoformat(row['commitDate'].replace('Z', '+00:00')) for row in rows]
+          assert all(date.tzinfo is not None and date.astimezone(timezone.utc) <= cutoff for date in commit_dates)
+          print('paper corpus reconstruction contract satisfied for 224 repositories')
+          PY
+      - name: Record reconstructed manifest digest
+        shell: bash
+        run: sha256sum paper-224-reconstructed-pins.csv > paper-224-reconstructed-pins.csv.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: paper-224-reconstructed-pins
+          path: |
+            paper-224-reconstructed-pins.csv
+            paper-224-reconstructed-pins.csv.sha256
+          if-no-files-found: error

@@ -1,0 +1,166 @@
+name: random-java-corpus-20
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-jar
+          path: target/metamodel-conformance-pipeline-next-*-SNAPSHOT.jar
+          if-no-files-found: error
+
+  analyze:
+    needs: build-tool
+    runs-on: ubuntu-latest
+    env:
+      MAVEN_DEPENDENCY_CLASSPATH_GOAL: "org.apache.maven.plugins:maven-dependency-plugin:3.11.0:build-classpath"
+      MAVEN_RESOLVER_IMAGE: "maven:3.9.16-eclipse-temurin-17"
+      GRADLE_RESOLVER_IMAGE: "gradle:8.14.5-jdk17"
+    strategy:
+      fail-fast: false
+      max-parallel: 5
+      matrix:
+        include:
+          - { repository: "AnJiaoDe/TabLayoutNiubility", commit: "47a99ef4f9d8900899c688b5b79a41c09a1bef81", artifact: "01-TabLayoutNiubility" }
+          - { repository: "Tickaroo/tikxml", commit: "ca8af5a27408e2631b7612ad5457856bc3e9ffc3", artifact: "02-tikxml" }
+          - { repository: "MaxToyberman/react-native-ssl-pinning", commit: "f8cf98b8b2f320816ce6c4a2be22258f2c29e11b", artifact: "03-react-native-ssl-pinning" }
+          - { repository: "alpha037/data-structures-and-algorithms", commit: "3532a887ff9d940bc7d131d03e9d075af7399135", artifact: "04-data-structures-and-algorithms" }
+          - { repository: "librespot-org/librespot-java", commit: "52a8c24215e5a9b921da8e7219c49937ec87ed88", artifact: "05-librespot-java" }
+          - { repository: "wellzhi/springboot-flowable", commit: "2e4476fc9e7f01694c910da1721e2eeaba7158d2", artifact: "06-springboot-flowable" }
+          - { repository: "kymjs/CJFrameForAndroid", commit: "fe01341c553618e3bf0fd061eccf01bcc0f2e85c", artifact: "07-CJFrameForAndroid" }
+          - { repository: "yjjdick/sdb-mall", commit: "1dd9223b77a3813cde09aedeea8f74cb4aa21536", artifact: "08-sdb-mall" }
+          - { repository: "BitgetLimited/proof-of-reserves", commit: "86209a91d58a4c175bc5be57e9200b3d3bfd3511", artifact: "09-proof-of-reserves" }
+          - { repository: "Enigmatis/graphql-java-annotations", commit: "bc517e3c9a11b3160a821de8d266cbd1ef4f3015", artifact: "10-graphql-java-annotations" }
+          - { repository: "reveny/Android-GUI-Injector", commit: "93f9d5c745fd161f30c7b601d3da48e1ee90af47", artifact: "11-Android-GUI-Injector" }
+          - { repository: "t0thkr1s/allsafe-android", commit: "c7329155cbbd0a2079a48bbfcaa23a6666899ee9", artifact: "12-allsafe-android" }
+          - { repository: "ekoz/kbase-doc", commit: "477e1d872c71cb84805f52d753bd05a247f3972b", artifact: "13-kbase-doc" }
+          - { repository: "rayokota/kareldb", commit: "78e10ec77f6a6824dc0c275cb73831b1aa142b1e", artifact: "14-kareldb" }
+          - { repository: "eduardo-mior/URI-Online-Judge-Solutions", commit: "5744d14698fdb5efdcc25dbc407df00c34835ebd", artifact: "15-uri-online-judge" }
+          - { repository: "shamanland/floating-action-button", commit: "602b308c1bcd65cf0a64618d1192d32e8d746281", artifact: "16-floating-action-button" }
+          - { repository: "hearsilent/DiscreteSlider", commit: "b751ab4fa09548fa231933c5d5e4c70a02f0781d", artifact: "17-DiscreteSlider" }
+          - { repository: "ManishK4514/Strivers-A2Z-DSA-Sheet", commit: "b1682f09f234e6bd881d4c3ed56b3078e6309cc8", artifact: "18-strivers-a2z" }
+          - { repository: "ggsava/block-this", commit: "6c415352c9be96a336d6641e74aa75fcbfa4fa02", artifact: "19-block-this" }
+          - { repository: "tpcstld/2048", commit: "2863bbe3c96f9fc34f4bf3258b983e53185b86af", artifact: "20-2048" }
+    name: ${{ matrix.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-jar
+          path: target
+      - name: Analyze pinned repository
+        run: ./scripts/run-corpus-entry.sh "${{ matrix.repository }}" "${{ matrix.commit }}" corpus-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: corpus-output
+          if-no-files-found: error
+
+  summarize:
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "[0-9][0-9]-*"
+          path: corpus-artifacts
+      - name: Aggregate and enforce corpus regression contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' reports < <(find corpus-artifacts -name report.json -print0 | sort -z)
+          if [[ ${#reports[@]} -ne 20 ]]; then
+            echo "expected 20 reports, found ${#reports[@]}" >&2
+            exit 1
+          fi
+
+          jq -r '.invariants[].id' src/main/resources/invariants/registry.json \
+            | sort > expected-invariants.txt
+
+          failures=0
+          for report in "${reports[@]}"; do
+            repository="$(jq -r '.repository' "${report}")"
+            outcome="$(jq -r '.toolOutcome' "${report}")"
+            verification_exit="$(jq -r '.verificationExit' "${report}")"
+
+            if [[ "${outcome}" != "ANALYZED" || "${verification_exit}" != "0" ]]; then
+              echo "${repository}: expected ANALYZED with a valid replayable capsule; got ${outcome}, verificationExit=${verification_exit}" >&2
+              failures=$((failures + 1))
+            fi
+
+            jq -r '.decisions[].invariantId' "${report}" | sort > actual-invariants.txt
+            if ! diff -u expected-invariants.txt actual-invariants.txt >/dev/null; then
+              echo "${repository}: decision set does not match the current invariant registry" >&2
+              diff -u expected-invariants.txt actual-invariants.txt >&2 || true
+              failures=$((failures + 1))
+            fi
+          done
+
+          if [[ ${failures} -ne 0 ]]; then
+            echo "corpus regression contract failed for ${failures} check(s)" >&2
+            exit 1
+          fi
+
+          jq -s 'sort_by(.repository)' "${reports[@]}" > random-java-20-summary.json
+          jq '
+            {
+              repositories: length,
+              javaFiles: (map(.javaFiles) | add),
+              dependencyJars: (map(.dependencyJars // 0) | add),
+              repositoriesWithResolvedDependencies: ([.[] | select((.dependencyResolutionExit // 99) == 0 and (.dependencyJars // 0) > 0)] | length),
+              dependencyResolutionFailures: ([.[] | select((.dependencyResolutionExit // 0) != 0)] | length),
+              analyzedRepositories: ([.[] | select(.toolOutcome == "ANALYZED")] | length),
+              totalWitnesses: ([.[] | .decisions[] | .witnessCount] | add // 0),
+              diagnostics: (
+                [.[] | .observationDiagnostics[]?]
+                | group_by(.kind)
+                | map({key: .[0].kind, value: length})
+                | from_entries
+              ),
+              invariantResults: (
+                [.[] | .decisions[]]
+                | group_by(.invariantId)
+                | map({
+                    invariantId: .[0].invariantId,
+                    conformant: ([.[] | select(.status == "CONFORMANT")] | length),
+                    nonConformant: ([.[] | select(.status == "NON_CONFORMANT")] | length),
+                    notEvaluated: ([.[] | select(.status == "NOT_EVALUATED")] | length),
+                    evaluatedRepositories: ([.[] | select(.status != "NOT_EVALUATED")] | length),
+                    repositoriesWithFindings: ([.[] | select(.status == "NON_CONFORMANT")] | length),
+                    witnessCount: (map(.witnessCount) | add // 0)
+                  })
+              )
+            }
+          ' random-java-20-summary.json > random-java-20-metrics.json
+
+          jq -c '.[]' random-java-20-summary.json | sed 's/^/CORPUS_SUMMARY /'
+          jq -c . random-java-20-metrics.json | sed 's/^/CORPUS_METRICS /'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: random-java-20-summary
+          path: |
+            random-java-20-summary.json
+            random-java-20-metrics.json
+          if-no-files-found: error

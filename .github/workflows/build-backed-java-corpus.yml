@@ -1,0 +1,101 @@
+name: build-backed-java-corpus
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUILD_BACKED_CORPUS_FILE: "corpus/java-build-backed-medium.tsv"
+  MAVEN_DEPENDENCY_CLASSPATH_GOAL: "org.apache.maven.plugins:maven-dependency-plugin:3.11.0:build-classpath"
+  MAVEN_RESOLVER_IMAGE: "maven:3.9.16-eclipse-temurin-17"
+  GRADLE_RESOLVER_IMAGE: "gradle:8.14.5-jdk17"
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.matrix.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(awk -F '\t' 'NR > 1 && NF == 4 { count++ } END { print count + 0 }' "$BUILD_BACKED_CORPUS_FILE")"
+          (( expected > 0 ))
+          matrix="$(awk -F '\t' 'NR > 1 && NF == 4 { printf "%s\\t%s\\t%s\\n", $1, $2, $3 }' "$BUILD_BACKED_CORPUS_FILE" \
+            | jq -Rsc 'split("\\n") | map(select(length > 0) | split("\\t")) | {include: map({repository: .[0], commit: .[1], build_tool: .[2]})}')"
+          [[ "$(jq '.include | length' <<<"$matrix")" == "$expected" ]]
+          printf 'value=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  build-tool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-jar
+          path: target/metamodel-conformance-pipeline-next-*-SNAPSHOT.jar
+          if-no-files-found: error
+
+  analyze:
+    needs: [plan, build-tool]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    name: ${{ matrix.build_tool }} / ${{ matrix.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: actions/download-artifact@v4
+        with:
+          name: pipeline-jar
+          path: target
+      - name: Analyze pinned repository
+        run: ./scripts/run-corpus-entry.sh "${{ matrix.repository }}" "${{ matrix.commit }}" corpus-output "${{ matrix.build_tool }}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-backed-${{ matrix.build_tool }}-${{ strategy.job-index }}
+          path: corpus-output
+          if-no-files-found: error
+
+  summarize:
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: build-backed-*
+          path: corpus-artifacts
+      - name: Enforce build-backed corpus contract
+        run: |
+          bash scripts/summarize-build-backed-java-corpus.sh \
+            "$BUILD_BACKED_CORPUS_FILE" corpus-artifacts \
+            src/main/resources/invariants/registry.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-backed-java-medium-summary
+          path: |
+            corpus-artifacts/summary.json
+            corpus-artifacts/metrics.json
+          if-no-files-found: error

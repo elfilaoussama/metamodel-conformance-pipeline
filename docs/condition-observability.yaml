@@ -1,0 +1,93 @@
+schemaVersion: "6"
+evidence:
+  HIERARCHY:
+    description: Direct parent edges are complete for the declared source boundary.
+  DECLARATION_OWNERSHIP:
+    description: Every parsed member declaration and declaring-classifier association was observed.
+  LOCAL_SIGNATURES:
+    description: Member names and ordered method parameter types were observed canonically.
+  INHERITABILITY:
+    description: The frontend classified whether each declaration participates in inheritance.
+  INHERITED_MEMBERS:
+    description: The frontend independently resolved inherited member memberships within the configured source boundary.
+  METHOD_BODIES:
+    description: Source method bodies were materialized as standalone canonical observations without encoding their owner into the body key.
+  METHOD_ABSTRACTION:
+    description: Source modifiers/body form determine whether each source method declaration is abstract or concrete; unknown is retained when this cannot be justified.
+  IMPLEMENTATION_BINDINGS:
+    description: javac independently resolves source declaration/body correspondence used to construct explicit implementer-target-body bindings.
+  CLASSIFIER_ABSTRACTION:
+    description: Source-level classifier abstraction is observed explicitly as ABSTRACT, CONCRETE, or UNKNOWN without using unresolved-method outcomes.
+  METHOD_SCOPE:
+    description: Source-level method scope is observed explicitly as INSTANCE, STATIC, or UNKNOWN.
+  METHOD_RETURN_TYPES:
+    description: javac resolves a return-type representation for every canonical source method in the configured source set; the evidence kind is complete only when every method maps uniquely and compilation succeeds.
+  OVERRIDE_RELATIONS:
+    description: javac independently resolves which canonical source methods override which other canonical source methods within the configured source boundary; the relation is retained even when empty and is complete only when every method maps uniquely and compilation succeeds.
+
+conditions:
+  O-01:
+    status: DEFERRED
+    reason: Extractor-generated technical keys are not independent source identities.
+  O-02:
+    status: EVALUABLE
+    requires: [DECLARATION_OWNERSHIP]
+    witness: MEMBER
+  O-03:
+    status: EVALUABLE
+    requires: [HIERARCHY]
+    witness: CLASSIFIER
+  O-04:
+    status: EVALUABLE
+    requires: [HIERARCHY, DECLARATION_OWNERSHIP, LOCAL_SIGNATURES, INHERITABILITY, INHERITED_MEMBERS]
+    witness: CLASSIFIER_MEMBER_PAIR
+    reason: Evaluated only when the independent inherited-member observation is complete.
+  O-05:
+    status: EVALUABLE
+    requires: [DECLARATION_OWNERSHIP, INHERITED_MEMBERS]
+    witness: CLASSIFIER_MEMBER_PAIR
+    reason: Evaluated only when the independent inherited-member observation is complete.
+  O-06:
+    status: EVALUABLE
+    requires: [HIERARCHY, DECLARATION_OWNERSHIP, LOCAL_SIGNATURES, INHERITABILITY, METHOD_BODIES, METHOD_ABSTRACTION, IMPLEMENTATION_BINDINGS]
+    witness: MEMBER_OR_BODY
+    reason: Spoon observes standalone source bodies and method abstraction while javac independently resolves source declaration/body correspondence.
+  O-07:
+    status: PARTIALLY_EVALUABLE
+    repositoryProfile:
+      abstractionImplementation:
+        invariantId: abstraction-implementation-consistency
+        requires: [HIERARCHY, DECLARATION_OWNERSHIP, LOCAL_SIGNATURES, INHERITABILITY, METHOD_BODIES, METHOD_ABSTRACTION, IMPLEMENTATION_BINDINGS, CLASSIFIER_ABSTRACTION]
+        witness: CLASSIFIER
+        reason: Alloy derives unresolved visible methods from hierarchy and implementation bindings, then compares them with independently observed classifier abstraction.
+      staticAbstractSeparation:
+        invariantId: static-abstract-method-separation
+        requires: [DECLARATION_OWNERSHIP, METHOD_ABSTRACTION, METHOD_SCOPE]
+        witness: MEMBER
+        reason: Alloy compares independently observed method abstraction and static/instance scope.
+    deferredClause:
+      name: directInstancePolicy
+      reason: The repository experiment does not observe formal runtime/model Object and directInstances evidence; allocation syntax is not treated as an equivalent substitute.
+  O-08-local:
+    status: EVALUABLE
+    requires: [DECLARATION_OWNERSHIP, LOCAL_SIGNATURES]
+    witness: MEMBER
+  O-08-inherited:
+    status: EVALUABLE
+    requires: [HIERARCHY, DECLARATION_OWNERSHIP, LOCAL_SIGNATURES, INHERITABILITY, INHERITED_MEMBERS]
+    witness: CLASSIFIER_MEMBER_PAIR
+    reason: Evaluated only when the independent inherited-member view is complete.
+  O-09:
+    status: EVALUABLE
+    repositoryProfile:
+      relationConsistency:
+        invariantId: override-relation-consistency
+        requires: [HIERARCHY, DECLARATION_OWNERSHIP, LOCAL_SIGNATURES, INHERITABILITY, METHOD_SCOPE, OVERRIDE_RELATIONS]
+        witness: MEMBER_PAIR
+        reason: javac's independently resolved override relation is compared with the formal ancestor, accessibility, method-key, and scope relation. A mismatch is reported as a bridge/policy-correspondence finding rather than being conflated with return compatibility.
+      strictDiscipline:
+        invariantId: override-discipline
+        requires: [HIERARCHY, DECLARATION_OWNERSHIP, LOCAL_SIGNATURES, INHERITABILITY, METHOD_BODIES, METHOD_ABSTRACTION, METHOD_SCOPE, IMPLEMENTATION_BINDINGS, METHOD_RETURN_TYPES, OVERRIDE_RELATIONS]
+        witness: MEMBER_PAIR
+        reason: Over the formal override relation, Alloy applies the manuscript's strict return-type equality and abstract-or-implemented disposition. Independent override evidence is still required before this empirical claim is made.
+    reason: Missing compiler or mapping evidence yields NOT_EVALUATED for both checks. Keeping relation correspondence separate from strict policy preserves causal interpretation of O-09 findings.

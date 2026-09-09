@@ -1,0 +1,138 @@
+name: cpp-corpus-4
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-tool:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: maven
+      - name: Verify Clang frontend
+        run: clang++ --version
+      - run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpp-corpus-pipeline-jar
+          path: target/metamodel-conformance-pipeline-next-*-SNAPSHOT.jar
+          if-no-files-found: error
+
+  analyze:
+    needs: build-tool
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - { repository: "TrueCodeBeauty/InheritanceCpp", commit: "827da5587505e898463169fdb74a76fb5ee3a4d0", artifact: "cpp-01-inheritance-cpp" }
+          - { repository: "planetchili/Inheritance", commit: "a1c5d26d430a23ec08b3c5e50a6aa1e5038b01b2", artifact: "cpp-02-planetchili-inheritance" }
+          - { repository: "MTBellAtWhitworth/Animalia", commit: "50a3893a87277e6f5196d1643a567f8b2159d0ca", artifact: "cpp-03-animalia" }
+          - { repository: "progmrNoob/COM326W8Part2", commit: "377c554f41dce7b14a95516f6b8fee2574e58f60", artifact: "cpp-04-inheritance-lab" }
+    name: ${{ matrix.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Verify Clang frontend
+        run: clang++ --version
+      - uses: actions/download-artifact@v4
+        with:
+          name: cpp-corpus-pipeline-jar
+          path: target
+      - name: Analyze pinned C++ repository
+        run: bash ./scripts/run-cpp-corpus-entry.sh "${{ matrix.repository }}" "${{ matrix.commit }}" cpp-corpus-output
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: cpp-corpus-output
+          if-no-files-found: error
+
+  summarize:
+    needs: analyze
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "cpp-0?-*"
+          path: cpp-corpus-artifacts
+      - name: Aggregate and enforce C++ corpus contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mapfile -d '' reports < <(find cpp-corpus-artifacts -name report.json -print0 | sort -z)
+          if [[ ${#reports[@]} -ne 4 ]]; then
+            echo "expected 4 C++ reports, found ${#reports[@]}" >&2
+            exit 1
+          fi
+
+          jq -r '.invariants[].id' src/main/resources/invariants/registry.json | sort > expected-invariants.txt
+
+          failures=0
+          for report in "${reports[@]}"; do
+            repository="$(jq -r '.repository' "${report}")"
+            outcome="$(jq -r '.toolOutcome' "${report}")"
+            verification_exit="$(jq -r '.verificationExit' "${report}")"
+
+            if [[ "${outcome}" != "ANALYZED" || "${verification_exit}" != "0" ]]; then
+              echo "${repository}: expected replayable analysis; got ${outcome}, verificationExit=${verification_exit}" >&2
+              failures=$((failures + 1))
+            fi
+
+            jq -r '.decisions[].invariantId' "${report}" | sort > actual-invariants.txt
+            if ! diff -u expected-invariants.txt actual-invariants.txt >/dev/null; then
+              echo "${repository}: decision set does not match the current invariant registry" >&2
+              diff -u expected-invariants.txt actual-invariants.txt >&2 || true
+              failures=$((failures + 1))
+            fi
+          done
+
+          if [[ ${failures} -ne 0 ]]; then
+            echo "C++ corpus contract failed for ${failures} check(s)" >&2
+            exit 1
+          fi
+
+          jq -s 'sort_by(.repository)' "${reports[@]}" > cpp-real-4-summary.json
+          jq '
+            {
+              repositories: length,
+              cppFiles: (map(.cppFiles) | add),
+              analyzedRepositories: ([.[] | select(.toolOutcome == "ANALYZED")] | length),
+              externalParentsAllowlisted: (map(.externalParents // 0) | add),
+              diagnostics: (
+                [.[] | .observationDiagnostics[]?]
+                | group_by(.kind)
+                | map({key: .[0].kind, value: length})
+                | from_entries
+              ),
+              hierarchy: {
+                conformant: ([.[] | .decisions[] | select(.invariantId == "acyclic-generalization" and .status == "CONFORMANT")] | length),
+                nonConformant: ([.[] | .decisions[] | select(.invariantId == "acyclic-generalization" and .status == "NON_CONFORMANT")] | length),
+                notEvaluated: ([.[] | .decisions[] | select(.invariantId == "acyclic-generalization" and .status == "NOT_EVALUATED")] | length)
+              }
+            }
+          ' cpp-real-4-summary.json > cpp-real-4-metrics.json
+
+          jq -c '.[]' cpp-real-4-summary.json | sed 's/^/CPP_CORPUS_SUMMARY /'
+          jq -c . cpp-real-4-metrics.json | sed 's/^/CPP_CORPUS_METRICS /'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cpp-real-4-summary
+          path: |
+            cpp-real-4-summary.json
+            cpp-real-4-metrics.json
+          if-no-files-found: error

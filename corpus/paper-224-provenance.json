@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "2",
+  "studyRepository": "elfilaoussama/metamodel-conformance-pipeline",
+  "studySnapshot": "53231103f0c2a785661565f459d881bd16135a3d",
+  "selection": {
+    "sourcePath": "experiment/03_selection/selected_repos.csv",
+    "sourceBlobSha1": "d6818780078944b5b12063c780a480dc8c8686eb",
+    "localPath": "corpus/paper-224-selected.csv",
+    "localBlobSha1": "d6818780078944b5b12063c780a480dc8c8686eb",
+    "byteIdentityVerified": true,
+    "firstTrackedCommit": "bf825cb1eb5e69ea2053d457991727c898b94eaa",
+    "firstTrackedCommitTimeUtc": "2026-07-29T12:09:33Z",
+    "repositoryCount": 224,
+    "languageCounts": {
+      "Java": 75,
+      "Python": 75,
+      "C++": 74
+    },
+    "selectionSeed": 42
+  },
+  "historicalBatchResults": {
+    "java": {
+      "sourcePath": "experiment/04_verification/batch_results_java.csv",
+      "sourceBlobSha1": "21af50c04af2582de04a3e3107245ffe86440748"
+    },
+    "python": {
+      "sourcePath": "experiment/04_verification/batch_results_python.csv",
+      "sourceBlobSha1": "edfd50d198c39e17bda40a2b3f032a1c316026d3"
+    },
+    "cpp": {
+      "sourcePath": "experiment/04_verification/batch_results_cpp.csv",
+      "sourceBlobSha1": "948bad32ca3bb7c1f6b81701c4b68d0669df6bc2"
+    }
+  },
+  "originalSourceRevisionStatus": "NOT_TRACKED_IN_RECOVERED_STUDY_ARTIFACTS",
+  "historicalIngestionBehavior": {
+    "cloneMode": "JGit shallow clone",
+    "defaultCloneDepth": 1,
+    "revisionComputedInMemory": true,
+    "revisionExportedToTrackedExtraction": false,
+    "revisionExportedToTrackedBatchCsv": false,
+    "historicalDefaultBranchNameExported": false
+  },
+  "fallbackPinning": {
+    "method": "latest commit on current canonical default branch at or before selection cutoff",
+    "cutoffUtc": "2026-07-29T12:09:33Z",
+    "provenanceLabel": "RECONSTRUCTED_SELECTION_CUTOFF",
+    "claim": "same-membership historical-cutoff reconstruction; not exact original source-snapshot replication",
+    "metadataDependency": "canonical repository name and default branch are resolved from GitHub at reconstruction time",
+    "stability": "the reconstruction lookup is metadata-dependent until the first complete 224-row pin manifest is frozen",
+    "freezeRequirement": "after the first complete manifest passes the contract, preserve that CSV and its SHA-256 digest as the authoritative corrected-experiment source snapshot; rerun experiments from those immutable commit SHAs rather than reconstructing pins again"
+  }
+}

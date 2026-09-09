@@ -1,0 +1,142 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ecore:EPackage xmi:version="2.0"
+    xmlns:xmi="http://www.omg.org/XMI"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore"
+    name="observation"
+    nsURI="urn:metamodel-conformance:observation:12"
+    nsPrefix="obs">
+  <eClassifiers xsi:type="ecore:EEnum" name="Language">
+    <eLiterals name="JAVA"/>
+    <eLiterals name="JAVA_ARCHIVE" value="1"/>
+    <eLiterals name="PYTHON" value="2"/>
+    <eLiterals name="CPP" value="3"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="ClassifierKind">
+    <eLiterals name="CLASS"/>
+    <eLiterals name="INTERFACE" value="1"/>
+    <eLiterals name="ENUM" value="2"/>
+    <eLiterals name="ANNOTATION" value="3"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="ClassifierAbstraction">
+    <eLiterals name="ABSTRACT"/>
+    <eLiterals name="CONCRETE" value="1"/>
+    <eLiterals name="UNKNOWN" value="2"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="MemberKind">
+    <eLiterals name="METHOD"/>
+    <eLiterals name="ATTRIBUTE" value="1"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="EvidenceKind">
+    <eLiterals name="HIERARCHY"/>
+    <eLiterals name="DECLARATION_OWNERSHIP" value="1"/>
+    <eLiterals name="LOCAL_SIGNATURES" value="2"/>
+    <eLiterals name="INHERITABILITY" value="3"/>
+    <eLiterals name="INHERITED_MEMBERS" value="4"/>
+    <eLiterals name="METHOD_BODIES" value="5"/>
+    <eLiterals name="METHOD_ABSTRACTION" value="6"/>
+    <eLiterals name="IMPLEMENTATION_BINDINGS" value="7"/>
+    <eLiterals name="CLASSIFIER_ABSTRACTION" value="8"/>
+    <eLiterals name="METHOD_SCOPE" value="9"/>
+    <eLiterals name="METHOD_RETURN_TYPES" value="10"/>
+    <eLiterals name="OVERRIDE_RELATIONS" value="11"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="Inheritability">
+    <eLiterals name="INHERITABLE"/>
+    <eLiterals name="NOT_INHERITABLE" value="1"/>
+    <eLiterals name="UNKNOWN" value="2"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="MemberVisibility">
+    <eLiterals name="PUBLIC"/>
+    <eLiterals name="PROTECTED" value="1"/>
+    <eLiterals name="PACKAGE" value="2"/>
+    <eLiterals name="PRIVATE" value="3"/>
+    <eLiterals name="UNKNOWN" value="4"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="MethodAbstraction">
+    <eLiterals name="ABSTRACT"/>
+    <eLiterals name="CONCRETE" value="1"/>
+    <eLiterals name="UNKNOWN" value="2"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="MemberScope">
+    <eLiterals name="INSTANCE"/>
+    <eLiterals name="STATIC" value="1"/>
+    <eLiterals name="UNKNOWN" value="2"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EEnum" name="DiagnosticKind">
+    <eLiterals name="PARSE_ERROR"/>
+    <eLiterals name="EVIDENCE_INCOMPLETE" value="1"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ObservationSet">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="schemaVersion" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="adapterId" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="adapterVersion" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="externalParents" upperBound="-1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="completeEvidence" upperBound="-1" eType="#//EvidenceKind"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="units" upperBound="-1" containment="true" eType="#//SourceUnit"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="classifiers" upperBound="-1" containment="true" eType="#//Classifier"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="members" upperBound="-1" containment="true" eType="#//Member"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="methodBodies" upperBound="-1" containment="true" eType="#//MethodBody"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="implementationBindings" upperBound="-1" containment="true" eType="#//ImplementationBinding"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="unresolvedParents" upperBound="-1" containment="true" eType="#//UnresolvedParent"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="diagnostics" upperBound="-1" containment="true" eType="#//ObservationDiagnostic"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="SourceUnit">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="language" lowerBound="1" eType="#//Language"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="path" lowerBound="1" iD="true" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="sha256" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Classifier">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="id" lowerBound="1" iD="true" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="qualifiedName" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="packageName" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="kind" lowerBound="1" eType="#//ClassifierKind"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="sourcePath" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="startLine" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="endLine" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="parents" upperBound="-1" eType="#//Classifier"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="declaredMembers" upperBound="-1" eType="#//Member"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="inheritedMembers" upperBound="-1" eType="#//Member"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="abstraction" lowerBound="1" eType="#//ClassifierAbstraction"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="Member">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="technicalKey" lowerBound="1" iD="true" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="observedIdentifier" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="kind" lowerBound="1" eType="#//MemberKind"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="inheritability" lowerBound="1" eType="#//Inheritability"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="visibility" lowerBound="1" eType="#//MemberVisibility"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="memberName" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="sourcePath" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="startLine" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="endLine" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="parameterTypes" upperBound="-1" ordered="true" unique="false" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="abstraction" lowerBound="1" eType="#//MethodAbstraction"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="scope" lowerBound="1" eType="#//MemberScope"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="returnType" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="overriddenMembers" upperBound="-1" eType="#//Member"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="MethodBody">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="technicalKey" lowerBound="1" iD="true" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="sourcePath" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="startLine" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="endLine" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ImplementationBinding">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="technicalKey" lowerBound="1" iD="true" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="implementer" lowerBound="1" eType="#//Classifier"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="target" lowerBound="1" eType="#//Member"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="body" lowerBound="1" eType="#//MethodBody"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="UnresolvedParent">
+    <eStructuralFeatures xsi:type="ecore:EReference" name="owner" lowerBound="1" eType="#//Classifier"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="targetName" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="sourcePath" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="line" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="ObservationDiagnostic">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="kind" lowerBound="1" eType="#//DiagnosticKind"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="sourcePath" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="line" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="message" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+</ecore:EPackage>
