@@ -25,6 +25,7 @@ final class SpoonMethodBodyObserver {
             Launcher launcher = new Launcher();
             launcher.getEnvironment().setNoClasspath(true);
             launcher.getEnvironment().setComplianceLevel(complianceLevel(context));
+            launcher.getEnvironment().setPreviewFeaturesEnabled(context.compilerSemantics().previewEnabled());
             launcher.getEnvironment().setCommentEnabled(false);
             files.forEach(file -> launcher.addInputResource(file.toString()));
             var model = launcher.buildModel();

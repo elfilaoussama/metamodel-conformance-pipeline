@@ -1,5 +1,9 @@
 # Local correctness and integration checkpoint — 2026-09-09
 
+Latest milestone: [Java compilation-context isolation](java-context-isolation-milestone-20260911.md).
+That report supersedes the combined-structural-parser and shared-upstream-output
+limitations in the historical checkpoints below. Provider and real-corpus gates remain open.
+
 ## Follow-up: unsupported compiler semantics — 2026-09-11
 
 The parser previously labeled a valid source as PARSE_ERROR when the build requested

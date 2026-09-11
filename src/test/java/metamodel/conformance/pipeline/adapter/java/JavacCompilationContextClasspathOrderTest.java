@@ -81,6 +81,27 @@ class JavacCompilationContextClasspathOrderTest {
             assertEquals(0, compiled,
                     "an external app.Base must not shadow the compiled upstream app.Base");
         }
+
+        // With an explicitly recorded output slot, preserve its order after the
+        // external archive instead of applying the implicit upstream precedence.
+        Path declaredOutput = temporary.resolve("declared-production-output");
+        Files.writeString(manifest, "output\tproduction\t" + declaredOutput + "\n"
+                + "classpath\tverification\t" + declaredOutput + "\n",
+                java.nio.file.StandardOpenOption.APPEND);
+        JavaDependencyInputs ordered = JavaDependencyInputs.fromManifest(manifest);
+        try (JavacCompilationContext context = JavacCompilationContext.prepare(
+                temporary, ordered.context("verification"), files, ordered)) {
+            assertTrue(context.complete(), context.diagnostics().toString());
+            String[] entries = context.classpath().split(java.util.regex.Pattern.quote(File.pathSeparator));
+            assertEquals(shadow.toString(), entries[0]);
+            assertTrue(Files.exists(Path.of(entries[1]).resolve("app/Base.class")));
+            var errors = new java.io.ByteArrayOutputStream();
+            var arguments = new java.util.ArrayList<>(context.options());
+            arguments.addAll(List.of("-d", temporary.resolve("ordered-classes").toString(), child.toString()));
+            assertTrue(ToolProvider.getSystemJavaCompiler().run(null, null, errors,
+                    arguments.toArray(String[]::new)) != 0);
+            assertTrue(errors.toString(java.nio.charset.StandardCharsets.UTF_8).contains("productionOnly"));
+        }
     }
 
     private Path shadowBaseJar() throws Exception {

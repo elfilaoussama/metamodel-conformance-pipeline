@@ -18,9 +18,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /** Reconstructs one javac compilation context from build-observed semantics. */
 final class JavacCompilationContext implements AutoCloseable {
@@ -53,10 +55,8 @@ final class JavacCompilationContext implements AutoCloseable {
             JavaDependencyInputs inputs) throws IOException {
         JavaDependencyInputs actual = inputs == null ? JavaDependencyInputs.none() : inputs;
         Path temporary = Files.createTempDirectory("metamodel-conformance-javac-context-");
-        Path upstreamClasses = temporary.resolve("upstream-classes");
-        Files.createDirectories(upstreamClasses);
-
-        List<String> diagnosticsContext = new ArrayList<>();
+        Path emptyClasspath = Files.createDirectory(temporary.resolve("empty-classpath"));
+        Map<String, CompiledOutput> compiled = new LinkedHashMap<>();
         List<JavaCompilationContext> upstreamContexts = actual.context(context.id()) == null
                 ? List.of()
                 : actual.upstreamTopological(context.id()).stream()
@@ -69,33 +69,37 @@ final class JavacCompilationContext implements AutoCloseable {
             if (upstreamFiles.isEmpty()) {
                 continue;
             }
+            Path output = temporary.resolve("context-" + metamodel.conformance.pipeline.util.Hashing.sha256(upstream.id()));
+            Files.createDirectories(output);
             CompileResult result = compile(
                     root,
                     upstream,
                     upstreamFiles,
-                    upstreamClasses,
-                    upstreamClasses);
+                    visibleOutputs(actual, upstream.id(), compiled),
+                    output);
             if (!result.complete()) {
                 return new JavacCompilationContext(
                         false,
                         context,
-                        classpath(context, upstreamClasses),
+                        "",
                         List.of(),
                         result.diagnostics(),
                         temporary);
             }
+            compiled.put(upstream.id(), new CompiledOutput(upstream, output));
         }
 
-        String classpath = classpath(context, upstreamClasses);
+        List<CompiledOutput> visible = visibleOutputs(actual, context.id(), compiled);
+        String classpath;
         List<String> options;
         try {
-            options = compilerOptions(context, classpath);
+            classpath = classpath(context, visible, emptyClasspath);
+            options = compilerOptions(context, classpath, visible);
         } catch (IllegalArgumentException failure) {
-            diagnosticsContext.add(failure.getMessage());
             return new JavacCompilationContext(
                     false,
                     context,
-                    classpath,
+                    "",
                     List.of(),
                     List.of(new ObservationDiagnostic(
                             DiagnosticKind.EVIDENCE_INCOMPLETE,
@@ -143,7 +147,7 @@ final class JavacCompilationContext implements AutoCloseable {
             Path root,
             JavaCompilationContext context,
             List<Path> files,
-            Path upstreamClasses,
+            List<CompiledOutput> upstreamOutputs,
             Path output) throws IOException {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
@@ -157,8 +161,8 @@ final class JavacCompilationContext implements AutoCloseable {
         try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
                 collector, Locale.ROOT, StandardCharsets.UTF_8)) {
             Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
-            String classpath = classpath(context, upstreamClasses);
-            ArrayList<String> options = new ArrayList<>(compilerOptions(context, classpath));
+            String classpath = classpath(context, upstreamOutputs, output);
+            ArrayList<String> options = new ArrayList<>(compilerOptions(context, classpath, upstreamOutputs));
             options.add("-d");
             options.add(output.toString());
             Boolean success = compiler.getTask(null, fileManager, collector, options, null, sources).call();
@@ -180,7 +184,8 @@ final class JavacCompilationContext implements AutoCloseable {
         }
     }
 
-    private static List<String> compilerOptions(JavaCompilationContext context, String classpath) {
+    private static List<String> compilerOptions(JavaCompilationContext context, String classpath,
+            List<CompiledOutput> upstreamOutputs) {
         ArrayList<String> options = new ArrayList<>(List.of("-proc:none", "-implicit:none", "-Xlint:none"));
         JavaCompilerSemantics semantics = context.compilerSemantics();
         if (semantics.releaseLevel() != null) {
@@ -203,10 +208,10 @@ final class JavacCompilationContext implements AutoCloseable {
             options.add("-classpath");
             options.add(classpath);
         }
-        appendPath(options, "--module-path", context.resolutionEntries(JavaResolutionPathRole.MODULE_PATH));
+        appendPath(options, "--module-path", resolvedEntries(context, JavaResolutionPathRole.MODULE_PATH, upstreamOutputs));
         appendPath(options, "--upgrade-module-path",
-                context.resolutionEntries(JavaResolutionPathRole.UPGRADE_MODULE_PATH));
-        appendPath(options, "-processorpath", context.resolutionEntries(JavaResolutionPathRole.PROCESSOR_PATH));
+                resolvedEntries(context, JavaResolutionPathRole.UPGRADE_MODULE_PATH, upstreamOutputs));
+        appendPath(options, "-processorpath", resolvedEntries(context, JavaResolutionPathRole.PROCESSOR_PATH, upstreamOutputs));
         List<Path> platform = context.resolutionEntries(JavaResolutionPathRole.PLATFORM_PATH);
         if (platform.size() > 1) {
             throw new IllegalArgumentException("multiple PLATFORM_PATH entries are not representable by javac --system");
@@ -221,7 +226,7 @@ final class JavacCompilationContext implements AutoCloseable {
         for (JavaResolutionPath path : context.resolutionPaths()) {
             if (path.role() == JavaResolutionPathRole.PATCH_MODULE && !path.entries().isEmpty()) {
                 options.add("--patch-module");
-                options.add(path.qualifier() + "=" + join(path.entries()));
+                options.add(path.qualifier() + "=" + join(replaceOutputs(path.entries(), upstreamOutputs)));
             }
         }
         return List.copyOf(options);
@@ -234,14 +239,49 @@ final class JavacCompilationContext implements AutoCloseable {
         }
     }
 
-    private static String classpath(JavaCompilationContext context, Path upstreamClasses) {
+    private static String classpath(JavaCompilationContext context, List<CompiledOutput> upstreamOutputs,
+            Path emptyClasspath) {
         LinkedHashSet<Path> entries = new LinkedHashSet<>();
-        if (upstreamClasses != null) {
-            entries.add(upstreamClasses);
+        // An upstream edge without an explicit path retains the compatibility
+        // classpath role. When a role/position is observed, preserve it exactly.
+        Set<Path> explicit = context.resolutionPaths().stream().flatMap(path -> path.entries().stream())
+                .collect(java.util.stream.Collectors.toSet());
+        for (CompiledOutput output : upstreamOutputs) {
+            if (output.context().outputs().stream().noneMatch(explicit::contains)) {
+                entries.add(output.directory());
+            }
         }
-        entries.addAll(context.resolutionEntries(JavaResolutionPathRole.CLASS_PATH));
+        entries.addAll(resolvedEntries(context, JavaResolutionPathRole.CLASS_PATH, upstreamOutputs));
+        // Never fall back to the analyzer process's ambient classpath.
+        if (entries.isEmpty()) entries.add(emptyClasspath);
         return join(List.copyOf(entries));
     }
+
+    private static List<CompiledOutput> visibleOutputs(JavaDependencyInputs inputs, String contextId,
+            Map<String, CompiledOutput> compiled) {
+        return inputs.upstreamTopological(contextId).stream().map(compiled::get)
+                .filter(java.util.Objects::nonNull).toList();
+    }
+
+    private static List<Path> resolvedEntries(JavaCompilationContext context, JavaResolutionPathRole role,
+            List<CompiledOutput> outputs) {
+        return replaceOutputs(context.resolutionEntries(role), outputs);
+    }
+
+    private static List<Path> replaceOutputs(List<Path> entries, List<CompiledOutput> outputs) {
+        Map<Path, Path> replacements = new LinkedHashMap<>();
+        for (CompiledOutput output : outputs) {
+            for (Path declared : output.context().outputs()) {
+                Path previous = replacements.putIfAbsent(declared, output.directory());
+                if (previous != null && !previous.equals(output.directory())) {
+                    throw new IllegalArgumentException("ambiguous upstream output ownership: " + declared);
+                }
+            }
+        }
+        return entries.stream().map(path -> replacements.getOrDefault(path, path)).toList();
+    }
+
+    private record CompiledOutput(JavaCompilationContext context, Path directory) {}
 
     private static String join(List<Path> entries) {
         return entries.stream().map(Path::toString)

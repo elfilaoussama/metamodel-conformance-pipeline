@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.11.2";
+    public static final String ADAPTER_VERSION = "0.12.0";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -219,7 +219,56 @@ public final class SpoonJavaObserver implements SourceObserver {
     }
 
     private static BuildResult buildTypes(Path root, List<Path> files, JavaDependencyInputs inputs) {
-        int requestedLevel = complianceLevel(inputs);
+        JavaCompilationContexts.Grouping grouping = JavaCompilationContexts.group(root, files, inputs);
+        Map<SourceTypeLocation, CtType<?>> observed = new LinkedHashMap<>();
+        Set<SourceTypeLocation> conflicts = new LinkedHashSet<>();
+        List<ObservationDiagnostic> diagnostics = new ArrayList<>();
+        for (JavaCompilationContext context : grouping.contexts().stream()
+                .sorted(Comparator.comparing(JavaCompilationContext::id)).toList()) {
+            List<Path> owned = grouping.filesByContext().getOrDefault(context.id(), List.of());
+            if (owned.isEmpty()) continue;
+            BuildResult result = buildContextTypes(root, owned, context);
+            diagnostics.addAll(result.diagnostics());
+            mergeContextTypes(root, result.types(), observed, conflicts, diagnostics);
+        }
+        if (!grouping.unownedFiles().isEmpty()) {
+            BuildResult unowned = buildContextTypes(root, grouping.unownedFiles(),
+                    JavaCompilationContexts.sourceOnlyContext());
+            diagnostics.addAll(unowned.diagnostics());
+            mergeContextTypes(root, unowned.types(), observed, conflicts, diagnostics);
+            for (Path file : grouping.unownedFiles()) {
+                diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        relativePath(root, file), 0,
+                        "Java source is not owned by an observed compilation context; only lexical recovery was attempted"));
+            }
+        }
+        return new BuildResult(List.copyOf(observed.values()), diagnostics);
+    }
+
+    private static void mergeContextTypes(Path root, List<CtType<?>> types,
+            Map<SourceTypeLocation, CtType<?>> observed, Set<SourceTypeLocation> conflicts,
+            List<ObservationDiagnostic> diagnostics) {
+        for (CtType<?> type : types) {
+            SourcePosition position = type.getPosition();
+            Path file = position.getFile().toPath().toAbsolutePath().normalize();
+            SourceTypeLocation location = new SourceTypeLocation(file,
+                    position.getSourceStart(), position.getSourceEnd());
+            if (conflicts.contains(location)) continue;
+            CtType<?> previous = observed.putIfAbsent(location, type);
+            if (previous != null && !previous.equals(type)) {
+                observed.remove(location);
+                conflicts.add(location);
+                diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        relativePath(root, file), position.getLine(),
+                        "Conflicting structural declaration observations across compilation contexts"));
+            }
+        }
+    }
+
+    private record SourceTypeLocation(Path file, int start, int end) {}
+
+    private static BuildResult buildContextTypes(Path root, List<Path> files, JavaCompilationContext context) {
+        int requestedLevel = complianceLevel(context);
         int supportedLevel = Integer.parseInt(org.eclipse.jdt.internal.compiler.impl.CompilerOptions.getLatestVersion());
         if (requestedLevel > supportedLevel) {
             return new BuildResult(List.of(), files.stream().map(file -> new ObservationDiagnostic(
@@ -229,7 +278,7 @@ public final class SpoonJavaObserver implements SourceObserver {
                             + ". Build-observed compiler semantics were not changed.")).toList());
         }
         try {
-            return new BuildResult(modelTypes(buildModel(files, inputs)), List.of());
+            return new BuildResult(modelTypes(buildModel(files, context)), List.of());
         } catch (RuntimeException failure) {
             List<CtType<?>> isolated = new ArrayList<>();
             List<ObservationDiagnostic> diagnostics = new ArrayList<>();
@@ -237,7 +286,7 @@ public final class SpoonJavaObserver implements SourceObserver {
             Map<Path, RuntimeException> failures = new LinkedHashMap<>();
             for (Path file : files) {
                 try {
-                    isolated.addAll(modelTypes(buildModel(List.of(file), inputs)));
+                    isolated.addAll(modelTypes(buildModel(List.of(file), context)));
                     parsedFiles.add(file);
                 } catch (RuntimeException isolatedFailure) {
                     failures.put(file, isolatedFailure);
@@ -253,7 +302,7 @@ public final class SpoonJavaObserver implements SourceObserver {
                     recoveryFiles.add(file);
                     recoveryFiles.sort(Comparator.naturalOrder());
                     try {
-                        List<CtType<?>> recovered = modelTypes(buildModel(recoveryFiles, inputs));
+                        List<CtType<?>> recovered = modelTypes(buildModel(recoveryFiles, context));
                         isolated.addAll(recovered.stream().filter(type -> type.getPosition().getFile()
                                 .toPath().toAbsolutePath().normalize().equals(file)).toList());
                         continue;
@@ -302,24 +351,20 @@ public final class SpoonJavaObserver implements SourceObserver {
                 text);
     }
 
-    private static CtModel buildModel(List<Path> files, JavaDependencyInputs inputs) {
+    private static CtModel buildModel(List<Path> files, JavaCompilationContext context) {
         Launcher launcher = new Launcher();
         launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setComplianceLevel(complianceLevel(inputs));
+        launcher.getEnvironment().setComplianceLevel(complianceLevel(context));
+        launcher.getEnvironment().setPreviewFeaturesEnabled(context.compilerSemantics().previewEnabled());
         launcher.getEnvironment().setCommentEnabled(false);
         files.forEach(file -> launcher.addInputResource(file.toString()));
         return launcher.buildModel();
     }
 
-    private static int complianceLevel(JavaDependencyInputs inputs) {
-        return inputs.contexts().stream()
-                .map(JavaCompilationContext::compilerSemantics)
-                .map(semantics -> semantics.releaseLevel() != null
-                        ? semantics.releaseLevel() : semantics.sourceLevel())
-                .filter(java.util.Objects::nonNull)
-                .mapToInt(Integer::intValue)
-                .max()
-                .orElse(Runtime.version().feature());
+    private static int complianceLevel(JavaCompilationContext context) {
+        JavaCompilerSemantics semantics = context.compilerSemantics();
+        return semantics.releaseLevel() != null ? semantics.releaseLevel()
+                : semantics.sourceLevel() != null ? semantics.sourceLevel() : Runtime.version().feature();
     }
 
     private static List<CtType<?>> modelTypes(CtModel model) {
