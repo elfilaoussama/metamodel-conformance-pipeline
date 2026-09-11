@@ -1,5 +1,42 @@
 # Local correctness and integration checkpoint — 2026-09-09
 
+## Follow-up: source declaration coverage — 2026-09-11
+
+The local follow-up corrects two independently reproduced observer defects:
+
+- Spoon's `CtModel.getAllTypes()` returns top-level declarations only. The structural,
+  method-body, and abstraction observers now share a recursive declaration query.
+  Nested, local, and anonymous classes are retained; generic type parameters are
+  excluded because Spoon also represents them as `CtType`, but they are not classifiers.
+- Override-parent matching compared Spoon's binary-style nested names with javac's
+  qualified names. It now uses the independently mapped compiler type when present,
+  or javac's exact binary name for a parent without a source mapping. Ambiguous and
+  inconsistent mappings still fail closed; no string replacement or guessed name is used.
+
+The regression fixture previously lost three of four classifiers. A second fixture
+now retains five classifiers and four concrete method bodies/bindings, survives an
+exact EMF/XMI round trip, and receives CONFORMANT decisions from all 11 Alloy invariants.
+This is fixture evidence, not a claim that the historical corpus is fixed.
+Adapter versions advance to structural `0.11.0`, implementation `1.5.0`, and
+dependency-aware `1.9.0` to identify the changed observation domain.
+
+Verification of the completed correction: 157 JUnit tests passed, zero failures or
+errors, using freshly compiled production/test classes on Linux/JDK 17. The same
+two clang-dependent C++ test classes remain excluded. Architecture, no-special-case,
+compilation-context, dependency-resolver, javac-semantic, and all seven Groovy
+emission checks passed. This remains direct local JUnit verification, not Maven verify.
+
+The package-descriptor issue was also reduced locally: an annotated descriptor with
+a static enum import parses when its annotation/enum declarations are available.
+Without those declarations Spoon 11.2.1 reproduces the historical `package-info`
+identifier exception. The current per-file fallback can introduce that condition.
+Its diagnostic classification and recovery remain unresolved. Tests retain the
+descriptor as a source unit and require incomplete evidence when observation fails;
+no source file or error is silently discarded.
+
+No hosted workflows, remote writes, or merges were used for this follow-up.
+The merge and real-provider restrictions below continue to apply.
+
 ## Authority and baseline
 
 No GitHub Actions runs, pushes, PRs, or merges were initiated during this review.

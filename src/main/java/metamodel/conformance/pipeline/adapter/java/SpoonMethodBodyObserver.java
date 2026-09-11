@@ -30,8 +30,7 @@ final class SpoonMethodBodyObserver {
             var model = launcher.buildModel();
             List<MethodBodyObservation> bodies = new ArrayList<>();
             boolean complete = true;
-            for (CtType<?> type : model.getAllTypes().stream()
-                    .filter(item -> item.getPosition().isValidPosition())
+            for (CtType<?> type : SpoonSourceTypes.declarations(model).stream()
                     .sorted(Comparator.comparing(CtType::getQualifiedName)).toList()) {
                 for (CtMethod<?> method : type.getMethods().stream()
                         .sorted(Comparator.comparing((CtMethod<?> item) -> item.getSimpleName())

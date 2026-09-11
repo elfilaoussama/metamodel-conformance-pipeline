@@ -278,6 +278,7 @@ final class JavacOverrideObserver {
                     classifierById,
                     typeByClassifier,
                     types,
+                    elements,
                     new HashSet<>());
             if (mappingError != null) {
                 return Result.incomplete(classifier.sourcePath(), classifier.startLine(), mappingError);
@@ -349,6 +350,7 @@ final class JavacOverrideObserver {
             Map<String, ClassifierObservation> classifierById,
             Map<String, TypeElement> typeByClassifier,
             Types types,
+            Elements elements,
             Set<String> active) {
         if (type == null) {
             return "javac classifier type is unavailable while mapping override ancestors";
@@ -363,11 +365,14 @@ final class JavacOverrideObserver {
                 if (parent == null) {
                     return "canonical parent is outside the active javac source-set context";
                 }
+                TypeElement mappedParent = typeByClassifier.get(parentId);
                 List<TypeElement> matches = directSupertypes.stream()
                         .map(types::asElement)
                         .filter(TypeElement.class::isInstance)
                         .map(TypeElement.class::cast)
-                        .filter(candidate -> candidate.getQualifiedName().contentEquals(parent.qualifiedName()))
+                        .filter(candidate -> mappedParent != null
+                                ? types.isSameType(candidate.asType(), mappedParent.asType())
+                                : elements.getBinaryName(candidate).contentEquals(parent.qualifiedName()))
                         .toList();
                 if (matches.size() != 1) {
                     return "javac direct parent could not be mapped uniquely: " + parent.qualifiedName();
@@ -383,6 +388,7 @@ final class JavacOverrideObserver {
                         classifierById,
                         typeByClassifier,
                         types,
+                        elements,
                         active);
                 if (nested != null) {
                     return nested;

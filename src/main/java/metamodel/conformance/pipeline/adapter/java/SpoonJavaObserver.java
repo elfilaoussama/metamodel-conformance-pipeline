@@ -49,7 +49,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.10.0";
+    public static final String ADAPTER_VERSION = "0.11.0";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -286,8 +286,7 @@ public final class SpoonJavaObserver implements SourceObserver {
     }
 
     private static List<CtType<?>> modelTypes(CtModel model) {
-        return model.getAllTypes().stream()
-                .filter(type -> type.getPosition().isValidPosition())
+        return SpoonSourceTypes.declarations(model).stream()
                 .sorted(Comparator.comparing(CtType::getQualifiedName))
                 .toList();
     }

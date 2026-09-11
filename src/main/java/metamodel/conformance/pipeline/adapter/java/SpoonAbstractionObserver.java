@@ -73,8 +73,7 @@ final class SpoonAbstractionObserver {
             Map<String, ClassifierAbstraction> classifierAbstraction = new HashMap<>();
             Map<String, MethodAbstraction> methodAbstraction = new HashMap<>();
             Map<String, MemberScope> methodScope = new HashMap<>();
-            for (CtType<?> type : model.getAllTypes().stream()
-                    .filter(item -> item.getPosition().isValidPosition())
+            for (CtType<?> type : SpoonSourceTypes.declarations(model).stream()
                     .sorted(Comparator.comparing((CtType<?> item) -> item.getQualifiedName())
                             .thenComparingInt(item -> item.getPosition().getLine()))
                     .toList()) {

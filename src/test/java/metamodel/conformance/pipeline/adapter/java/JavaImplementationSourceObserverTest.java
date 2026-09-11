@@ -78,6 +78,47 @@ class JavaImplementationSourceObserverTest {
     }
 
     @Test
+    void evaluatesEvidenceFromNestedLocalAndAnonymousDeclarations() throws Exception {
+        Files.writeString(temporary.resolve("Outer.java"), """
+                class Outer {
+                    static abstract class Action {
+                        abstract void run();
+                    }
+                    static class Worker extends Action {
+                        void run() {}
+                    }
+                    void work() {
+                        class Local {
+                            void localWork() {}
+                        }
+                        Action action = new Action() {
+                            void run() {}
+                        };
+                    }
+                }
+                """);
+
+        Observation observation = new JavaImplementationSourceObserver(List.of()).observe(temporary, Set.of());
+
+        assertEquals(5, observation.classifiers().size());
+        assertEquals(4, observation.methodBodies().size());
+        assertEquals(4, observation.implementationBindings().size(), observation.diagnostics().toString());
+        assertTrue(observation.completeEvidence().containsAll(Set.of(
+                EvidenceKind.CLASSIFIER_ABSTRACTION, EvidenceKind.METHOD_ABSTRACTION,
+                EvidenceKind.METHOD_BODIES, EvidenceKind.IMPLEMENTATION_BINDINGS)),
+                observation.diagnostics().toString());
+        Path xmi = temporary.resolve("nested-evidence.xmi");
+        new metamodel.conformance.pipeline.emf.ObservationXmiWriter().write(observation, xmi);
+        Observation replayed = new metamodel.conformance.pipeline.emf.ObservationXmiReader().read(xmi);
+        assertEquals(observation, replayed);
+        var decisions = new AlloyInvariantEvaluator().evaluateAll(
+                replayed, new ExactAlloyEncoder().encode(replayed));
+        assertEquals(11, decisions.size());
+        decisions.forEach(decision -> assertEquals(DecisionStatus.CONFORMANT, decision.status(),
+                decision.invariantId() + ": " + observation.diagnostics()));
+    }
+
+    @Test
     void ignoresJavacSyntheticEnumMethodsOutsideTheSourceObservationDomain() throws Exception {
         Path source = Files.createDirectory(temporary.resolve("enum-source"));
         Files.writeString(source.resolve("Mode.java"), """

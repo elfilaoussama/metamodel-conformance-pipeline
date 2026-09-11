@@ -29,6 +29,79 @@ class SpoonJavaObserverTest {
     private final SpoonJavaObserver observer = new SpoonJavaObserver();
 
     @Test
+    void observesAnnotatedPackageDescriptorWithoutInventingAClassifier() throws Exception {
+        Files.writeString(temporary.resolve("package-info.java"), """
+                @Marker(value = VALUE)
+                package example;
+                import static example.Mode.VALUE;
+                """);
+        Files.writeString(temporary.resolve("Marker.java"), """
+                package example;
+                public @interface Marker { Mode value(); }
+                """);
+        Files.writeString(temporary.resolve("Mode.java"), """
+                package example;
+                public enum Mode { VALUE }
+                """);
+        Files.writeString(temporary.resolve("Subject.java"), """
+                package example;
+                public class Subject { public void work() {} }
+                """);
+
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertTrue(observation.diagnostics().isEmpty(), observation.diagnostics().toString());
+        assertTrue(observation.units().stream().anyMatch(unit -> unit.path().equals("package-info.java")));
+        assertFalse(observation.classifiers().stream()
+                .anyMatch(type -> type.qualifiedName().contains("package-info")));
+        assertTrue(observation.classifiers().stream()
+                .anyMatch(type -> type.qualifiedName().equals("example.Subject")));
+        assertTrue(observation.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP));
+    }
+
+    @Test
+    void preservesUnresolvedPackageDescriptorFailureAsIncompleteEvidence() throws Exception {
+        Files.writeString(temporary.resolve("package-info.java"), """
+                @Marker(value = VALUE)
+                package example;
+                import static example.Mode.VALUE;
+                """);
+
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertFalse(observation.diagnostics().isEmpty());
+        assertTrue(observation.completeEvidence().isEmpty());
+        assertEquals(1, observation.units().size());
+        assertTrue(observation.classifiers().isEmpty());
+    }
+
+    @Test
+    void observesMemberLocalAndAnonymousClassDeclarations() throws Exception {
+        Files.writeString(temporary.resolve("Outer.java"), """
+                class Outer<T> {
+                    static class Nested<U> {
+                        <V> void nestedWork() {}
+                    }
+                    void work() {
+                        class Local {
+                            void localWork() {}
+                        }
+                        Runnable action = new Runnable() {
+                            public void run() {}
+                        };
+                    }
+                }
+                """);
+
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertEquals(4, observation.classifiers().size(), observation.classifiers().toString());
+        assertTrue(observation.members().stream().anyMatch(member -> member.memberName().equals("nestedWork")));
+        assertTrue(observation.members().stream().anyMatch(member -> member.memberName().equals("localWork")));
+        assertTrue(observation.members().stream().anyMatch(member -> member.memberName().equals("run")));
+    }
+
+    @Test
     void usesFingerprintedDependencyArchiveWithoutClaimingUnmaterializedHierarchy() throws Exception {
         Path source = temporary.resolve("dependency-source");
         Path classes = temporary.resolve("dependency-classes");
