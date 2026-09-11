@@ -29,6 +29,31 @@ class SpoonJavaObserverTest {
     private final SpoonJavaObserver observer = new SpoonJavaObserver();
 
     @Test
+    void unsupportedCompilerLevelIsIncompleteEvidenceRatherThanInvalidSource() throws Exception {
+        Files.writeString(temporary.resolve("Valid.java"), "class Valid {}\n");
+        Path manifest = temporary.resolve("contexts.tsv");
+        Files.writeString(manifest, "context\tfuture\t.\t\t\t99\tfalse\tfuture-jdk\nsource\tfuture\t.\n");
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        Observation observation = new JavaDependencyAwareSourceObserver(inputs).observe(temporary, Set.of());
+
+        assertEquals(99, inputs.context("future").compilerSemantics().releaseLevel());
+        assertEquals(1, observation.units().size());
+        assertTrue(observation.classifiers().isEmpty());
+        assertTrue(observation.completeEvidence().isEmpty());
+        assertFalse(observation.diagnostics().isEmpty());
+        assertTrue(observation.diagnostics().stream().allMatch(item ->
+                item.kind() == DiagnosticKind.EVIDENCE_INCOMPLETE
+                        && item.message().contains("99") && item.message().contains("support")),
+                observation.diagnostics().toString());
+        var decisions = new metamodel.conformance.pipeline.alloy.AlloyInvariantEvaluator().evaluateAll(
+                observation, new metamodel.conformance.pipeline.alloy.ExactAlloyEncoder().encode(observation));
+        assertFalse(decisions.isEmpty());
+        assertTrue(decisions.stream().allMatch(item -> item.status()
+                == metamodel.conformance.pipeline.decision.DecisionStatus.NOT_EVALUATED));
+    }
+
+    @Test
     void observesAnnotatedPackageDescriptorWithoutInventingAClassifier() throws Exception {
         writeAnnotatedPackageSources();
         Observation observation = observer.observe(temporary, Set.of());

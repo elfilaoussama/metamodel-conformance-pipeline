@@ -31,7 +31,7 @@ import java.util.TreeSet;
 /** Adds dependency bytecode evidence under exact build-observed compilation contexts. */
 public final class JavaDependencyAwareSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = JavaImplementationSourceObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.9.1";
+    public static final String ADAPTER_VERSION = "1.9.2";
 
     private final JavaDependencyInputs dependencyInputs;
     private final SourceObserver delegate;
@@ -56,7 +56,9 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
     public Observation observe(Path sourceRoot, Set<String> externalParents) throws ObservationException {
         Observation base = delegate.observe(sourceRoot, externalParents);
         if (dependencyInputs.contexts().isEmpty()
-                || base.diagnostics().stream().anyMatch(item -> item.kind() == DiagnosticKind.PARSE_ERROR)) {
+                || base.diagnostics().stream().anyMatch(item -> item.kind() == DiagnosticKind.PARSE_ERROR)
+                || (base.classifiers().isEmpty()
+                    && !base.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP))) {
             return base;
         }
 

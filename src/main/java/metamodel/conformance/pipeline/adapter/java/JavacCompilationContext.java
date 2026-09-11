@@ -80,7 +80,7 @@ final class JavacCompilationContext implements AutoCloseable {
                         false,
                         context,
                         classpath(context, upstreamClasses),
-                        compilerOptions(context, classpath(context, upstreamClasses)),
+                        List.of(),
                         result.diagnostics(),
                         temporary);
             }
@@ -170,6 +170,13 @@ final class JavacCompilationContext implements AutoCloseable {
                         "javac could not compile an upstream compilation context"));
             }
             return new CompileResult(true, List.of());
+        } catch (IllegalArgumentException failure) {
+            String message = failure.getMessage() == null
+                    ? failure.getClass().getSimpleName() : failure.getMessage();
+            return new CompileResult(false, List.of(new ObservationDiagnostic(
+                    DiagnosticKind.EVIDENCE_INCOMPLETE, relativePath(root, files.get(0)), 0,
+                    "javac rejected compiler options for upstream context " + context.id() + ": "
+                            + message.replace(root.toAbsolutePath().normalize().toString(), "."))));
         }
     }
 

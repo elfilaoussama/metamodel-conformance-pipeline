@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.11.1";
+    public static final String ADAPTER_VERSION = "0.11.2";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -219,6 +219,15 @@ public final class SpoonJavaObserver implements SourceObserver {
     }
 
     private static BuildResult buildTypes(Path root, List<Path> files, JavaDependencyInputs inputs) {
+        int requestedLevel = complianceLevel(inputs);
+        int supportedLevel = Integer.parseInt(org.eclipse.jdt.internal.compiler.impl.CompilerOptions.getLatestVersion());
+        if (requestedLevel > supportedLevel) {
+            return new BuildResult(List.of(), files.stream().map(file -> new ObservationDiagnostic(
+                    DiagnosticKind.EVIDENCE_INCOMPLETE, relativePath(root, file), 0,
+                    "Java parser does not support requested source level " + requestedLevel
+                            + "; maximum supported level is " + supportedLevel
+                            + ". Build-observed compiler semantics were not changed.")).toList());
+        }
         try {
             return new BuildResult(modelTypes(buildModel(files, inputs)), List.of());
         } catch (RuntimeException failure) {
@@ -294,7 +303,16 @@ public final class SpoonJavaObserver implements SourceObserver {
     }
 
     private static CtModel buildModel(List<Path> files, JavaDependencyInputs inputs) {
-        int complianceLevel = inputs.contexts().stream()
+        Launcher launcher = new Launcher();
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setComplianceLevel(complianceLevel(inputs));
+        launcher.getEnvironment().setCommentEnabled(false);
+        files.forEach(file -> launcher.addInputResource(file.toString()));
+        return launcher.buildModel();
+    }
+
+    private static int complianceLevel(JavaDependencyInputs inputs) {
+        return inputs.contexts().stream()
                 .map(JavaCompilationContext::compilerSemantics)
                 .map(semantics -> semantics.releaseLevel() != null
                         ? semantics.releaseLevel() : semantics.sourceLevel())
@@ -302,12 +320,6 @@ public final class SpoonJavaObserver implements SourceObserver {
                 .mapToInt(Integer::intValue)
                 .max()
                 .orElse(Runtime.version().feature());
-        Launcher launcher = new Launcher();
-        launcher.getEnvironment().setNoClasspath(true);
-        launcher.getEnvironment().setComplianceLevel(complianceLevel);
-        launcher.getEnvironment().setCommentEnabled(false);
-        files.forEach(file -> launcher.addInputResource(file.toString()));
-        return launcher.buildModel();
     }
 
     private static List<CtType<?>> modelTypes(CtModel model) {

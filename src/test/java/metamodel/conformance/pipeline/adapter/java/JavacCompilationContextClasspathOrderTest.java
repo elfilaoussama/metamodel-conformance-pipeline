@@ -14,9 +14,29 @@ import java.util.jar.JarOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class JavacCompilationContextClasspathOrderTest {
     @TempDir Path temporary;
+
+    @Test
+    void unsupportedUpstreamReleaseProducesDiagnosticInsteadOfEscaping() throws Exception {
+        Path upstream = Files.createDirectories(temporary.resolve("upstream"));
+        Path downstream = Files.createDirectories(temporary.resolve("downstream"));
+        Path base = Files.writeString(upstream.resolve("Base.java"), "class Base {}\n");
+        Path child = Files.writeString(downstream.resolve("Child.java"), "class Child extends Base {}\n");
+        Path manifest = temporary.resolve("contexts.tsv");
+        Files.writeString(manifest, "context\tup\t.\t\t\t99\tfalse\tfuture\nsource\tup\tupstream\n"
+                + "context\tdown\t.\t\t\t17\tfalse\tjdk-17\nsource\tdown\tdownstream\nupstream\tdown\tup\n");
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        try (JavacCompilationContext context = JavacCompilationContext.prepare(temporary,
+                inputs.context("down"), Map.of("up", List.of(base), "down", List.of(child)), inputs)) {
+            assertFalse(context.complete());
+            assertTrue(context.diagnostics().stream().anyMatch(item -> item.message().contains("99")
+                    && item.sourcePath().equals("upstream/Base.java")), context.diagnostics().toString());
+        }
+    }
 
     @Test
     void compiledUpstreamContextPrecedesExternalClasspathForDependentContext() throws Exception {

@@ -1,5 +1,40 @@
 # Local correctness and integration checkpoint — 2026-09-09
 
+## Follow-up: unsupported compiler semantics — 2026-09-11
+
+The parser previously labeled a valid source as PARSE_ERROR when the build requested
+an unsupported Java level. The installed JDT parser's own latest-supported-version
+metadata now supplies the capability check; no maximum Java version is hard-coded.
+An unsupported level yields EVIDENCE_INCOMPLETE while preserving source fingerprints
+and the original manifest settings. The regression verifies every Alloy decision
+remains NOT_EVALUATED. Neither source nor release semantics are downgraded.
+
+Implementation enrichment now requires complete declaration ownership evidence.
+Dependency enrichment still permits recovery of partial nonempty observations, but
+does not proceed with an empty observation whose declaration evidence is incomplete.
+This keeps a parser capability failure from being mistaken for an empty complete
+source domain without blocking the existing independent dependency-recovery contract.
+
+An unsupported upstream javac release also previously escaped context preparation
+as IllegalArgumentException. It now returns incomplete evidence with the upstream
+source path and context identity. Failed upstream preparation does not attempt to
+construct downstream compiler options. Both regressions failed before correction.
+Adapter versions identify these changes as `0.11.2`, `1.5.2`, and `1.9.2`.
+
+Final verification: 160 local JUnit tests pass with freshly compiled classes, zero
+failures, excluding only the same two clang-dependent C++ classes. The initial
+enrichment guard was too broad and broke five existing dependency-recovery tests;
+it was narrowed, with those tests unchanged, before the final successful run.
+Architecture, no-special-case, compilation-context, javac-semantic, and rebuilt-JAR
+corpus-fallback gates pass. This is direct Linux/JDK-17 testing, not Maven verify.
+
+Limits: this does not add support for newer Java, separate the structural parser's
+combined compilation contexts, validate every compiler flag, or reconstruct missing
+module-path roles. The combined parser still requests the maximum observed language
+level; one unsupported context can therefore prevent structural observation of the
+combined input. Those coverage/normalization issues remain open. No remote writes
+or Actions were performed.
+
 ## Follow-up: recovery and ambiguous output ownership — 2026-09-11
 
 Two more failure cases were reproduced before correction and verified locally:

@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  */
 public final class JavaImplementationSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = SpoonJavaObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.5.1";
+    public static final String ADAPTER_VERSION = "1.5.2";
 
     private final JavaDependencyInputs dependencyInputs;
 
@@ -51,8 +51,7 @@ public final class JavaImplementationSourceObserver implements SourceObserver {
     @Override
     public Observation observe(Path sourceRoot, Set<String> externalParents) throws ObservationException {
         Observation base = new SpoonJavaObserver(dependencyInputs).observe(sourceRoot, externalParents);
-        if (base.diagnostics().stream().anyMatch(item -> item.kind()
-                == metamodel.conformance.pipeline.model.DiagnosticKind.PARSE_ERROR)) {
+        if (!base.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP)) {
             return upgrade(
                     base, base.classifiers(), base.members(), List.of(), List.of(), Set.of(), List.of());
         }
