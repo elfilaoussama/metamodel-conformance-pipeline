@@ -50,7 +50,7 @@ elif [[ "$all" == *"__mcpObserveJavaContexts"* ]]; then
   grep -Fq "mcp.build.output is required" "$init_mount"
   grep -Fq "def observationTask = null" "$init_mount"
   grep -Fq "observationTask = project.tasks.register('__mcpObserveJavaContexts')" "$init_mount"
-  grep -Fq 'def owner = outputOwners[entry.path]' "$init_mount"
+  grep -Fq 'def owners = outputOwners[entry.path]' "$init_mount"
   ! grep -Fq 'mainContextOwners' "$init_mount"
   ! grep -Fq 'projectBuildRoots' "$init_mount"
   ! grep -Fq "entry.path.endsWith('.jar')" "$init_mount"

@@ -30,6 +30,40 @@ class SpoonJavaObserverTest {
 
     @Test
     void observesAnnotatedPackageDescriptorWithoutInventingAClassifier() throws Exception {
+        writeAnnotatedPackageSources();
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertTrue(observation.diagnostics().isEmpty(), observation.diagnostics().toString());
+        assertTrue(observation.units().stream().anyMatch(unit -> unit.path().equals("package-info.java")));
+        assertFalse(observation.classifiers().stream()
+                .anyMatch(type -> type.qualifiedName().contains("package-info")));
+        assertTrue(observation.classifiers().stream()
+                .anyMatch(type -> type.qualifiedName().equals("example.Subject")));
+        assertTrue(observation.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP));
+    }
+
+    @Test
+    void recoversPackageDescriptorWithItsPeersWhenAnotherSourceIsMalformed() throws Exception {
+        writeAnnotatedPackageSources();
+        Files.writeString(temporary.resolve("Broken source.java"),
+                "class Broken {}\npublic static void broken() {}\n");
+
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertEquals(5, observation.units().size());
+        assertEquals(3, observation.classifiers().size());
+        assertEquals(1, observation.diagnostics().size(), observation.diagnostics().toString());
+        assertEquals("Broken source.java", observation.diagnostics().get(0).sourcePath());
+        assertEquals(DiagnosticKind.PARSE_ERROR, observation.diagnostics().get(0).kind());
+        assertTrue(observation.completeEvidence().isEmpty());
+        assertTrue(observation.classifiers().stream()
+                .anyMatch(type -> type.qualifiedName().equals("example.Subject")));
+        assertFalse(observation.classifiers().stream()
+                .anyMatch(type -> type.qualifiedName().contains("package-info")));
+        assertEquals(observation, observer.observe(temporary, Set.of()));
+    }
+
+    private void writeAnnotatedPackageSources() throws Exception {
         Files.writeString(temporary.resolve("package-info.java"), """
                 @Marker(value = VALUE)
                 package example;
@@ -48,15 +82,6 @@ class SpoonJavaObserverTest {
                 public class Subject { public void work() {} }
                 """);
 
-        Observation observation = observer.observe(temporary, Set.of());
-
-        assertTrue(observation.diagnostics().isEmpty(), observation.diagnostics().toString());
-        assertTrue(observation.units().stream().anyMatch(unit -> unit.path().equals("package-info.java")));
-        assertFalse(observation.classifiers().stream()
-                .anyMatch(type -> type.qualifiedName().contains("package-info")));
-        assertTrue(observation.classifiers().stream()
-                .anyMatch(type -> type.qualifiedName().equals("example.Subject")));
-        assertTrue(observation.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP));
     }
 
     @Test

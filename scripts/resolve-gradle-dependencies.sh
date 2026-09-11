@@ -147,7 +147,10 @@ gradle.projectsEvaluated {
                 }
             }
             def outputOwners = [:]
-            contexts.each { ctx -> ctx.outputs.each { out -> outputOwners[out.path] = ctx.id } }
+            contexts.each { ctx -> ctx.outputs.each { out ->
+                if (!outputOwners.containsKey(out.path)) outputOwners[out.path] = [] as Set
+                outputOwners[out.path].add(ctx.id)
+            } }
             // Only an exact observed classes-directory identity establishes context
             // ownership. Project identity or build-directory containment cannot identify
             // archive variants (test fixtures, custom/shaded JARs, generated resources).
@@ -165,7 +168,12 @@ gradle.projectsEvaluated {
                 }
                 def seenUpstream = [] as Set
                 ctx.entries.each { entry ->
-                    def owner = outputOwners[entry.path]
+                    def owners = outputOwners[entry.path]
+                    if (owners != null && owners.size() > 1) {
+                        throw new IllegalStateException('Ambiguous compilation-context output ownership: '
+                                + entry.path + ' -> ' + owners.toList().sort().join(', '))
+                    }
+                    def owner = owners == null ? null : owners.iterator().next()
                     if (owner != null && owner != ctx.id) {
                         if (seenUpstream.add(owner)) output << "upstream\t${ctx.id}\t${owner}" + System.lineSeparator()
                     } else {

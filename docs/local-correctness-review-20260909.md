@@ -1,5 +1,35 @@
 # Local correctness and integration checkpoint — 2026-09-09
 
+## Follow-up: recovery and ambiguous output ownership — 2026-09-11
+
+Two more failure cases were reproduced before correction and verified locally:
+
+- Per-file recovery falsely rejected an annotated package descriptor when a different
+  malformed file broke the combined model. Failed units are now retried with the
+  successfully parsed original peers. Only the failed unit's declarations are added,
+  so peers are not duplicated. The regression preserves all five source units,
+  recovers the valid descriptor, retains the actual malformed-file diagnostic, and
+  keeps evidence incomplete. Repeated observation is equal. No filename-specific
+  handling was introduced. If companion declarations are truly absent, the previous
+  unresolved descriptor limitation remains; this does not prove ArchUnit now evaluates.
+- Gradle output-directory ownership previously overwrote the earlier context when
+  multiple contexts shared the same directory. Ownership now retains the set of
+  observed context IDs and rejects an ambiguous consumed output. Both discovery
+  orders are tested. Exact archive/variant ownership remains unimplemented; this
+  change prevents a further incorrect upstream assignment rather than guessing one.
+
+Completed local verification: 158 JUnit tests passed with freshly compiled classes,
+excluding only the same two clang-dependent C++ classes. All nine actual Groovy
+emission checks, resolver contract, compilation-context contract, architecture audit,
+no-special-case audit, and javac-semantic gate passed. This is not Maven verify or
+a Docker-backed real-repository result. Adapter versions are now `0.11.1`, `1.5.1`,
+and `1.9.1` respectively. No Actions, pushes, or merges were performed.
+
+Remaining: unsupported compiler semantics and diagnostic classification; faithful
+module-path/compiler options; exact archive variant ownership; local medium-repository
+validation and subsequent integration review. Docker availability still blocks the
+isolated provider gate. No remaining gate is waived by this checkpoint.
+
 ## Follow-up: source declaration coverage — 2026-09-11
 
 The local follow-up corrects two independently reproduced observer defects:

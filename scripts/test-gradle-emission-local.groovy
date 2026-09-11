@@ -26,7 +26,19 @@ def check = { name, List contexts, List buildRoots, Closure assertion ->
         observationTask:new TaskHarness(), outputPath:out.path])
     def shell = new GroovyShell(binding)
     try {
-        shell.evaluate("class SourceSet { static final MAIN_SOURCE_SET_NAME = 'main' }\n" + emission)
+        boolean rejected = false
+        try {
+            shell.evaluate("class SourceSet { static final MAIN_SOURCE_SET_NAME = 'main' }\n" + emission)
+        } catch (IllegalStateException failure) {
+            if (!name.startsWith('ambiguous-')) throw failure
+            assert failure.message.contains('Ambiguous compilation-context output ownership')
+            rejected = true
+        }
+        if (name.startsWith('ambiguous-')) {
+            assert rejected : 'shared output was assigned to an arbitrary context'
+            println 'PASS ' + name
+            return
+        }
         assertion(out.text)
         if (name == 'missing-ownerless-archive' || name == 'custom-archive-not-main') {
             def validator = new ProcessBuilder('bash',
@@ -57,6 +69,9 @@ try {
     check('custom-output', [producer, custom, consumer([customDir], [:])], roots) { text ->
         assert text.contains('upstream\tconsumer\tspecial\n')
     }
+    def conflicting = context('conflicting', ':producer', 'variant', [mainDir], [], [:])
+    check('ambiguous-output', [producer, conflicting, consumer([mainDir], [:])], roots) { text -> }
+    check('ambiguous-reversed', [conflicting, producer, consumer([mainDir], [:])], roots) { text -> }
     check('missing-ownerless-archive',
           [consumer([archive], [(archive.path):':producer'])], roots) { text ->
         assert text.contains('classpath\tconsumer\t' + archive.path + '\n') :

@@ -40,6 +40,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.EnumSet;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -49,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.11.0";
+    public static final String ADAPTER_VERSION = "0.11.1";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -223,12 +224,36 @@ public final class SpoonJavaObserver implements SourceObserver {
         } catch (RuntimeException failure) {
             List<CtType<?>> isolated = new ArrayList<>();
             List<ObservationDiagnostic> diagnostics = new ArrayList<>();
+            List<Path> parsedFiles = new ArrayList<>();
+            Map<Path, RuntimeException> failures = new LinkedHashMap<>();
             for (Path file : files) {
                 try {
                     isolated.addAll(modelTypes(buildModel(List.of(file), inputs)));
+                    parsedFiles.add(file);
                 } catch (RuntimeException isolatedFailure) {
-                    diagnostics.add(parseDiagnostic(root, file, isolatedFailure));
+                    failures.put(file, isolatedFailure);
                 }
+            }
+            // Isolation can remove declarations needed by the frontend itself.
+            // Retry failed units with known parseable peers, without dropping a
+            // remaining failure or duplicating the peers' observed declarations.
+            for (var entry : failures.entrySet()) {
+                Path file = entry.getKey();
+                if (!parsedFiles.isEmpty()) {
+                    List<Path> recoveryFiles = new ArrayList<>(parsedFiles);
+                    recoveryFiles.add(file);
+                    recoveryFiles.sort(Comparator.naturalOrder());
+                    try {
+                        List<CtType<?>> recovered = modelTypes(buildModel(recoveryFiles, inputs));
+                        isolated.addAll(recovered.stream().filter(type -> type.getPosition().getFile()
+                                .toPath().toAbsolutePath().normalize().equals(file)).toList());
+                        continue;
+                    } catch (RuntimeException recoveryFailure) {
+                        // Retain the original unit-specific failure. A combined
+                        // model can also fail because its peers conflict.
+                    }
+                }
+                diagnostics.add(parseDiagnostic(root, file, entry.getValue()));
             }
             List<CtType<?>> sorted = isolated.stream()
                     .sorted(Comparator.comparing((CtType<?> type) -> type.getQualifiedName())
