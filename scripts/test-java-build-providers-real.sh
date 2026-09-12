@@ -73,6 +73,9 @@ grep -Eq $'^context\tgradle\|\.\|:\|main\t\.\t.*\t17\tfalse\t' "$work/gradle.tsv
 grep -Fq $'source\tgradle|.|:|main\todd/primary' "$work/gradle.tsv"
 grep -Fq $'source\tgradle|.|:|verification\todd/verification' "$work/gradle.tsv"
 grep -Fq $'upstream\tgradle|.|:|verification\tgradle|.|:|main' "$work/gradle.tsv"
+primary_output="$(awk -F '\t' '$1 == "output" && $2 == "gradle|.|:|main" { print $3; exit }' "$work/gradle.tsv")"
+[[ -n "$primary_output" ]]
+grep -Fq "$(printf 'classpath\tgradle|.|:|verification\t%s' "$primary_output")" "$work/gradle.tsv"
 ! grep -Eq 'src/(main|test)/java' "$work/gradle.tsv"
 
 printf 'REAL_JAVA_BUILD_PROVIDERS_OK\n'

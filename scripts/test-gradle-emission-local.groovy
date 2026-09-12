@@ -88,6 +88,14 @@ try {
             'build-directory containment is not source-set ownership'
     }
     def external = new File(temp, 'external.jar'); external.text = 'external'
+    [[external, mainDir], [mainDir, external]].eachWithIndex { ordered, index ->
+        check('upstream-path-order-' + index, [producer, consumer(ordered, [:])], roots) { text ->
+            def actual = text.readLines().findAll { it.startsWith('classpath\tconsumer\t') }
+                    .collect { it.split('\t', -1)[2] }
+            assert actual == ordered.collect { it.path } : 'upstream output lost its original path position'
+            assert text.contains('upstream\tconsumer\tproducer\n')
+        }
+    }
     check('external-archive', [producer, consumer([external], [:])], roots) { text ->
         assert text.contains('classpath\tconsumer\t' + external.path + '\n')
     }

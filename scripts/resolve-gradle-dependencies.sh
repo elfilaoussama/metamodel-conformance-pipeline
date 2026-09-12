@@ -176,9 +176,10 @@ gradle.projectsEvaluated {
                     def owner = owners == null ? null : owners.iterator().next()
                     if (owner != null && owner != ctx.id) {
                         if (seenUpstream.add(owner)) output << "upstream\t${ctx.id}\t${owner}" + System.lineSeparator()
-                    } else {
-                        output << "classpath\t${ctx.id}\t${entry.path}" + System.lineSeparator()
                     }
+                    // Ownership adds a compilation dependency; it must not erase
+                    // the output's observed position relative to external entries.
+                    output << "classpath\t${ctx.id}\t${entry.path}" + System.lineSeparator()
                 }
             }
         }
