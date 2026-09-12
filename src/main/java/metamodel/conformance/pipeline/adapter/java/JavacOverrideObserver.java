@@ -1,11 +1,9 @@
 package metamodel.conformance.pipeline.adapter.java;
 
-import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
-import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.DiagnosticKind;
@@ -179,7 +177,7 @@ final class JavacOverrideObserver {
         Trees trees = Trees.instance(task);
         Types types = task.getTypes();
         Elements elements = task.getElements();
-        Map<TypeLocator, List<TypeElement>> javacTypes = collectTypes(root, parsed, trees);
+        JavacSourceTypeIndex sourceTypes = JavacSourceTypeIndex.create(root, parsed, trees, elements, classifiers);
 
         List<ClassifierObservation> canonicalClassifiers = concat(classifiers, productionClassifiers);
         Map<String, ClassifierObservation> classifierById = new HashMap<>();
@@ -210,13 +208,12 @@ final class JavacOverrideObserver {
         Map<String, String> returnTypes = new HashMap<>();
         Set<String> mappedMethods = new HashSet<>();
         for (ClassifierObservation classifier : classifiers) {
-            List<TypeElement> candidates = javacTypes.get(
-                    new TypeLocator(classifier.sourcePath(), classifier.startLine()));
-            if (candidates == null || candidates.size() != 1) {
-                return incomplete(classifiers,
-                        "javac classifier could not be mapped uniquely for override evidence");
+            TypeElement type = sourceTypes.type(classifier);
+            if (type == null) {
+                return Result.incomplete(classifier.sourcePath(), classifier.startLine(),
+                        "javac classifier could not be mapped uniquely for override evidence: "
+                                + classifier.qualifiedName() + " at line " + classifier.startLine());
             }
-            TypeElement type = candidates.get(0);
             typeByClassifier.put(classifier.id(), type);
             for (Element element : type.getEnclosedElements()) {
                 if (element.getKind() != ElementKind.METHOD
@@ -239,7 +236,7 @@ final class JavacOverrideObserver {
                 List<MemberObservation> declarationCandidates = membersByOwnerAndName.get(
                         new MemberLocator(classifier.id(), method.getSimpleName().toString()));
                 MemberObservation declaration = uniqueSourceDeclaration(
-                        declarationCandidates, method, types, methodLocation);
+                        declarationCandidates, method, types, elements, methodLocation);
                 if (declaration == null) {
                     return Result.incomplete(
                             methodLocation.path(),
@@ -324,7 +321,7 @@ final class JavacOverrideObserver {
                         if (sourceCandidate != null) {
                             candidates = List.of(sourceCandidate);
                         } else {
-                            candidates = binaryMethodCandidates(ancestorType, target, types);
+                            candidates = binaryMethodCandidates(ancestorType, target, types, elements);
                         }
                         if (candidates.isEmpty()) {
                             return Result.incomplete(
@@ -426,25 +423,21 @@ final class JavacOverrideObserver {
     private static List<ExecutableElement> binaryMethodCandidates(
             TypeElement owner,
             MemberObservation canonical,
-            Types types) {
+            Types types, Elements elements) {
         return owner.getEnclosedElements().stream()
                 .filter(element -> element.getKind() == ElementKind.METHOD)
                 .filter(ExecutableElement.class::isInstance)
                 .map(ExecutableElement.class::cast)
                 .filter(method -> method.getSimpleName().contentEquals(canonical.memberName()))
-                .filter(method -> parameterTypesMatch(canonical, method, types))
+                .filter(method -> parameterTypesMatch(canonical, method, types, elements))
                 .toList();
     }
 
     private static boolean parameterTypesMatch(
             MemberObservation canonical,
             ExecutableElement method,
-            Types types) {
-        List<String> exact = method.getParameters().stream()
-                .map(parameter -> parameter.asType().toString()).toList();
-        List<String> erased = method.getParameters().stream()
-                .map(parameter -> types.erasure(parameter.asType()).toString()).toList();
-        return canonical.parameterTypes().equals(exact) || canonical.parameterTypes().equals(erased);
+            Types types, Elements elements) {
+        return JavacDeclarationTypes.matches(canonical.parameterTypes(), method, types, elements);
     }
 
     private static List<ClassifierObservation> concat(
@@ -459,32 +452,6 @@ final class JavacOverrideObserver {
         String sourcePath = classifiers.isEmpty()
                 ? "<unknown>.java" : classifiers.get(0).sourcePath();
         return Result.incomplete(sourcePath, message);
-    }
-
-    private static Map<TypeLocator, List<TypeElement>> collectTypes(
-            Path root, List<CompilationUnitTree> parsed, Trees trees) {
-        Map<TypeLocator, List<TypeElement>> result = new HashMap<>();
-        for (CompilationUnitTree unit : parsed) {
-            new TreePathScanner<Void, Void>() {
-                @Override
-                public Void visitClass(ClassTree node, Void unused) {
-                    Element element = trees.getElement(getCurrentPath());
-                    if (element instanceof TypeElement type) {
-                        try {
-                            SourcePoint location = sourcePoint(root, trees, type);
-                            if (location != null) {
-                                TypeLocator locator = new TypeLocator(location.path(), location.line());
-                                result.computeIfAbsent(locator, ignored -> new ArrayList<>()).add(type);
-                            }
-                        } catch (IOException ignored) {
-                            // Missing source mapping is handled as incomplete evidence.
-                        }
-                    }
-                    return super.visitClass(node, unused);
-                }
-            }.scan(unit, null);
-        }
-        return result;
     }
 
     private static SourcePoint sourcePoint(Path root, Trees trees, Element element) throws IOException {
@@ -530,6 +497,7 @@ final class JavacOverrideObserver {
             List<MemberObservation> candidates,
             ExecutableElement method,
             Types types,
+            Elements elements,
             SourcePoint methodLocation) {
         if (candidates == null || candidates.isEmpty()) {
             return null;
@@ -544,13 +512,9 @@ final class JavacOverrideObserver {
         if (atSourceLocation.isEmpty()) {
             return null;
         }
-        List<String> exact = method.getParameters().stream()
-                .map(parameter -> parameter.asType().toString()).toList();
-        List<String> erased = method.getParameters().stream()
-                .map(parameter -> types.erasure(parameter.asType()).toString()).toList();
         List<MemberObservation> matching = atSourceLocation.stream()
-                .filter(candidate -> candidate.parameterTypes().equals(exact)
-                        || candidate.parameterTypes().equals(erased))
+                .filter(candidate -> JavacDeclarationTypes.matches(
+                        candidate.parameterTypes(), method, types, elements))
                 .toList();
         return matching.size() == 1 ? matching.get(0) : null;
     }
@@ -652,8 +616,6 @@ final class JavacOverrideObserver {
         }
     }
 
-    private record TypeLocator(String path, int line) {
-    }
 
     private record MemberLocator(String ownerId, String name) {
     }

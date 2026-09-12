@@ -1,11 +1,9 @@
 package metamodel.conformance.pipeline.adapter.java;
 
-import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
-import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.DiagnosticKind;
@@ -19,6 +17,7 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
 import javax.tools.DiagnosticCollector;
@@ -168,7 +167,8 @@ final class JavacImplementationObserver {
             List<MethodBodyObservation> bodies) throws IOException {
         Trees trees = Trees.instance(task);
         Types types = task.getTypes();
-        Map<TypeLocator, List<TypeElement>> javacTypes = collectTypes(root, parsed, trees);
+        Elements elements = task.getElements();
+        JavacSourceTypeIndex sourceTypes = JavacSourceTypeIndex.create(root, parsed, trees, task.getElements(), classifiers);
         Map<String, MemberObservation> membersByKey = new HashMap<>();
         members.forEach(member -> membersByKey.put(member.technicalKey(), member));
         Map<MemberLocator, List<MemberObservation>> membersByLocation = new HashMap<>();
@@ -194,13 +194,12 @@ final class JavacImplementationObserver {
         Map<String, List<String>> bindings = new HashMap<>();
         Set<String> mappedMethods = new HashSet<>();
         for (ClassifierObservation classifier : classifiers) {
-            List<TypeElement> candidates = javacTypes.get(
-                    new TypeLocator(classifier.sourcePath(), classifier.startLine()));
-            if (candidates == null || candidates.size() != 1) {
-                return incomplete(classifiers,
-                        "javac classifier could not be mapped uniquely for implementation evidence");
+            TypeElement type = sourceTypes.type(classifier);
+            if (type == null) {
+                return Result.incomplete(classifier.sourcePath(), classifier.startLine(),
+                        "javac classifier could not be mapped uniquely for implementation evidence: "
+                                + classifier.qualifiedName() + " at line " + classifier.startLine());
             }
-            TypeElement type = candidates.get(0);
             for (Element element : type.getEnclosedElements()) {
                 if (element.getKind() != ElementKind.METHOD
                         || !(element instanceof ExecutableElement method)) {
@@ -221,7 +220,7 @@ final class JavacImplementationObserver {
                 List<MemberObservation> declarationCandidates = membersByLocation.get(
                         new MemberLocator(classifier.id(), method.getSimpleName().toString()));
                 MemberObservation declaration = uniqueDeclaration(
-                        declarationCandidates, method, types, methodLocation);
+                        declarationCandidates, method, types, elements, methodLocation);
                 if (declaration == null) {
                     return Result.incomplete(
                             methodLocation.path(),
@@ -271,32 +270,6 @@ final class JavacImplementationObserver {
         String sourcePath = classifiers.isEmpty()
                 ? "<unknown>.java" : classifiers.get(0).sourcePath();
         return Result.incomplete(sourcePath, message);
-    }
-
-    private static Map<TypeLocator, List<TypeElement>> collectTypes(
-            Path root, List<CompilationUnitTree> parsed, Trees trees) {
-        Map<TypeLocator, List<TypeElement>> result = new HashMap<>();
-        for (CompilationUnitTree unit : parsed) {
-            new TreePathScanner<Void, Void>() {
-                @Override
-                public Void visitClass(ClassTree node, Void unused) {
-                    Element element = trees.getElement(getCurrentPath());
-                    if (element instanceof TypeElement type) {
-                        try {
-                            SourcePoint location = sourcePoint(root, trees, type);
-                            if (location != null) {
-                                TypeLocator locator = new TypeLocator(location.path(), location.line());
-                                result.computeIfAbsent(locator, ignored -> new ArrayList<>()).add(type);
-                            }
-                        } catch (IOException ignored) {
-                            // Missing source mapping is handled as incomplete evidence.
-                        }
-                    }
-                    return super.visitClass(node, unused);
-                }
-            }.scan(unit, null);
-        }
-        return result;
     }
 
     private static SourcePoint sourcePoint(Path root, Trees trees, Element element) throws IOException {
@@ -367,6 +340,7 @@ final class JavacImplementationObserver {
             List<MemberObservation> candidates,
             ExecutableElement method,
             Types types,
+            Elements elements,
             SourcePoint methodLocation) {
         if (candidates == null || candidates.isEmpty()) {
             return null;
@@ -381,13 +355,9 @@ final class JavacImplementationObserver {
         if (atSourceLocation.isEmpty()) {
             return null;
         }
-        List<String> exact = method.getParameters().stream()
-                .map(parameter -> parameter.asType().toString()).toList();
-        List<String> erased = method.getParameters().stream()
-                .map(parameter -> types.erasure(parameter.asType()).toString()).toList();
         List<MemberObservation> matching = atSourceLocation.stream()
-                .filter(candidate -> candidate.parameterTypes().equals(exact)
-                        || candidate.parameterTypes().equals(erased))
+                .filter(candidate -> JavacDeclarationTypes.matches(
+                        candidate.parameterTypes(), method, types, elements))
                 .toList();
         return matching.size() == 1 ? matching.get(0) : null;
     }
@@ -489,8 +459,6 @@ final class JavacImplementationObserver {
         }
     }
 
-    private record TypeLocator(String path, int line) {
-    }
 
     private record MemberLocator(String ownerId, String name) {
     }

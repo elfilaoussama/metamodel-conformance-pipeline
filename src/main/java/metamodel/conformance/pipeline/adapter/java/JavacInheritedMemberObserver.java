@@ -1,10 +1,9 @@
 package metamodel.conformance.pipeline.adapter.java;
 
-import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
+import com.sun.source.tree.MethodTree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePath;
-import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.DiagnosticKind;
@@ -161,14 +160,7 @@ final class JavacInheritedMemberObserver {
         Trees trees = Trees.instance(task);
         Elements elements = task.getElements();
         Types types = task.getTypes();
-        Map<TypeLocator, List<TypeElement>> javacTypes = collectTypes(root, parsed, trees);
-        Map<TypeLocator, ClassifierObservation> classifiersByLocation = new HashMap<>();
-        for (ClassifierObservation classifier : classifiers) {
-            TypeLocator locator = new TypeLocator(classifier.sourcePath(), classifier.startLine());
-            if (classifiersByLocation.put(locator, classifier) != null) {
-                return incomplete(classifiers, "ambiguous classifier source location");
-            }
-        }
+        JavacSourceTypeIndex sourceTypes = JavacSourceTypeIndex.create(root, parsed, trees, elements, classifiers);
         Map<String, List<ClassifierObservation>> productionByQualifiedName = new HashMap<>();
         for (ClassifierObservation classifier : productionClassifiers) {
             productionByQualifiedName.computeIfAbsent(
@@ -193,13 +185,13 @@ final class JavacInheritedMemberObserver {
 
         Map<String, List<String>> inheritedByClassifier = new HashMap<>();
         for (ClassifierObservation classifier : classifiers) {
-            List<TypeElement> candidates = javacTypes.get(
-                    new TypeLocator(classifier.sourcePath(), classifier.startLine()));
-            if (candidates == null || candidates.size() != 1) {
-                return incomplete(classifiers, "javac classifier could not be mapped uniquely");
+            TypeElement type = sourceTypes.type(classifier);
+            if (type == null) {
+                return Result.incomplete(classifier.sourcePath(), classifier.startLine(), "javac classifier could not be mapped uniquely: "
+                        + classifier.qualifiedName() + " at line " + classifier.startLine());
             }
             LinkedHashSet<String> inherited = new LinkedHashSet<>();
-            for (Element element : elements.getAllMembers(candidates.get(0))) {
+            for (Element element : elements.getAllMembers(type)) {
                 MemberKind kind = memberKind(element.getKind());
                 if (kind == null) {
                     continue;
@@ -213,8 +205,7 @@ final class JavacInheritedMemberObserver {
                 ClassifierObservation owner;
                 boolean productionBinary = false;
                 if (ownerLocation != null) {
-                    owner = classifiersByLocation.get(
-                            new TypeLocator(ownerLocation.path(), ownerLocation.line()));
+                    owner = sourceTypes.classifier(declaringType);
                     if (owner == null) {
                         return incomplete(classifiers,
                                 "javac declaration owner is outside the active source-set graph");
@@ -239,16 +230,20 @@ final class JavacInheritedMemberObserver {
 
                 MemberLocator locator = new MemberLocator(
                         owner.id(), kind, element.getSimpleName().toString());
-                MemberObservation declaration = uniqueDeclaration(
-                        membersByLocation.get(locator), element, types);
+                MemberObservation declaration = !productionBinary && element instanceof ExecutableElement method
+                        ? uniqueSourceDeclaration(root, trees, membersByLocation.get(locator), method, types, elements)
+                        : uniqueDeclaration(membersByLocation.get(locator), element, types, elements);
                 if (declaration == null) {
                     if (productionBinary) {
                         // javac can expose synthetic binary members (for example bridge methods).
                         // They have no canonical source declaration and therefore are not evidence.
                         continue;
                     }
-                    return incomplete(classifiers,
-                            "javac member declaration could not be mapped uniquely");
+                    SourceLocation location = sourceLocation(root, trees, element);
+                    return Result.incomplete(location == null ? owner.sourcePath() : location.path(),
+                            location == null ? owner.startLine() : location.line(),
+                            "javac member declaration could not be mapped uniquely: "
+                                    + owner.qualifiedName() + "." + element);
                 }
                 inherited.add(declaration.technicalKey());
             }
@@ -313,32 +308,6 @@ final class JavacInheritedMemberObserver {
         return root.relativize(path.toAbsolutePath().normalize()).toString().replace('\\', '/');
     }
 
-    private static Map<TypeLocator, List<TypeElement>> collectTypes(
-            Path root, List<CompilationUnitTree> parsed, Trees trees) {
-        Map<TypeLocator, List<TypeElement>> result = new HashMap<>();
-        for (CompilationUnitTree unit : parsed) {
-            new TreePathScanner<Void, Void>() {
-                @Override
-                public Void visitClass(ClassTree node, Void unused) {
-                    Element element = trees.getElement(getCurrentPath());
-                    if (element instanceof TypeElement type) {
-                        try {
-                            SourceLocation location = sourceLocation(root, trees, type);
-                            if (location != null) {
-                                TypeLocator locator = new TypeLocator(location.path(), location.line());
-                                result.computeIfAbsent(locator, ignored -> new ArrayList<>()).add(type);
-                            }
-                        } catch (IOException ignored) {
-                            // The caller will treat the missing type mapping as incomplete evidence.
-                        }
-                    }
-                    return super.visitClass(node, unused);
-                }
-            }.scan(unit, null);
-        }
-        return result;
-    }
-
     private static SourceLocation sourceLocation(Path root, Trees trees, Element element)
             throws IOException {
         TreePath treePath = trees.getPath(element);
@@ -358,8 +327,29 @@ final class JavacInheritedMemberObserver {
         return new SourceLocation(relative, Math.toIntExact(unit.getLineMap().getLineNumber(position)));
     }
 
+    private static MemberObservation uniqueSourceDeclaration(
+            Path root, Trees trees, List<MemberObservation> candidates,
+            ExecutableElement method, Types types, Elements elements) throws IOException {
+        var path = trees.getPath(method);
+        if (path == null || !(path.getLeaf() instanceof MethodTree tree) || candidates == null) {
+            return null;
+        }
+        var unit = path.getCompilationUnit();
+        var anchor = tree.getReturnType() == null ? tree : tree.getReturnType();
+        long start = trees.getSourcePositions().getStartPosition(unit, anchor);
+        if (start < 0) return null;
+        Path source = Path.of(unit.getSourceFile().toUri()).toRealPath(LinkOption.NOFOLLOW_LINKS);
+        if (!source.startsWith(root)) return null;
+        String sourcePath = relativePath(root, source);
+        int line = Math.toIntExact(unit.getLineMap().getLineNumber(start));
+        List<MemberObservation> atLine = candidates.stream()
+                .filter(candidate -> candidate.sourcePath().equals(sourcePath) && candidate.startLine() == line)
+                .toList();
+        return uniqueDeclaration(atLine, method, types, elements);
+    }
+
     private static MemberObservation uniqueDeclaration(
-            List<MemberObservation> candidates, Element element, Types types) {
+            List<MemberObservation> candidates, Element element, Types types, Elements elements) {
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
@@ -369,13 +359,9 @@ final class JavacInheritedMemberObserver {
         if (!(element instanceof ExecutableElement method)) {
             return null;
         }
-        List<String> exact = method.getParameters().stream()
-                .map(parameter -> parameter.asType().toString()).toList();
-        List<String> erased = method.getParameters().stream()
-                .map(parameter -> types.erasure(parameter.asType()).toString()).toList();
         List<MemberObservation> matching = candidates.stream()
-                .filter(candidate -> candidate.parameterTypes().equals(exact)
-                        || candidate.parameterTypes().equals(erased))
+                .filter(candidate -> JavacDeclarationTypes.matches(
+                        candidate.parameterTypes(), method, types, elements))
                 .toList();
         return matching.size() == 1 ? matching.get(0) : null;
     }
@@ -402,13 +388,15 @@ final class JavacInheritedMemberObserver {
         }
 
         static Result incomplete(String sourcePath, String message) {
+            return incomplete(sourcePath, 0, message);
+        }
+
+        static Result incomplete(String sourcePath, int line, String message) {
             return new Result(false, Map.of(), List.of(new ObservationDiagnostic(
-                    DiagnosticKind.EVIDENCE_INCOMPLETE, sourcePath, 0, message)));
+                    DiagnosticKind.EVIDENCE_INCOMPLETE, sourcePath, line, message)));
         }
     }
 
-    private record TypeLocator(String path, int line) {
-    }
 
     private record MemberLocator(String ownerId, MemberKind kind, String name) {
     }

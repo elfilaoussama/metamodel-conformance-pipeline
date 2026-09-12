@@ -1,12 +1,10 @@
 package metamodel.conformance.pipeline.adapter.java;
 
-import com.sun.source.tree.ClassTree;
 import com.sun.source.tree.CompilationUnitTree;
 import com.sun.source.tree.MethodTree;
 import com.sun.source.tree.Tree;
 import com.sun.source.util.JavacTask;
 import com.sun.source.util.TreePath;
-import com.sun.source.util.TreePathScanner;
 import com.sun.source.util.Trees;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.DiagnosticKind;
@@ -178,14 +176,7 @@ final class JavacDependencyEvidenceObserver {
         Trees trees = Trees.instance(task);
         Elements elements = task.getElements();
         Types types = task.getTypes();
-        Map<TypeLocator, List<TypeElement>> javacTypes = collectTypes(root, parsed, trees);
-        Map<TypeLocator, ClassifierObservation> sourceByLocation = new HashMap<>();
-        for (ClassifierObservation classifier : classifiers) {
-            TypeLocator locator = new TypeLocator(classifier.sourcePath(), classifier.startLine());
-            if (sourceByLocation.put(locator, classifier) != null) {
-                return incomplete(classifiers, "ambiguous source classifier location");
-            }
-        }
+        JavacSourceTypeIndex sourceByLocation = JavacSourceTypeIndex.create(root, parsed, trees, elements, classifiers);
         Map<String, List<ClassifierObservation>> productionByName = byQualifiedName(productionClassifiers);
         Map<String, List<ClassifierObservation>> supportByName = byQualifiedName(supportClassifiers);
 
@@ -216,12 +207,13 @@ final class JavacDependencyEvidenceObserver {
         Map<String, String> returnTypes = new HashMap<>();
 
         for (ClassifierObservation classifier : classifiers) {
-            List<TypeElement> candidates = javacTypes.get(
-                    new TypeLocator(classifier.sourcePath(), classifier.startLine()));
-            if (candidates == null || candidates.size() != 1) {
-                return incomplete(classifiers, "javac source classifier could not be mapped uniquely");
+            TypeElement type = sourceByLocation.type(classifier);
+            if (type == null) {
+                return Result.incomplete(List.of(new ObservationDiagnostic(
+                        DiagnosticKind.EVIDENCE_INCOMPLETE, classifier.sourcePath(), classifier.startLine(),
+                        "javac source classifier could not be mapped uniquely: "
+                                + classifier.qualifiedName() + " at line " + classifier.startLine())));
             }
-            TypeElement type = candidates.get(0);
             typeByClassifier.put(classifier.id(), type);
 
             LinkedHashSet<String> inherited = new LinkedHashSet<>();
@@ -235,11 +227,13 @@ final class JavacDependencyEvidenceObserver {
                 if (owner == null || owner.classifier().id().equals(classifier.id())) {
                     continue;
                 }
-                MemberObservation declaration = uniqueDeclaration(
+                MemberObservation declaration = !owner.binary() && element instanceof ExecutableElement method
+                        ? sourceMethodDeclaration(root, trees, owner.classifier(), method, membersByOwner, types, elements)
+                        : uniqueDeclaration(
                         membersByOwner.get(new MemberLocator(
                                 owner.classifier().id(), kind, element.getSimpleName().toString())),
                         element,
-                        types);
+                        types, elements);
                 if (declaration == null) {
                     if (owner.binary()) {
                         continue;
@@ -257,7 +251,7 @@ final class JavacDependencyEvidenceObserver {
                     continue;
                 }
                 MemberObservation declaration = sourceMethodDeclaration(
-                        root, trees, classifier, method, membersByOwner, types);
+                        root, trees, classifier, method, membersByOwner, types, elements);
                 if (declaration == null) {
                     return incomplete(classifiers, "javac local method could not be mapped uniquely");
                 }
@@ -290,6 +284,7 @@ final class JavacDependencyEvidenceObserver {
                         elements,
                         types,
                         ownerType,
+                        ownerType,
                         local,
                         sourceByLocation,
                         productionByName,
@@ -313,14 +308,15 @@ final class JavacDependencyEvidenceObserver {
             Elements elements,
             Types types,
             TypeElement sourceOwner,
+            TypeElement ancestorCursor,
             ExecutableElement local,
-            Map<TypeLocator, ClassifierObservation> sourceByLocation,
+            JavacSourceTypeIndex sourceByLocation,
             Map<String, List<ClassifierObservation>> productionByName,
             Map<String, List<ClassifierObservation>> supportByName,
             Map<MemberLocator, List<MemberObservation>> membersByOwner,
             Set<String> targets,
             Set<String> visitedAncestors) throws IOException {
-        for (var mirror : types.directSupertypes(sourceOwner.asType())) {
+        for (var mirror : types.directSupertypes(ancestorCursor.asType())) {
             Element element = types.asElement(mirror);
             if (!(element instanceof TypeElement ancestorType)) {
                 continue;
@@ -337,26 +333,31 @@ final class JavacDependencyEvidenceObserver {
                             || candidate.getKind() != ElementKind.METHOD) {
                         continue;
                     }
-                    MemberObservation target = uniqueDeclaration(
+                    if (!elements.overrides(local, inheritedMethod, sourceOwner)) {
+                        continue;
+                    }
+                    MemberObservation target = !ancestorOwner.binary()
+                            ? sourceMethodDeclaration(root, trees, ancestorOwner.classifier(),
+                                    inheritedMethod, membersByOwner, types, elements)
+                            : uniqueDeclaration(
                             membersByOwner.get(new MemberLocator(
                                     ancestorOwner.classifier().id(),
                                     MemberKind.METHOD,
                                     candidate.getSimpleName().toString())),
                             candidate,
-                            types);
+                            types, elements);
                     if (target == null) {
                         if (ancestorOwner.binary()) {
                             continue;
                         }
-                        return "javac override target could not be mapped uniquely";
+                        return "javac override target could not be mapped uniquely: "
+                                + ancestorType.getQualifiedName() + "." + inheritedMethod;
                     }
-                    if (elements.overrides(local, inheritedMethod, sourceOwner)) {
-                        targets.add(target.technicalKey());
-                    }
+                    targets.add(target.technicalKey());
                 }
             }
             String nested = collectOverrideTargets(
-                    root, trees, elements, types, ancestorType, local,
+                    root, trees, elements, types, sourceOwner, ancestorType, local,
                     sourceByLocation, productionByName, supportByName,
                     membersByOwner, targets, visitedAncestors);
             if (nested != null) {
@@ -370,13 +371,12 @@ final class JavacDependencyEvidenceObserver {
             Path root,
             Trees trees,
             TypeElement type,
-            Map<TypeLocator, ClassifierObservation> sourceByLocation,
+            JavacSourceTypeIndex sourceByLocation,
             Map<String, List<ClassifierObservation>> productionByName,
             Map<String, List<ClassifierObservation>> supportByName) throws IOException {
         SourcePoint source = sourcePoint(root, trees, type);
         if (source != null) {
-            ClassifierObservation classifier = sourceByLocation.get(
-                    new TypeLocator(source.path(), source.line()));
+            ClassifierObservation classifier = sourceByLocation.classifier(type);
             return classifier == null ? null : new Owner(classifier, false);
         }
         String qualifiedName = type.getQualifiedName().toString();
@@ -392,7 +392,7 @@ final class JavacDependencyEvidenceObserver {
             Path root,
             Trees trees,
             Element member,
-            Map<TypeLocator, ClassifierObservation> sourceByLocation,
+            JavacSourceTypeIndex sourceByLocation,
             Map<String, List<ClassifierObservation>> productionByName,
             Map<String, List<ClassifierObservation>> supportByName) throws IOException {
         Element enclosing = member.getEnclosingElement();
@@ -408,7 +408,7 @@ final class JavacDependencyEvidenceObserver {
             ClassifierObservation owner,
             ExecutableElement method,
             Map<MemberLocator, List<MemberObservation>> membersByOwner,
-            Types types) throws IOException {
+            Types types, Elements elements) throws IOException {
         Tree tree = trees.getTree(method);
         if (!(tree instanceof MethodTree methodTree)) {
             return null;
@@ -428,56 +428,23 @@ final class JavacDependencyEvidenceObserver {
         if (atLine.size() == 1) {
             return atLine.get(0);
         }
-        return uniqueDeclaration(atLine, method, types);
+        return uniqueDeclaration(atLine, method, types, elements);
     }
 
     private static MemberObservation uniqueDeclaration(
             List<MemberObservation> candidates,
             Element element,
-            Types types) {
+            Types types, Elements elements) {
         if (candidates == null || candidates.isEmpty()) {
             return null;
         }
         if (!(element instanceof ExecutableElement method)) {
             return candidates.size() == 1 ? candidates.get(0) : null;
         }
-        List<String> exact = method.getParameters().stream()
-                .map(parameter -> parameter.asType().toString()).toList();
-        List<String> erased = method.getParameters().stream()
-                .map(parameter -> types.erasure(parameter.asType()).toString()).toList();
         List<MemberObservation> matching = candidates.stream()
-                .filter(candidate -> candidate.parameterTypes().equals(exact)
-                        || candidate.parameterTypes().equals(erased)).toList();
+                .filter(candidate -> JavacDeclarationTypes.matches(
+                        candidate.parameterTypes(), method, types, elements)).toList();
         return matching.size() == 1 ? matching.get(0) : null;
-    }
-
-    private static Map<TypeLocator, List<TypeElement>> collectTypes(
-            Path root,
-            List<CompilationUnitTree> parsed,
-            Trees trees) {
-        Map<TypeLocator, List<TypeElement>> result = new HashMap<>();
-        for (CompilationUnitTree unit : parsed) {
-            new TreePathScanner<Void, Void>() {
-                @Override
-                public Void visitClass(ClassTree node, Void unused) {
-                    Element element = trees.getElement(getCurrentPath());
-                    if (element instanceof TypeElement type) {
-                        try {
-                            SourcePoint point = sourcePoint(root, trees, type);
-                            if (point != null) {
-                                result.computeIfAbsent(
-                                        new TypeLocator(point.path(), point.line()),
-                                        ignored -> new ArrayList<>()).add(type);
-                            }
-                        } catch (IOException ignored) {
-                            // Missing source mapping is handled as incomplete evidence by the caller.
-                        }
-                    }
-                    return super.visitClass(node, unused);
-                }
-            }.scan(unit, null);
-        }
-        return result;
     }
 
     private static SourcePoint sourcePoint(Path root, Trees trees, Element element) throws IOException {
@@ -605,8 +572,6 @@ final class JavacDependencyEvidenceObserver {
         }
     }
 
-    private record TypeLocator(String path, int line) {
-    }
 
     private record MemberLocator(String ownerId, MemberKind kind, String name) {
     }
