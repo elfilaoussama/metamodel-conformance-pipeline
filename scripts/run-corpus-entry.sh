@@ -71,6 +71,12 @@ if [[ ${clone_exit} -eq 0 ]]; then
     dependency_resolution_exit=$?
   fi
 
+  # Preserve the actual provider facts, including partial manifests on resolver
+  # failure, before the temporary build/cache directory is removed at exit.
+  if [[ -f "${dependency_manifest}" ]]; then
+    cp -- "${dependency_manifest}" "${output_root}/dependency-manifest.tsv"
+  fi
+
   if [[ ${#dependency_args[@]} -eq 0 && ${dependency_resolution_exit} -ne 0 ]]; then
     printf 'Dependency resolution unavailable (exit=%s); analyzing without dependency evidence.\n' \
       "${dependency_resolution_exit}" >"${output_root}/analysis.log"
