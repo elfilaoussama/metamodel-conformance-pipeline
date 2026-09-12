@@ -189,6 +189,50 @@ class JavaDeclarationCorrespondenceTest {
         for (var member : childMethods) assertEquals(1, member.overriddenMemberKeys().size());
     }
 
+    @Test
+    void retainsInheritedMembersAndOverridesFromCompiledNestedOwners() throws Exception {
+        Path root = Files.createDirectories(temporary.resolve("nested-owner"));
+        Path main = Files.createDirectories(root.resolve("code/production/example"));
+        Path test = Files.createDirectories(root.resolve("code/verification/example"));
+        Files.writeString(main.resolve("Parent.java"), """
+                package example;
+                public class Parent {
+                    public static class Base {
+                        public int payload;
+                        public void run() {}
+                    }
+                }
+                """);
+        Files.writeString(test.resolve("Child.java"), """
+                package example;
+                public class Child extends Parent.Base {
+                    public void run() {}
+                }
+                """);
+        Path manifest = temporary.resolve("nested-owner.tsv");
+        Files.writeString(manifest, """
+                context\tproduction\t.\t\t\t17\tfalse\t
+                source\tproduction\tcode/production
+                context\tverification\t.\t\t\t17\tfalse\t
+                source\tverification\tcode/verification
+                upstream\tverification\tproduction
+                """);
+        Observation observation = new JavaDependencyAwareSourceObserver(JavaDependencyInputs.fromManifest(manifest))
+                .observe(root, Set.of());
+        assertCompilerEvidence(observation);
+        var child = observation.classifiers().stream()
+                .filter(classifier -> classifier.qualifiedName().equals("example.Child")).findFirst().orElseThrow();
+        var payload = observation.members().stream()
+                .filter(member -> member.memberName().equals("payload")).findFirst().orElseThrow();
+        assertTrue(child.inheritedMemberKeys().contains(payload.technicalKey()));
+        var override = observation.members().stream()
+                .filter(member -> member.sourcePath().endsWith("Child.java")).findFirst().orElseThrow();
+        var target = observation.members().stream()
+                .filter(member -> member.memberName().equals("run") && member.sourcePath().endsWith("Parent.java"))
+                .findFirst().orElseThrow();
+        assertEquals(List.of(target.technicalKey()), override.overriddenMemberKeys());
+    }
+
     private Observation observe(String source) throws Exception {
         Path root = Files.createDirectories(temporary.resolve("source"));
         Files.writeString(root.resolve("Sample.java"), source);

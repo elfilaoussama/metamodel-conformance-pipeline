@@ -212,7 +212,7 @@ final class JavacInheritedMemberObserver {
                     }
                 } else {
                     List<ClassifierObservation> productionCandidates = productionByQualifiedName.get(
-                            declaringType.getQualifiedName().toString());
+                            elements.getBinaryName(declaringType).toString());
                     if (productionCandidates == null || productionCandidates.isEmpty()) {
                         // Platform/dependency declarations are outside the canonical source graph.
                         continue;

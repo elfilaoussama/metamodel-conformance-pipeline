@@ -223,7 +223,7 @@ final class JavacDependencyEvidenceObserver {
                     continue;
                 }
                 Owner owner = ownerOf(
-                        root, trees, element, sourceByLocation, productionByName, supportByName);
+                        root, trees, elements, element, sourceByLocation, productionByName, supportByName);
                 if (owner == null || owner.classifier().id().equals(classifier.id())) {
                     continue;
                 }
@@ -326,7 +326,7 @@ final class JavacDependencyEvidenceObserver {
                 continue;
             }
             Owner ancestorOwner = ownerOfType(
-                    root, trees, ancestorType, sourceByLocation, productionByName, supportByName);
+                    root, trees, elements, ancestorType, sourceByLocation, productionByName, supportByName);
             if (ancestorOwner != null) {
                 for (Element candidate : ancestorType.getEnclosedElements()) {
                     if (!(candidate instanceof ExecutableElement inheritedMethod)
@@ -370,6 +370,7 @@ final class JavacDependencyEvidenceObserver {
     private static Owner ownerOfType(
             Path root,
             Trees trees,
+            Elements elements,
             TypeElement type,
             JavacSourceTypeIndex sourceByLocation,
             Map<String, List<ClassifierObservation>> productionByName,
@@ -379,7 +380,7 @@ final class JavacDependencyEvidenceObserver {
             ClassifierObservation classifier = sourceByLocation.classifier(type);
             return classifier == null ? null : new Owner(classifier, false);
         }
-        String qualifiedName = type.getQualifiedName().toString();
+        String qualifiedName = elements.getBinaryName(type).toString();
         ClassifierObservation production = unique(productionByName.get(qualifiedName));
         if (production != null) {
             return new Owner(production, true);
@@ -391,6 +392,7 @@ final class JavacDependencyEvidenceObserver {
     private static Owner ownerOf(
             Path root,
             Trees trees,
+            Elements elements,
             Element member,
             JavacSourceTypeIndex sourceByLocation,
             Map<String, List<ClassifierObservation>> productionByName,
@@ -399,7 +401,7 @@ final class JavacDependencyEvidenceObserver {
         if (!(enclosing instanceof TypeElement type)) {
             return null;
         }
-        return ownerOfType(root, trees, type, sourceByLocation, productionByName, supportByName);
+        return ownerOfType(root, trees, elements, type, sourceByLocation, productionByName, supportByName);
     }
 
     private static MemberObservation sourceMethodDeclaration(
