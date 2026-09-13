@@ -61,7 +61,11 @@ container_out=/workspace/out
 container_home="$container_out/home"
 container_gradle_home="$container_out/gradle"
 container_tmp="$container_out/tmp"
-gradle_runtime_opts="-Djava.io.tmpdir=$container_tmp"
+# Gradle wrappers read the unqualified networkTimeout system property. A
+# transient slow distribution download must not turn an otherwise reproducible
+# build context into missing dependency evidence. This is delivery tolerance,
+# not compilation or observation semantics.
+gradle_runtime_opts="-Djava.io.tmpdir=$container_tmp -DnetworkTimeout=60000"
 container_init=/workspace/mcp-init.gradle
 init_script="$resolution_root/mcp-init.gradle"
 
