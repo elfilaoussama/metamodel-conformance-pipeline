@@ -13,7 +13,7 @@ class ExactAlloyEncoderTest {
     void encodesAnExactRepositoryGraph() {
         String alloy = new ExactAlloyEncoder().encode(TestObservations.acyclic());
 
-        assertEquals(2, alloy.lines().filter(line -> line.startsWith("one sig C_")).count());
+        assertEquals(1, alloy.lines().filter(line -> line.startsWith("one sig C_")).count());
         assertTrue(alloy.contains("parents = (" + ExactAlloyEncoder.classifierAtom(TestObservations.B)
                 + "->" + ExactAlloyEncoder.classifierAtom(TestObservations.A)));
         assertTrue(alloy.contains("abstract sig NameToken"));
@@ -70,8 +70,8 @@ class ExactAlloyEncoderTest {
         assertTrue(overloaded.contains(first + "->P_1->T_" + Hashing.sha256("int")));
         assertTrue(overloaded.contains(second + "->P_0->T_" + Hashing.sha256("int")));
         assertTrue(overloaded.contains(second + "->P_1->T_" + Hashing.sha256("java.lang.String")));
-        assertEquals(2, overloaded.lines().filter(line -> line.startsWith("one sig T_")).count());
-        assertEquals(2, overloaded.lines().filter(line -> line.startsWith("one sig P_")).count());
+        assertEquals(1, overloaded.lines().filter(line -> line.startsWith("one sig T_")).count());
+        assertEquals(1, overloaded.lines().filter(line -> line.startsWith("one sig P_")).count());
         assertFalse(overloaded.contains("SignatureToken"));
     }
 }

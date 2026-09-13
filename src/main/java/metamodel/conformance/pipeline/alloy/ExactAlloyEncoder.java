@@ -27,6 +27,7 @@ import java.util.stream.Stream;
 
 public final class ExactAlloyEncoder {
     private static final int RELATION_CHUNK_SIZE = 64;
+    private static final int SIGNATURE_CHUNK_SIZE = 128;
 
     public String encode(Observation observation) {
         Map<String, String> nameAtoms = tokens(observation.members().stream()
@@ -40,7 +41,8 @@ public final class ExactAlloyEncoder {
         int positionCount = observation.members().stream()
                 .mapToInt(member -> member.parameterTypes().size()).max().orElse(0);
         Set<String> repositorySourcePaths = observation.units().stream()
-                .filter(unit -> unit.language() != Language.JAVA_ARCHIVE)
+                .filter(unit -> unit.language() != Language.JAVA_ARCHIVE
+                        && unit.language() != Language.JAVA_PLATFORM)
                 .map(SourceUnit::path)
                 .collect(Collectors.toUnmodifiableSet());
         List<String> sourceClassifierAtoms = observation.classifiers().stream()
@@ -92,20 +94,15 @@ public final class ExactAlloyEncoder {
                 .append("  body: one MethodBody\n")
                 .append("}\n\n");
 
-        observation.classifiers().forEach(item -> alloy.append("one sig ")
-                .append(classifierAtom(item.id())).append(" extends Classifier {}\n"));
-        observation.members().forEach(item -> alloy.append("one sig ")
-                .append(memberAtom(item.technicalKey())).append(" extends Member {}\n"));
-        observation.methodBodies().forEach(item -> alloy.append("one sig ")
-                .append(bodyAtom(item.technicalKey())).append(" extends MethodBody {}\n"));
-        observation.implementationBindings().forEach(item -> alloy.append("one sig ")
-                .append(bindingAtom(item.technicalKey())).append(" extends ImplementationBinding {}\n"));
-        nameAtoms.values().forEach(atom -> alloy.append("one sig ").append(atom).append(" extends NameToken {}\n"));
-        typeAtoms.values().forEach(atom -> alloy.append("one sig ").append(atom).append(" extends TypeToken {}\n"));
-        packageAtoms.values().forEach(atom -> alloy.append("one sig ").append(atom).append(" extends PackageToken {}\n"));
-        for (int position = 0; position < positionCount; position++) {
-            alloy.append("one sig P_").append(position).append(" extends PositionToken {}\n");
-        }
+        signatures(alloy, observation.classifiers().stream().map(item -> classifierAtom(item.id())).toList(), "Classifier");
+        signatures(alloy, observation.members().stream().map(item -> memberAtom(item.technicalKey())).toList(), "Member");
+        signatures(alloy, observation.methodBodies().stream().map(item -> bodyAtom(item.technicalKey())).toList(), "MethodBody");
+        signatures(alloy, observation.implementationBindings().stream().map(item -> bindingAtom(item.technicalKey())).toList(), "ImplementationBinding");
+        signatures(alloy, nameAtoms.values().stream().toList(), "NameToken");
+        signatures(alloy, typeAtoms.values().stream().toList(), "TypeToken");
+        signatures(alloy, packageAtoms.values().stream().toList(), "PackageToken");
+        signatures(alloy, java.util.stream.IntStream.range(0, positionCount)
+                .mapToObj(position -> "P_" + position).toList(), "PositionToken");
         alloy.append("\nfun SourceClassifiers : set Classifier {\n  ")
                 .append(sourceClassifierAtoms.isEmpty() ? "none" : String.join(" + ", sourceClassifierAtoms))
                 .append("\n}\n");
@@ -281,6 +278,15 @@ public final class ExactAlloyEncoder {
             alloy.append('(').append(String.join(" + ", sorted.subList(start, end))).append(')');
         }
         alloy.append('\n');
+    }
+
+    private static void signatures(StringBuilder alloy, List<String> atoms, String parent) {
+        List<String> sorted = atoms.stream().sorted().toList();
+        for (int start = 0; start < sorted.size(); start += SIGNATURE_CHUNK_SIZE) {
+            int end = Math.min(start + SIGNATURE_CHUNK_SIZE, sorted.size());
+            alloy.append("one sig ").append(String.join(", ", sorted.subList(start, end)))
+                    .append(" extends ").append(parent).append(" {}\n");
+        }
     }
 
     private static String scope(Observation o, int names, int types, int packages, int positions) {
