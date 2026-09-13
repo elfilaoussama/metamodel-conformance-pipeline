@@ -317,7 +317,7 @@ class JavaDependencyAwareCompilationContextIsolationTest {
                         Integer.toHexString(item.sourcePath().hashCode()).repeat(64).substring(0, 64)))
                 .toList();
         return new Observation(
-                "12", "spoon-java", "test", List.of(), Set.of(), units, classifiers,
+                "13", "spoon-java", "test", List.of(), Set.of(), units, classifiers,
                 List.of(), List.of(), List.of(), unresolved, List.of());
     }
 

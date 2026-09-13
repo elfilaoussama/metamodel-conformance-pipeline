@@ -115,7 +115,7 @@ class IdentityBridgeIntegrityTest {
         assertNotEquals(left.technicalKey(), right.technicalKey());
 
         Observation observation = new Observation(
-                "12", "identity-bridge-audit", "1", List.of(),
+                "13", "identity-bridge-audit", "1", List.of(),
                 Set.of(EvidenceKind.DECLARATION_OWNERSHIP, EvidenceKind.LOCAL_SIGNATURES,
                         EvidenceKind.METHOD_ABSTRACTION, EvidenceKind.METHOD_SCOPE),
                 List.of(
