@@ -60,7 +60,7 @@ class JavaDependencyAwareCompilationContextIsolationTest {
         Observation observed = new JavaDependencyAwareSourceObserver(inputs, delegate)
                 .observe(temporary, Set.of());
 
-        assertEquals("12", observed.schemaVersion());
+        assertEquals("13", observed.schemaVersion());
         assertTrue(observed.unresolvedParents().isEmpty(), () -> observed.unresolvedParents().toString());
         assertTrue(observed.completeEvidence().contains(EvidenceKind.HIERARCHY));
         assertTrue(observed.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
@@ -105,6 +105,36 @@ class JavaDependencyAwareCompilationContextIsolationTest {
         assertTrue(observed.diagnostics().stream().anyMatch(item ->
                 item.kind() == DiagnosticKind.EVIDENCE_INCOMPLETE
                         && item.message().contains("not owned by an observed compilation context")));
+    }
+
+    @Test
+    void materializesPlatformParentsThroughTheObservedCompilerContext() throws Exception {
+        Path source = temporary.resolve("code/main/app/Child.java");
+        Files.createDirectories(source.getParent());
+        Files.writeString(source, "package app; public class Child extends java.lang.RuntimeException {}\n");
+        Path manifest = temporary.resolve("platform-context.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tmain\tcode/main") + "\n");
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+        String id = "cls_" + "8".repeat(64);
+        ClassifierObservation child = classifier(id, "app.Child", "code/main/app/Child.java");
+        Observation base = baseObservation(
+                List.of(child), List.of(new UnresolvedParent(id, "java.lang.RuntimeException", child.sourcePath(), 1)));
+
+        Observation observed = new JavaDependencyAwareSourceObserver(inputs, (root, parents) -> base)
+                .observe(temporary, Set.of());
+
+        assertEquals("13", observed.schemaVersion());
+        assertTrue(observed.unresolvedParents().isEmpty(), () -> observed.unresolvedParents().toString());
+        assertTrue(observed.completeEvidence().contains(EvidenceKind.HIERARCHY));
+        assertTrue(observed.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
+        assertEquals(1, observed.platformEvidence().size());
+        assertEquals("main", observed.platformEvidence().get(0).contextId());
+        assertFalse(observed.platformEvidence().get(0).terminalTypeNames().isEmpty());
+        assertTrue(observed.units().stream().anyMatch(unit -> unit.language() == Language.JAVA_PLATFORM));
+        assertTrue(observed.classifiers().stream().anyMatch(item ->
+                item.qualifiedName().equals("java.lang.RuntimeException")));
     }
 
     @Test

@@ -10,6 +10,7 @@ import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.model.MemberObservation;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
+import metamodel.conformance.pipeline.model.PlatformEvidence;
 import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.model.UnresolvedParent;
 
@@ -31,7 +32,7 @@ import java.util.TreeSet;
 /** Adds dependency bytecode evidence under exact build-observed compilation contexts. */
 public final class JavaDependencyAwareSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = JavaImplementationSourceObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.10.0";
+    public static final String ADAPTER_VERSION = "1.11.0";
 
     private final JavaDependencyInputs dependencyInputs;
     private final SourceObserver delegate;
@@ -95,6 +96,8 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
             Map<String, String> supportParentByUnresolvedKey = new HashMap<>();
             Map<String, ClassifierObservation> supportClassifiersById = new TreeMap<>();
             Map<String, MemberObservation> supportMembersByKey = new TreeMap<>();
+            Map<String, SourceUnit> supportUnitsByPath = new TreeMap<>();
+            Map<String, PlatformEvidence> platformEvidenceByContext = new TreeMap<>();
             Map<String, List<String>> inheritedByClassifier = new HashMap<>();
             Map<String, List<String>> overridesByMember = new HashMap<>();
             Map<String, String> returnTypesByMember = new HashMap<>();
@@ -124,7 +127,6 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
                     JavaDependencyClasspath.Result evidenceClasspath = JavaDependencyClasspath.resolve(
                             dependencyInputs.archivePathsForContext(evidenceContextId));
                     Set<String> roots = unresolved.stream().map(UnresolvedParent::targetName)
-                            .filter(name -> evidenceClasspath.ownerOfType(name) != null)
                             .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
                     if (!evidenceContextId.equals(context.id())) {
                         for (String target : roots) {
@@ -144,7 +146,19 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
                         evidenceClasspath.verifyUnchanged();
                         continue;
                     }
-                    JavaDependencySymbols.Result symbols = JavaDependencySymbols.resolve(evidenceClasspath, roots);
+                    JavaDependencySymbols.Result symbols;
+                    JavaPlatformProvenance platform;
+                    try (JavacCompilationContext evidenceJavac = JavacCompilationContext.prepare(
+                            root, grouping.context(evidenceContextId), grouping.filesByContext(), dependencyInputs)) {
+                        if (!evidenceJavac.complete()) {
+                            dependencyEvidenceComplete = false;
+                            diagnostics.addAll(evidenceJavac.diagnostics());
+                            continue;
+                        }
+                        platform = JavaPlatformProvenance.capture(grouping.context(evidenceContextId));
+                        symbols = JavaDependencySymbols.resolve(
+                                evidenceClasspath, roots, platform, evidenceJavac.options());
+                    }
                     if (!symbols.unresolvedRootTypes().isEmpty()) {
                         dependencyEvidenceComplete = false;
                         for (String missing : symbols.unresolvedRootTypes()) {
@@ -156,6 +170,8 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
                     JavaDependencyObservation.Result support = JavaDependencyObservation.materialize(symbols);
                     mergeSupport(support, contextSupportClassifiers, contextSupportMembers);
                     mergeSupport(support, supportClassifiersById, supportMembersByKey);
+                    mergeSupportUnits(support.units(), supportUnitsByPath);
+                    mergePlatformEvidence(platformEvidenceByContext, platform, symbols);
                     Set<String> resolvedRoots = new TreeSet<>(roots);
                     resolvedRoots.removeAll(symbols.unresolvedRootTypes());
                     for (UnresolvedParent item : unresolved) {
@@ -287,10 +303,11 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
             JavaDependencyClasspath.Result allDependencies = JavaDependencyClasspath.resolve(dependencyInputs);
             allDependencies.verifyUnchanged();
             return new Observation(
-                    "12", ADAPTER_ID, ADAPTER_VERSION, base.externalParents(), evidence,
-                    mergeUnits(base.units(), allDependencies.units()), classifiers, members,
+                    "13", ADAPTER_ID, ADAPTER_VERSION, base.externalParents(), evidence,
+                    mergeUnits(base.units(), mergedSupportUnits(allDependencies.units(), supportUnitsByPath.values())), classifiers, members,
                     base.methodBodies(), base.implementationBindings(), remainingUnresolved,
-                    mergeDiagnostics(base.diagnostics(), diagnostics));
+                    mergeDiagnostics(base.diagnostics(), diagnostics),
+                    List.copyOf(platformEvidenceByContext.values()));
         } catch (ObservationException exception) {
             throw exception;
         } catch (IOException | RuntimeException failure) {
@@ -332,6 +349,56 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
                         "dependency support member identity collision: " + member.technicalKey());
             }
         }
+    }
+
+    private static void mergeSupportUnits(List<SourceUnit> units, Map<String, SourceUnit> target)
+            throws ObservationException {
+        for (SourceUnit unit : units) {
+            SourceUnit previous = target.putIfAbsent(unit.path(), unit);
+            if (previous != null && !previous.equals(unit)) {
+                throw new ObservationException("support source-unit identity collision: " + unit.path());
+            }
+        }
+    }
+
+    private static List<SourceUnit> mergedSupportUnits(
+            List<SourceUnit> dependencies, java.util.Collection<SourceUnit> supportUnits) {
+        Map<String, SourceUnit> merged = new TreeMap<>();
+        for (SourceUnit unit : dependencies) merged.put(unit.path(), unit);
+        for (SourceUnit unit : supportUnits) {
+            SourceUnit previous = merged.putIfAbsent(unit.path(), unit);
+            if (previous != null && !previous.equals(unit)) {
+                throw new IllegalArgumentException("support source-unit identity collision: " + unit.path());
+            }
+        }
+        return List.copyOf(merged.values());
+    }
+
+    private static void mergePlatformEvidence(
+            Map<String, PlatformEvidence> target,
+            JavaPlatformProvenance provenance,
+            JavaDependencySymbols.Result symbols) throws ObservationException {
+        List<String> terminals = symbols.types().stream()
+                .filter(type -> type.sourceLanguage() == Language.JAVA_PLATFORM)
+                .filter(type -> type.parentQualifiedNames().isEmpty())
+                .map(JavaDependencySymbols.TypeSymbol::qualifiedName).sorted().toList();
+        if (terminals.isEmpty()) return;
+        PlatformEvidence candidate = provenance.withTerminalTypes(terminals);
+        PlatformEvidence previous = target.get(candidate.contextId());
+        if (previous == null) {
+            target.put(candidate.contextId(), candidate);
+            return;
+        }
+        if (!previous.compilerIdentity().equals(candidate.compilerIdentity())
+                || !previous.compilerSemantics().equals(candidate.compilerSemantics())
+                || !previous.platformIdentity().equals(candidate.platformIdentity())
+                || !previous.platformContentSha256().equals(candidate.platformContentSha256())) {
+            throw new ObservationException("conflicting platform provenance for compilation context: "
+                    + candidate.contextId());
+        }
+        List<String> combined = new ArrayList<>(previous.terminalTypeNames());
+        combined.addAll(candidate.terminalTypeNames());
+        target.put(candidate.contextId(), previous.withTerminalTypeNames(combined));
     }
 
     private static ObservationDiagnostic incompleteDiagnostic(

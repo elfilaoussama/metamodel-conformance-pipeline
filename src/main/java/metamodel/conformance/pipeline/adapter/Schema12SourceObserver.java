@@ -7,7 +7,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
 
-/** Upgrades frontends that do not yet emit schema-12 override/return-type evidence. */
+/** Upgrades legacy frontends to the current schema while withholding unavailable Java-only evidence. */
 final class Schema12SourceObserver implements SourceObserver {
     private final SourceObserver delegate;
 
@@ -26,7 +26,7 @@ final class Schema12SourceObserver implements SourceObserver {
                         member.abstraction(), member.scope(), null, List.of()))
                 .toList();
         return new Observation(
-                "12",
+                "13",
                 base.adapterId(),
                 base.adapterVersion(),
                 base.externalParents(),

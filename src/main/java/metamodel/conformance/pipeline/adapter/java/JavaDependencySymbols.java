@@ -8,6 +8,7 @@ import metamodel.conformance.pipeline.model.MemberKind;
 import metamodel.conformance.pipeline.model.MemberScope;
 import metamodel.conformance.pipeline.model.MemberVisibility;
 import metamodel.conformance.pipeline.model.MethodAbstraction;
+import metamodel.conformance.pipeline.model.Language;
 
 import com.sun.source.util.JavacTask;
 
@@ -52,13 +53,25 @@ final class JavaDependencySymbols {
 
     static Result resolve(JavaDependencyClasspath.Result classpath, Set<String> rootTypeNames)
             throws ObservationException {
+        return resolve(classpath, rootTypeNames, null, List.of());
+    }
+
+    /**
+     * Resolves dependency and, when supplied, platform symbols through the exact javac options
+     * reconstructed for a compilation context. A platform symbol is never inferred by name.
+     */
+    static Result resolve(
+            JavaDependencyClasspath.Result classpath,
+            Set<String> rootTypeNames,
+            JavaPlatformProvenance platform,
+            List<String> compilerOptions) throws ObservationException {
         Set<String> requested = rootTypeNames == null ? Set.of() : rootTypeNames.stream()
                 .filter(name -> name != null && !name.isBlank())
                 .collect(java.util.stream.Collectors.toCollection(java.util.TreeSet::new));
         if (requested.isEmpty()) {
             return new Result(List.of(), Set.of());
         }
-        if (classpath == null || classpath.entries().isEmpty()) {
+        if (classpath == null || (classpath.entries().isEmpty() && platform == null)) {
             return new Result(List.of(), Set.copyOf(requested));
         }
 
@@ -69,13 +82,19 @@ final class JavaDependencySymbols {
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
                 diagnostics, Locale.ROOT, StandardCharsets.UTF_8)) {
-            String classpathValue = classpath.paths().stream().map(Object::toString)
-                    .collect(java.util.stream.Collectors.joining(File.pathSeparator));
+            List<String> options = new ArrayList<>();
+            if (compilerOptions != null && !compilerOptions.isEmpty()) {
+                options.addAll(compilerOptions);
+            } else {
+                String classpathValue = classpath.paths().stream().map(Object::toString)
+                        .collect(java.util.stream.Collectors.joining(File.pathSeparator));
+                options.addAll(List.of("-proc:none", "-implicit:none", "-Xlint:none", "-classpath", classpathValue));
+            }
             JavacTask task = (JavacTask) compiler.getTask(
                     null,
                     fileManager,
                     diagnostics,
-                    List.of("-proc:none", "-implicit:none", "-classpath", classpathValue, "-Xlint:none"),
+                    options,
                     null,
                     List.of());
             Elements elements = task.getElements();
@@ -96,7 +115,7 @@ final class JavaDependencySymbols {
                 }
                 String qualifiedName = type.getQualifiedName().toString();
                 JavaDependencyClasspath.Entry archive = classpath.ownerOfType(qualifiedName);
-                if (archive == null) {
+                if (archive == null && platform == null) {
                     unresolved.add(requestedName);
                     continue;
                 }
@@ -108,7 +127,7 @@ final class JavaDependencySymbols {
                         continue;
                     }
                     String parentName = parentType.getQualifiedName().toString();
-                    if (classpath.ownerOfType(parentName) != null) {
+                    if (classpath.ownerOfType(parentName) != null || platform != null) {
                         parents.add(parentName);
                         if (!materialized.containsKey(parentName)) {
                             pending.addLast(parentName);
@@ -125,8 +144,9 @@ final class JavaDependencySymbols {
                 }
                 members = members.stream().distinct().sorted(MemberSymbol.ORDER).toList();
                 TypeSymbol symbol = new TypeSymbol(
-                        archive.unit().path(),
-                        archive.unit().sha256(),
+                        archive == null ? platform.unitPath() : archive.unit().path(),
+                        archive == null ? platform.sha256() : archive.unit().sha256(),
+                        archive == null ? Language.JAVA_PLATFORM : Language.JAVA_ARCHIVE,
                         qualifiedName,
                         packageName(elements, type),
                         classifierKind(type.getKind()),
@@ -146,7 +166,14 @@ final class JavaDependencySymbols {
                 throw new ObservationException("dependency bytecode observation failed: " + message);
             }
 
+            Set<String> materializedNames = materialized.values().stream()
+                    .map(TypeSymbol::qualifiedName).collect(java.util.stream.Collectors.toSet());
             List<TypeSymbol> canonical = materialized.values().stream().distinct()
+                    .map(type -> new TypeSymbol(
+                            type.archiveUnitPath(), type.archiveSha256(), type.sourceLanguage(),
+                            type.qualifiedName(), type.packageName(), type.kind(), type.abstraction(),
+                            type.parentQualifiedNames().stream().filter(materializedNames::contains).toList(),
+                            type.members()))
                     .sorted(Comparator.comparing(TypeSymbol::qualifiedName)
                             .thenComparing(TypeSymbol::archiveUnitPath))
                     .toList();
@@ -236,6 +263,7 @@ final class JavaDependencySymbols {
     record TypeSymbol(
             String archiveUnitPath,
             String archiveSha256,
+            Language sourceLanguage,
             String qualifiedName,
             String packageName,
             ClassifierKind kind,
@@ -245,6 +273,19 @@ final class JavaDependencySymbols {
         TypeSymbol {
             parentQualifiedNames = List.copyOf(parentQualifiedNames);
             members = List.copyOf(members);
+        }
+
+        TypeSymbol(
+                String archiveUnitPath,
+                String archiveSha256,
+                String qualifiedName,
+                String packageName,
+                ClassifierKind kind,
+                ClassifierAbstraction abstraction,
+                List<String> parentQualifiedNames,
+                List<MemberSymbol> members) {
+            this(archiveUnitPath, archiveSha256, Language.JAVA_ARCHIVE, qualifiedName, packageName,
+                    kind, abstraction, parentQualifiedNames, members);
         }
     }
 

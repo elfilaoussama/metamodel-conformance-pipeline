@@ -19,7 +19,8 @@ public record Observation(
         List<MethodBodyObservation> methodBodies,
         List<ImplementationBindingObservation> implementationBindings,
         List<UnresolvedParent> unresolvedParents,
-        List<ObservationDiagnostic> diagnostics) {
+        List<ObservationDiagnostic> diagnostics,
+        List<PlatformEvidence> platformEvidence) {
 
     public Observation {
         requireText(schemaVersion, "schemaVersion");
@@ -47,7 +48,11 @@ public record Observation(
                 .sorted(Comparator.comparing(ObservationDiagnostic::sourcePath)
                         .thenComparingInt(ObservationDiagnostic::line)
                         .thenComparing(item -> item.kind().name())
-                        .thenComparing(ObservationDiagnostic::message))
+                .thenComparing(ObservationDiagnostic::message))
+                .toList();
+        platformEvidence = platformEvidence == null ? List.of() : List.copyOf(platformEvidence).stream()
+                .sorted(Comparator.comparing(PlatformEvidence::contextId)
+                        .thenComparing(PlatformEvidence::platformContentSha256))
                 .toList();
         validateReferences(
                 units, classifiers, members, methodBodies, implementationBindings,
@@ -59,6 +64,24 @@ public record Observation(
                 && !completeEvidence.isEmpty()) {
             throw new IllegalArgumentException("parse diagnostics forbid complete evidence claims");
         }
+    }
+
+    public Observation(
+            String schemaVersion,
+            String adapterId,
+            String adapterVersion,
+            List<String> externalParents,
+            Set<EvidenceKind> completeEvidence,
+            List<SourceUnit> units,
+            List<ClassifierObservation> classifiers,
+            List<MemberObservation> members,
+            List<MethodBodyObservation> methodBodies,
+            List<ImplementationBindingObservation> implementationBindings,
+            List<UnresolvedParent> unresolvedParents,
+            List<ObservationDiagnostic> diagnostics) {
+        this(schemaVersion, adapterId, adapterVersion, externalParents, completeEvidence,
+                units, classifiers, members, methodBodies, implementationBindings,
+                unresolvedParents, diagnostics, List.of());
     }
 
     public Observation(

@@ -4,13 +4,14 @@
     xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
     xmlns:ecore="http://www.eclipse.org/emf/2002/Ecore"
     name="observation"
-    nsURI="urn:metamodel-conformance:observation:12"
+    nsURI="urn:metamodel-conformance:observation:13"
     nsPrefix="obs">
   <eClassifiers xsi:type="ecore:EEnum" name="Language">
     <eLiterals name="JAVA"/>
     <eLiterals name="JAVA_ARCHIVE" value="1"/>
-    <eLiterals name="PYTHON" value="2"/>
-    <eLiterals name="CPP" value="3"/>
+    <eLiterals name="JAVA_PLATFORM" value="2"/>
+    <eLiterals name="PYTHON" value="3"/>
+    <eLiterals name="CPP" value="4"/>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EEnum" name="ClassifierKind">
     <eLiterals name="CLASS"/>
@@ -80,6 +81,7 @@
     <eStructuralFeatures xsi:type="ecore:EReference" name="implementationBindings" upperBound="-1" containment="true" eType="#//ImplementationBinding"/>
     <eStructuralFeatures xsi:type="ecore:EReference" name="unresolvedParents" upperBound="-1" containment="true" eType="#//UnresolvedParent"/>
     <eStructuralFeatures xsi:type="ecore:EReference" name="diagnostics" upperBound="-1" containment="true" eType="#//ObservationDiagnostic"/>
+    <eStructuralFeatures xsi:type="ecore:EReference" name="platformEvidence" upperBound="-1" containment="true" eType="#//PlatformEvidence"/>
   </eClassifiers>
   <eClassifiers xsi:type="ecore:EClass" name="SourceUnit">
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="language" lowerBound="1" eType="#//Language"/>
@@ -138,5 +140,13 @@
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="sourcePath" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="line" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EInt"/>
     <eStructuralFeatures xsi:type="ecore:EAttribute" name="message" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+  </eClassifiers>
+  <eClassifiers xsi:type="ecore:EClass" name="PlatformEvidence">
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="contextId" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="compilerIdentity" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="compilerSemantics" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="platformIdentity" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="platformContentSha256" lowerBound="1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
+    <eStructuralFeatures xsi:type="ecore:EAttribute" name="terminalTypeNames" upperBound="-1" eType="ecore:EDataType http://www.eclipse.org/emf/2002/Ecore#//EString"/>
   </eClassifiers>
 </ecore:EPackage>

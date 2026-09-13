@@ -317,7 +317,7 @@ public final class JavaImplementationSourceObserver implements SourceObserver {
         List<ObservationDiagnostic> diagnostics = new ArrayList<>(base.diagnostics());
         diagnostics.addAll(extraDiagnostics);
         return new Observation(
-                "12",
+                "13",
                 ADAPTER_ID,
                 ADAPTER_VERSION,
                 base.externalParents(),

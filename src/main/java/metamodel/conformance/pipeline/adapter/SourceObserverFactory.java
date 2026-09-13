@@ -46,8 +46,8 @@ public final class SourceObserverFactory {
                 rejectJavaDependencies(dependencies, "C++");
                 yield new Schema12SourceObserver(new ClangCppObserver());
             }
-            case JAVA_ARCHIVE -> throw new IllegalArgumentException(
-                    "JAVA_ARCHIVE is dependency evidence, not a source language");
+            case JAVA_ARCHIVE, JAVA_PLATFORM -> throw new IllegalArgumentException(
+                    language + " is evidence, not a source language");
         };
     }
 

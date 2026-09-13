@@ -39,7 +39,7 @@ class JavaImplementationSourceObserverTest {
 
         Observation observation = new JavaImplementationSourceObserver(List.of()).observe(source, Set.of());
 
-        assertEquals("12", observation.schemaVersion());
+        assertEquals("13", observation.schemaVersion());
         assertTrue(observation.completeEvidence().contains(EvidenceKind.METHOD_BODIES));
         assertTrue(observation.completeEvidence().contains(EvidenceKind.METHOD_ABSTRACTION));
         assertTrue(observation.completeEvidence().contains(EvidenceKind.IMPLEMENTATION_BINDINGS));

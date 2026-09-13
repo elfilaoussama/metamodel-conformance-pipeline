@@ -4,6 +4,7 @@ import metamodel.conformance.pipeline.adapter.ObservationException;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.MemberKind;
 import metamodel.conformance.pipeline.model.MemberObservation;
+import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.util.Hashing;
 
 import java.util.ArrayList;
@@ -88,7 +89,12 @@ final class JavaDependencyObservation {
                     type.abstraction()));
         }
 
+        List<SourceUnit> units = symbols.types().stream()
+                .map(type -> new SourceUnit(type.sourceLanguage(), type.archiveUnitPath(), type.archiveSha256()))
+                .distinct().sorted(Comparator.comparing(SourceUnit::path)).toList();
+
         return new Result(
+                units,
                 classifiers.stream().sorted(Comparator.comparing(ClassifierObservation::id)).toList(),
                 members.stream().sorted(Comparator.comparing(MemberObservation::technicalKey)).toList(),
                 Map.copyOf(classifierIds),
@@ -126,11 +132,13 @@ final class JavaDependencyObservation {
     }
 
     record Result(
+            List<SourceUnit> units,
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,
             Map<String, String> classifierIdByQualifiedName,
             Map<MemberSignature, String> memberKeyBySignature) {
         Result {
+            units = List.copyOf(units);
             classifiers = List.copyOf(classifiers);
             members = List.copyOf(members);
             classifierIdByQualifiedName = Map.copyOf(classifierIdByQualifiedName);

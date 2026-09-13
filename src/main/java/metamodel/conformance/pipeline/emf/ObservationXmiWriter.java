@@ -7,6 +7,7 @@ import metamodel.conformance.pipeline.model.MemberObservation;
 import metamodel.conformance.pipeline.model.MethodBodyObservation;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
+import metamodel.conformance.pipeline.model.PlatformEvidence;
 import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.model.UnresolvedParent;
 import metamodel.conformance.pipeline.util.ArtifactLimits;
@@ -173,6 +174,18 @@ public final class ObservationXmiWriter {
             set(item, "line", source.line());
             set(item, "message", source.message());
             diagnostics.add(item);
+        }
+
+        EList<EObject> platformEvidence = (EList<EObject>) root.eGet(feature(root, "platformEvidence"));
+        for (PlatformEvidence source : observation.platformEvidence()) {
+            EObject item = ePackage.getEFactoryInstance().create(schema.classifier("PlatformEvidence"));
+            set(item, "contextId", source.contextId());
+            set(item, "compilerIdentity", source.compilerIdentity());
+            set(item, "compilerSemantics", source.compilerSemantics());
+            set(item, "platformIdentity", source.platformIdentity());
+            set(item, "platformContentSha256", source.platformContentSha256());
+            ((EList<String>) item.eGet(feature(item, "terminalTypeNames"))).addAll(source.terminalTypeNames());
+            platformEvidence.add(item);
         }
 
         ResourceSetImpl resourceSet = new ResourceSetImpl();

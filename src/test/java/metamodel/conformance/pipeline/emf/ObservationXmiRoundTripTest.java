@@ -17,6 +17,7 @@ import metamodel.conformance.pipeline.model.MethodAbstraction;
 import metamodel.conformance.pipeline.model.MethodBodyObservation;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
+import metamodel.conformance.pipeline.model.PlatformEvidence;
 import metamodel.conformance.pipeline.model.SourceUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -63,7 +64,10 @@ class ObservationXmiRoundTripTest {
                 base.completeEvidence(), base.units(), base.classifiers(), base.members(), base.methodBodies(),
                 base.implementationBindings(), base.unresolvedParents(), List.of(new ObservationDiagnostic(
                         DiagnosticKind.EVIDENCE_INCOMPLETE,
-                        base.units().get(0).path(), 0, "dependency classpath is incomplete")));
+                        base.units().get(0).path(), 0, "dependency classpath is incomplete")),
+                List.of(new PlatformEvidence(
+                        "main", "Eclipse Adoptium 17.0.20", "source=;target=;release=17;preview=false",
+                        "runtime-jdk-17", "a".repeat(64), List.of("java.lang.Object"))));
         Path xmi = temporary.resolve("evidence-diagnostic.xmi");
         new ObservationXmiWriter().write(observation, xmi);
         Observation replayed = new ObservationXmiReader().read(xmi);
@@ -90,7 +94,7 @@ class ObservationXmiRoundTripTest {
                 MethodAbstraction.CONCRETE, MemberScope.INSTANCE, "java.lang.Number",
                 List.of(inheritedMemberKey));
         Observation observation = new Observation(
-                "12", "test", "1", List.of(),
+                "13", "test", "1", List.of(),
                 Set.of(EvidenceKind.HIERARCHY, EvidenceKind.DECLARATION_OWNERSHIP,
                         EvidenceKind.METHOD_BODIES, EvidenceKind.METHOD_ABSTRACTION,
                         EvidenceKind.IMPLEMENTATION_BINDINGS, EvidenceKind.CLASSIFIER_ABSTRACTION,
@@ -128,7 +132,7 @@ class ObservationXmiRoundTripTest {
 
     private static Observation schema12(Observation base) {
         return new Observation(
-                "12", base.adapterId(), base.adapterVersion(), base.externalParents(),
+                "13", base.adapterId(), base.adapterVersion(), base.externalParents(),
                 base.completeEvidence(), base.units(), base.classifiers(), base.members(), List.of(), List.of(),
                 base.unresolvedParents(), base.diagnostics());
     }

@@ -16,6 +16,7 @@ import metamodel.conformance.pipeline.model.MethodAbstraction;
 import metamodel.conformance.pipeline.model.MethodBodyObservation;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
+import metamodel.conformance.pipeline.model.PlatformEvidence;
 import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.model.UnresolvedParent;
 import metamodel.conformance.pipeline.util.ArtifactLimits;
@@ -140,12 +141,20 @@ public final class ObservationXmiReader {
                     DiagnosticKind.valueOf(value(item, "kind").toString()),
                     string(item, "sourcePath"), integer(item, "line"), string(item, "message")));
         }
+        List<PlatformEvidence> platformEvidence = new ArrayList<>();
+        for (EObject item : (EList<EObject>) value(root, "platformEvidence")) {
+            platformEvidence.add(new PlatformEvidence(
+                    string(item, "contextId"), string(item, "compilerIdentity"),
+                    string(item, "compilerSemantics"), string(item, "platformIdentity"),
+                    string(item, "platformContentSha256"),
+                    new ArrayList<>((EList<String>) value(item, "terminalTypeNames"))));
+        }
         Set<EvidenceKind> completeEvidence = ((EList<Object>) value(root, "completeEvidence")).stream()
                 .map(Object::toString).map(EvidenceKind::valueOf).collect(Collectors.toUnmodifiableSet());
         return new Observation(
                 string(root, "schemaVersion"), string(root, "adapterId"), string(root, "adapterVersion"),
                 externalParents, completeEvidence, units, classifiers, members, bodies, bindings,
-                unresolved, diagnostics);
+                unresolved, diagnostics, platformEvidence);
     }
 
     private static Object value(EObject object, String name) throws IOException {
