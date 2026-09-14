@@ -107,7 +107,7 @@ class DependencySupportInvariantTest {
         String supportAtom = ExactAlloyEncoder.classifierAtom(supportId);
         String sourceScope = alloy.substring(
                 alloy.indexOf("fun SourceClassifiers"),
-                alloy.indexOf("fact ExactObservation"));
+                alloy.indexOf("fact Exactparents"));
         assertTrue(sourceScope.contains(sourceAtom));
         assertFalse(sourceScope.contains(supportAtom));
 
