@@ -5,9 +5,11 @@ import metamodel.conformance.pipeline.invariant.ProjectionRelation;
 import metamodel.conformance.pipeline.invariant.ProjectionRoot;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.ImplementationBindingObservation;
+import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.model.MemberObservation;
 import metamodel.conformance.pipeline.model.MethodBodyObservation;
 import metamodel.conformance.pipeline.model.Observation;
+import metamodel.conformance.pipeline.model.SourceUnit;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -27,6 +29,9 @@ final class AlloyWorkUnitPlanner {
 
     List<Observation> plan(Observation observation, InvariantDefinition definition) {
         Map<String, Set<String>> graph = graph(observation, definition.partitionRelations());
+        if (requiresSourceRootedHierarchyPlan(observation, definition)) {
+            return sourceRootedHierarchyPlan(observation, definition, graph);
+        }
         Set<String> visited = new HashSet<>();
         List<Set<String>> components = new ArrayList<>();
         for (String node : graph.keySet()) {
@@ -48,6 +53,94 @@ final class AlloyWorkUnitPlanner {
             }
         }
         if (!packed.isEmpty()) result.add(project(observation, packed, definition.partitionRelations()));
+        return List.copyOf(result);
+    }
+
+    /**
+     * The hierarchy invariants quantify only source classifiers.  When an observation supplies
+     * external hierarchy support, sibling source branches that meet at a shared support type are
+     * semantically independent: evaluating a source classifier needs its ancestors, never its
+     * descendants.  Project each source root with that complete upward closure so a common
+     * platform root does not turn the whole repository into one Alloy instance.
+     */
+    private static boolean requiresSourceRootedHierarchyPlan(
+            Observation observation, InvariantDefinition definition) {
+        if (!definition.partitionRelations().contains(ProjectionRelation.PARENTS)) return false;
+        Set<String> sourcePaths = sourcePaths(observation);
+        return observation.classifiers().stream()
+                .anyMatch(classifier -> !sourcePaths.contains(classifier.sourcePath()));
+    }
+
+    private static List<Observation> sourceRootedHierarchyPlan(
+            Observation observation,
+            InvariantDefinition definition,
+            Map<String, Set<String>> graph) {
+        Map<String, Set<String>> parents = parentEdges(observation, definition.partitionRelations());
+        Set<String> sourcePaths = sourcePaths(observation);
+        List<Set<String>> closures = observation.classifiers().stream()
+                .filter(classifier -> sourcePaths.contains(classifier.sourcePath()))
+                .map(classifier -> upwardClosure(classifierNode(classifier.id()), graph, parents))
+                .toList();
+        return pack(observation, closures, definition.partitionRelations());
+    }
+
+    private static Set<String> sourcePaths(Observation observation) {
+        return observation.units().stream()
+                .filter(unit -> unit.language() != Language.JAVA_ARCHIVE
+                        && unit.language() != Language.JAVA_PLATFORM)
+                .map(SourceUnit::path)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
+    }
+
+    private static Map<String, Set<String>> parentEdges(
+            Observation observation, Set<ProjectionRelation> relations) {
+        Map<String, Set<String>> result = new TreeMap<>();
+        if (!relations.contains(ProjectionRelation.PARENTS)) return result;
+        for (ClassifierObservation classifier : observation.classifiers()) {
+            result.put(classifierNode(classifier.id()), classifier.parentIds().stream()
+                    .map(AlloyWorkUnitPlanner::classifierNode)
+                    .collect(java.util.stream.Collectors.toCollection(TreeSet::new)));
+        }
+        return result;
+    }
+
+    private static Set<String> upwardClosure(
+            String root, Map<String, Set<String>> graph, Map<String, Set<String>> parents) {
+        Set<String> result = new TreeSet<>();
+        ArrayDeque<String> pending = new ArrayDeque<>();
+        pending.add(root);
+        while (!pending.isEmpty()) {
+            String node = pending.removeFirst();
+            if (!result.add(node)) continue;
+            for (String adjacent : graph.get(node)) {
+                boolean classifierEdge = node.startsWith(CLASSIFIER_PREFIX)
+                        && adjacent.startsWith(CLASSIFIER_PREFIX);
+                if (!classifierEdge || parents.getOrDefault(node, Set.of()).contains(adjacent)) {
+                    pending.addLast(adjacent);
+                }
+            }
+        }
+        return result;
+    }
+
+    private static List<Observation> pack(
+            Observation observation, List<Set<String>> closures, Set<ProjectionRelation> relations) {
+        List<Observation> result = new ArrayList<>();
+        Set<String> packed = new TreeSet<>();
+        for (Set<String> closure : closures) {
+            Set<String> combined = new TreeSet<>(packed);
+            combined.addAll(closure);
+            if (!packed.isEmpty() && combined.size() > WORK_UNIT_ATOM_TARGET) {
+                result.add(project(observation, packed, relations));
+                packed = new TreeSet<>();
+            }
+            packed.addAll(closure);
+            if (packed.size() >= WORK_UNIT_ATOM_TARGET) {
+                result.add(project(observation, packed, relations));
+                packed = new TreeSet<>();
+            }
+        }
+        if (!packed.isEmpty()) result.add(project(observation, packed, relations));
         return List.copyOf(result);
     }
 

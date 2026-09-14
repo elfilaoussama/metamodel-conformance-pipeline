@@ -126,6 +126,43 @@ class AlloyWorkUnitPlannerTest {
                 .mapToInt(item -> item.parentIds().size()).sum());
     }
 
+    @Test
+    void separatesSourceBranchesThatSharePlatformAncestors() {
+        String platformRoot = classifierId("platform-root");
+        String platformParent = classifierId("platform-parent");
+        List<ClassifierObservation> classifiers = new ArrayList<>();
+        classifiers.add(new ClassifierObservation(
+                platformRoot, "java.lang.Object", ClassifierKind.CLASS, "platform/Object.class",
+                1, 1, List.of(), List.of()));
+        classifiers.add(new ClassifierObservation(
+                platformParent, "java.util.AbstractList", ClassifierKind.CLASS, "platform/List.class",
+                1, 1, List.of(platformRoot), List.of()));
+        for (int index = 0; index < 600; index++) {
+            classifiers.add(new ClassifierObservation(
+                    classifierId("source-" + index), "example.Source" + index, ClassifierKind.CLASS,
+                    "example/A.java", 1, 1, List.of(platformParent), List.of()));
+        }
+        Observation observation = new Observation(
+                "7", "test-adapter", "1.0.0", List.of(), Set.of(EvidenceKind.HIERARCHY),
+                List.of(
+                        new SourceUnit(Language.JAVA, "example/A.java", Hashing.sha256("source")),
+                        new SourceUnit(Language.JAVA_PLATFORM, "platform/Object.class", Hashing.sha256("object")),
+                        new SourceUnit(Language.JAVA_PLATFORM, "platform/List.class", Hashing.sha256("list"))),
+                classifiers, List.of(), List.of());
+
+        List<Observation> units = planner.plan(observation,
+                InvariantRegistry.load().require("acyclic-generalization"));
+
+        assertTrue(units.size() > 1);
+        assertTrue(units.stream().allMatch(unit -> unit.classifiers().size()
+                <= AlloyWorkUnitPlanner.WORK_UNIT_ATOM_TARGET));
+        assertEquals(600, units.stream().flatMap(unit -> unit.classifiers().stream())
+                .filter(item -> item.sourcePath().equals("example/A.java"))
+                .map(ClassifierObservation::id).distinct().count());
+        assertTrue(units.stream().allMatch(unit -> unit.classifiers().stream()
+                .anyMatch(item -> item.id().equals(platformRoot))));
+    }
+
     private static Observation observation(
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,
