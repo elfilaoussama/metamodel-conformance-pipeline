@@ -17,7 +17,6 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,7 +25,6 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public final class ExactAlloyEncoder {
-    private static final int RELATION_CHUNK_SIZE = 64;
     private static final int SIGNATURE_CHUNK_SIZE = 128;
 
     public String encode(Observation observation) {
@@ -107,25 +105,29 @@ public final class ExactAlloyEncoder {
                 .append(sourceClassifierAtoms.isEmpty() ? "none" : String.join(" + ", sourceClassifierAtoms))
                 .append("\n}\n");
 
-        alloy.append("\nfact ExactObservation {\n");
-        relation(alloy, "parents", parentEdges(observation));
-        relation(alloy, "declaredMembers", declarationEdges(observation));
-        relation(alloy, "observedInheritedMembers", inheritedMembershipEdges(observation));
-        relation(alloy, "packageName", packageEdges(observation, packageAtoms));
-        relation(alloy, "classifierAbstraction", classifierAbstractionEdges(observation));
-        relation(alloy, "kind", kindEdges(observation));
-        relation(alloy, "inheritability", inheritabilityEdges(observation));
-        relation(alloy, "visibility", visibilityEdges(observation));
-        relation(alloy, "memberName", nameEdges(observation, nameAtoms));
-        relation(alloy, "parameterTypeAt", parameterTypeEdges(observation, typeAtoms));
-        relation(alloy, "abstraction", abstractionEdges(observation));
-        relation(alloy, "memberScope", memberScopeEdges(observation));
-        relation(alloy, "returnType", returnTypeEdges(observation, typeAtoms));
-        relation(alloy, "observedOverrides", overrideEdges(observation));
-        relation(alloy, "implementer", implementerEdges(observation));
-        relation(alloy, "target", targetEdges(observation));
-        relation(alloy, "body", bodyEdges(observation));
-        alloy.append("}\n\n");
+        List<String> classifierAtoms = observation.classifiers().stream()
+                .map(item -> classifierAtom(item.id())).toList();
+        List<String> memberAtoms = observation.members().stream()
+                .map(item -> memberAtom(item.technicalKey())).toList();
+        List<String> bindingAtoms = observation.implementationBindings().stream()
+                .map(item -> bindingAtom(item.technicalKey())).toList();
+        exactField(alloy, "parents", classifierAtoms, parentEdges(observation));
+        exactField(alloy, "declaredMembers", classifierAtoms, declarationEdges(observation));
+        exactField(alloy, "observedInheritedMembers", classifierAtoms, inheritedMembershipEdges(observation));
+        exactField(alloy, "packageName", classifierAtoms, packageEdges(observation, packageAtoms));
+        exactField(alloy, "classifierAbstraction", classifierAtoms, classifierAbstractionEdges(observation));
+        exactField(alloy, "kind", memberAtoms, kindEdges(observation));
+        exactField(alloy, "inheritability", memberAtoms, inheritabilityEdges(observation));
+        exactField(alloy, "visibility", memberAtoms, visibilityEdges(observation));
+        exactField(alloy, "memberName", memberAtoms, nameEdges(observation, nameAtoms));
+        exactField(alloy, "parameterTypeAt", memberAtoms, parameterTypeEdges(observation, typeAtoms));
+        exactField(alloy, "abstraction", memberAtoms, abstractionEdges(observation));
+        exactField(alloy, "memberScope", memberAtoms, memberScopeEdges(observation));
+        exactField(alloy, "returnType", memberAtoms, returnTypeEdges(observation, typeAtoms));
+        exactField(alloy, "observedOverrides", memberAtoms, overrideEdges(observation));
+        exactField(alloy, "implementer", bindingAtoms, implementerEdges(observation));
+        exactField(alloy, "target", bindingAtoms, targetEdges(observation));
+        exactField(alloy, "body", bindingAtoms, bodyEdges(observation));
         alloy.append(loadRules()).append('\n');
         alloy.append("run ObservationConsistency ")
                 .append(scope(observation, nameAtoms.size(), typeAtoms.size(), packageAtoms.size(), positionCount))
@@ -265,19 +267,21 @@ public final class ExactAlloyEncoder {
         return edges;
     }
 
-    private static void relation(StringBuilder alloy, String name, List<String> edges) {
-        List<String> sorted = edges.stream().sorted(Comparator.naturalOrder()).toList();
-        if (sorted.isEmpty()) {
-            alloy.append("  no ").append(name).append('\n');
-            return;
+    private static void exactField(StringBuilder alloy, String field, List<String> owners, List<String> edges) {
+        Map<String, List<String>> values = new LinkedHashMap<>();
+        for (String owner : owners) values.put(owner, new ArrayList<>());
+        for (String edge : edges) {
+            String[] atoms = edge.split("->");
+            values.get(atoms[0]).add(String.join("->", java.util.Arrays.copyOfRange(atoms, 1, atoms.length)));
         }
-        alloy.append("  ").append(name).append(" = ");
-        for (int start = 0; start < sorted.size(); start += RELATION_CHUNK_SIZE) {
-            if (start > 0) alloy.append(" +\n    ");
-            int end = Math.min(start + RELATION_CHUNK_SIZE, sorted.size());
-            alloy.append('(').append(String.join(" + ", sorted.subList(start, end))).append(')');
-        }
-        alloy.append('\n');
+        alloy.append("\nfact Exact").append(field).append(" {\n");
+        values.forEach((owner, targets) -> alloy.append("  ").append(owner).append('.').append(field)
+                .append(" = ").append(targets.isEmpty()
+                        ? (field.equals("parameterTypeAt") ? "none->none" : "none") : targets.stream().sorted()
+                        .map(target -> target.contains("->") ? "(" + target + ")" : target)
+                        .collect(Collectors.joining(" + ")))
+                .append('\n'));
+        alloy.append("}\n");
     }
 
     private static void signatures(StringBuilder alloy, List<String> atoms, String parent) {

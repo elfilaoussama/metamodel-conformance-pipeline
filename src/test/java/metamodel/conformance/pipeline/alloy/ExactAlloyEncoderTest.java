@@ -14,8 +14,8 @@ class ExactAlloyEncoderTest {
         String alloy = new ExactAlloyEncoder().encode(TestObservations.acyclic());
 
         assertEquals(1, alloy.lines().filter(line -> line.startsWith("one sig C_")).count());
-        assertTrue(alloy.contains("parents = (" + ExactAlloyEncoder.classifierAtom(TestObservations.B)
-                + "->" + ExactAlloyEncoder.classifierAtom(TestObservations.A)));
+        assertTrue(alloy.contains(ExactAlloyEncoder.classifierAtom(TestObservations.B) + ".parents = "
+                + ExactAlloyEncoder.classifierAtom(TestObservations.A)));
         assertTrue(alloy.contains("abstract sig NameToken"));
         assertTrue(alloy.contains("abstract sig TypeToken"));
         assertTrue(alloy.contains("abstract sig PositionToken"));
@@ -25,7 +25,7 @@ class ExactAlloyEncoderTest {
         assertTrue(alloy.contains("parameterTypeAt: PositionToken -> lone TypeToken"));
         assertFalse(alloy.contains("namespaceKeyRepresentative"));
         assertFalse(alloy.contains("abstract sig Parameter {"));
-        assertTrue(alloy.contains("parents = ("));
+        assertTrue(alloy.contains(".parents = "));
         assertTrue(alloy.contains("run ObservationConsistency for exactly 2 Classifier"));
         assertFalse(alloy.contains("run AcyclicGeneralizationViolation"));
         assertTrue(alloy.contains("fun AcyclicGeneralizationViolations : set Classifier"));
@@ -37,8 +37,7 @@ class ExactAlloyEncoderTest {
         var observation = TestObservations.inheritedViewConformant();
         String alloy = new ExactAlloyEncoder().encode(observation);
 
-        assertTrue(alloy.contains("observedInheritedMembers = ("
-                + ExactAlloyEncoder.classifierAtom(TestObservations.B) + "->"
+        assertTrue(alloy.contains(ExactAlloyEncoder.classifierAtom(TestObservations.B) + ".observedInheritedMembers = "
                 + ExactAlloyEncoder.memberAtom(observation.members().get(0).technicalKey())));
         assertTrue(alloy.contains("fun formalInheritedMembers[c : Classifier]"));
         assertTrue(alloy.contains("pred memberAccessibleFrom[c, owner : Classifier, member : Member]"));
@@ -56,8 +55,8 @@ class ExactAlloyEncoderTest {
 
         for (var member : duplicateObservation.members()) {
             String atom = ExactAlloyEncoder.memberAtom(member.technicalKey());
-            assertTrue(duplicate.contains(atom + "->P_0->T_" + Hashing.sha256("java.lang.String")));
-            assertTrue(duplicate.contains(atom + "->P_1->T_" + Hashing.sha256("int")));
+            assertTrue(duplicate.contains(atom + ".parameterTypeAt = (P_0->T_" + Hashing.sha256("java.lang.String")));
+            assertTrue(duplicate.contains("(P_1->T_" + Hashing.sha256("int") + ")"));
         }
 
         String first = ExactAlloyEncoder.memberAtom(overloadedObservation.members().stream()
@@ -66,10 +65,10 @@ class ExactAlloyEncoderTest {
         String second = ExactAlloyEncoder.memberAtom(overloadedObservation.members().stream()
                 .filter(member -> member.parameterTypes().get(0).equals("int"))
                 .findFirst().orElseThrow().technicalKey());
-        assertTrue(overloaded.contains(first + "->P_0->T_" + Hashing.sha256("java.lang.String")));
-        assertTrue(overloaded.contains(first + "->P_1->T_" + Hashing.sha256("int")));
-        assertTrue(overloaded.contains(second + "->P_0->T_" + Hashing.sha256("int")));
-        assertTrue(overloaded.contains(second + "->P_1->T_" + Hashing.sha256("java.lang.String")));
+        assertTrue(overloaded.contains(first + ".parameterTypeAt = (P_0->T_" + Hashing.sha256("java.lang.String")));
+        assertTrue(overloaded.contains(second + ".parameterTypeAt = (P_0->T_" + Hashing.sha256("int")));
+        assertTrue(overloaded.contains("(P_1->T_" + Hashing.sha256("int") + ")"));
+        assertTrue(overloaded.contains("(P_1->T_" + Hashing.sha256("java.lang.String") + ")"));
         assertEquals(1, overloaded.lines().filter(line -> line.startsWith("one sig T_")).count());
         assertEquals(1, overloaded.lines().filter(line -> line.startsWith("one sig P_")).count());
         assertFalse(overloaded.contains("SignatureToken"));
