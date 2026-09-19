@@ -6,6 +6,8 @@ import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.EvidenceKind;
 import metamodel.conformance.pipeline.model.MemberKind;
 import metamodel.conformance.pipeline.model.MemberObservation;
+import metamodel.conformance.pipeline.model.MethodBodyObservation;
+import metamodel.conformance.pipeline.model.ImplementationBindingObservation;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.model.SourceUnit;
@@ -198,6 +200,58 @@ class AlloyWorkUnitPlannerTest {
                 .map(ClassifierObservation::id).distinct().count());
         assertTrue(units.stream().allMatch(unit -> unit.members().stream()
                 .anyMatch(item -> item.technicalKey().equals(inherited))));
+    }
+
+    @Test
+    void partitionsBindingsAcrossSharedPlatformParentAndRetainsOrphanBody() {
+        String platformRoot = classifierId("binding-platform-root");
+        List<ClassifierObservation> classifiers = new ArrayList<>();
+        List<MemberObservation> members = new ArrayList<>();
+        List<MethodBodyObservation> bodies = new ArrayList<>();
+        List<ImplementationBindingObservation> bindings = new ArrayList<>();
+        classifiers.add(new ClassifierObservation(platformRoot, "platform.Root", ClassifierKind.CLASS,
+                "platform/Root.class", 1, 1, List.of(), List.of()));
+        for (int index = 0; index < 300; index++) {
+            String owner = classifierId("binding-source-" + index);
+            String member = memberId("binding-member-" + index);
+            String body = "body_" + Hashing.sha256("binding-body-" + (index == 1 ? 0 : index));
+            String binding = "bind_" + Hashing.sha256("binding-" + index);
+            classifiers.add(new ClassifierObservation(owner, "example.Source" + index,
+                    ClassifierKind.CLASS, "example/A.java", 1, 1,
+                    List.of(platformRoot), List.of(member)));
+            members.add(new MemberObservation(member, null, MemberKind.METHOD,
+                    "work" + index, "example/A.java", 1, 1, List.of()));
+            if (index != 1) bodies.add(new MethodBodyObservation(body, "example/A.java", 1, 1));
+            bindings.add(new ImplementationBindingObservation(binding, owner, member, body));
+        }
+        String orphan = "body_" + Hashing.sha256("orphan");
+        bodies.add(new MethodBodyObservation(orphan, "example/A.java", 1, 1));
+        Observation observation = new Observation("7", "test-adapter", "1.0.0", List.of(),
+                Set.of(EvidenceKind.HIERARCHY, EvidenceKind.DECLARATION_OWNERSHIP,
+                        EvidenceKind.LOCAL_SIGNATURES, EvidenceKind.INHERITABILITY,
+                        EvidenceKind.METHOD_BODIES, EvidenceKind.METHOD_ABSTRACTION,
+                        EvidenceKind.IMPLEMENTATION_BINDINGS),
+                List.of(new SourceUnit(Language.JAVA, "example/A.java", Hashing.sha256("source")),
+                        new SourceUnit(Language.JAVA_PLATFORM, "platform/Root.class",
+                                Hashing.sha256("platform"))),
+                classifiers, members, bodies, bindings, List.of(), List.of());
+
+        List<Observation> units = planner.plan(observation,
+                InvariantRegistry.load().require("implementation-binding-consistency"));
+
+        assertTrue(units.size() > 1);
+        assertTrue(units.stream().allMatch(unit -> unit.classifiers().size()
+                + unit.members().size() + unit.methodBodies().size()
+                + unit.implementationBindings().size() <= AlloyWorkUnitPlanner.WORK_UNIT_ATOM_TARGET));
+        assertEquals(300, units.stream().flatMap(unit -> unit.implementationBindings().stream())
+                .map(ImplementationBindingObservation::technicalKey).distinct().count());
+        assertTrue(units.stream().anyMatch(unit -> unit.methodBodies().stream()
+                .anyMatch(body -> body.technicalKey().equals(orphan))));
+        String first = "bind_" + Hashing.sha256("binding-0");
+        String second = "bind_" + Hashing.sha256("binding-1");
+        assertTrue(units.stream().anyMatch(unit -> unit.implementationBindings().stream()
+                .map(ImplementationBindingObservation::technicalKey).toList()
+                .containsAll(List.of(first, second))));
     }
 
     private static Observation observation(

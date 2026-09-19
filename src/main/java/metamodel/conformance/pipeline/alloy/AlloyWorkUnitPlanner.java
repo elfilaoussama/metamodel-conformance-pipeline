@@ -66,10 +66,10 @@ final class AlloyWorkUnitPlanner {
     private static boolean requiresSourceRootedHierarchyPlan(
             Observation observation, InvariantDefinition definition) {
         if (!definition.partitionRoots().contains(ProjectionRoot.CLASSIFIER)
-                || definition.partitionRelations().contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)
                 || !(definition.partitionRelations().contains(ProjectionRelation.PARENTS)
                     || definition.partitionRelations().contains(ProjectionRelation.OBSERVED_INHERITED_MEMBERS)
-                    || definition.partitionRelations().contains(ProjectionRelation.OVERRIDE_RELATIONS))) return false;
+                    || definition.partitionRelations().contains(ProjectionRelation.OVERRIDE_RELATIONS)
+                    || definition.partitionRelations().contains(ProjectionRelation.IMPLEMENTATION_BINDINGS))) return false;
         Set<String> sourcePaths = sourcePaths(observation);
         return observation.classifiers().stream()
                 .anyMatch(classifier -> !sourcePaths.contains(classifier.sourcePath()));
@@ -79,11 +79,22 @@ final class AlloyWorkUnitPlanner {
             Observation observation,
             InvariantDefinition definition) {
         Set<String> sourcePaths = sourcePaths(observation);
-        List<Set<String>> closures = observation.classifiers().stream()
+        List<Set<String>> closures = new ArrayList<>(observation.classifiers().stream()
                 .filter(classifier -> sourcePaths.contains(classifier.sourcePath()))
                 .map(classifier -> upwardClosure(
                         classifier, observation, definition.partitionRelations(), sourcePaths))
-                .toList();
+                .toList());
+        if (definition.partitionRelations().contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)
+                && definition.partitionRoots().contains(ProjectionRoot.BODY)) {
+            Set<String> covered = new HashSet<>();
+            closures.forEach(covered::addAll);
+            for (MethodBodyObservation body : observation.methodBodies()) {
+                if (!covered.contains(bodyNode(body.technicalKey()))) {
+                    closures.add(upwardClosure(bodyNode(body.technicalKey()), observation,
+                            definition.partitionRelations(), sourcePaths));
+                }
+            }
+        }
         return pack(observation, closures, definition.partitionRelations());
     }
 
@@ -100,15 +111,35 @@ final class AlloyWorkUnitPlanner {
             Observation observation,
             Set<ProjectionRelation> relations,
             Set<String> sourcePaths) {
+        return upwardClosure(classifierNode(root.id()), observation, relations, sourcePaths);
+    }
+
+    private static Set<String> upwardClosure(
+            String root,
+            Observation observation,
+            Set<ProjectionRelation> relations,
+            Set<String> sourcePaths) {
         Map<String, ClassifierObservation> classifiers = new TreeMap<>();
         for (ClassifierObservation classifier : observation.classifiers()) {
             classifiers.put(classifier.id(), classifier);
         }
         Map<String, MemberObservation> members = new TreeMap<>();
         for (MemberObservation member : observation.members()) members.put(member.technicalKey(), member);
+        Map<String, ImplementationBindingObservation> bindings = new TreeMap<>();
+        Map<String, Set<String>> bindingsByImplementer = new TreeMap<>();
+        Map<String, Set<String>> bindingsByBody = new TreeMap<>();
+        if (relations.contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)) {
+            for (ImplementationBindingObservation binding : observation.implementationBindings()) {
+                bindings.put(binding.technicalKey(), binding);
+                bindingsByImplementer.computeIfAbsent(binding.implementerClassifierId(),
+                        ignored -> new TreeSet<>()).add(binding.technicalKey());
+                bindingsByBody.computeIfAbsent(binding.bodyKey(),
+                        ignored -> new TreeSet<>()).add(binding.technicalKey());
+            }
+        }
         Set<String> result = new TreeSet<>();
         ArrayDeque<String> pending = new ArrayDeque<>();
-        pending.add(classifierNode(root.id()));
+        pending.add(root);
         while (!pending.isEmpty()) {
             String node = pending.removeFirst();
             if (!result.add(node)) continue;
@@ -124,10 +155,23 @@ final class AlloyWorkUnitPlanner {
                         && sourcePaths.contains(classifier.sourcePath())) {
                     classifier.inheritedMemberKeys().forEach(key -> pending.addLast(memberNode(key)));
                 }
+                if (relations.contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)) {
+                    bindingsByImplementer.getOrDefault(classifier.id(), Set.of())
+                            .forEach(key -> pending.addLast(bindingNode(key)));
+                }
             } else if (node.startsWith(MEMBER_PREFIX)
                     && relations.contains(ProjectionRelation.OVERRIDE_RELATIONS)) {
                 members.get(node.substring(MEMBER_PREFIX.length())).overriddenMemberKeys()
                         .forEach(key -> pending.addLast(memberNode(key)));
+            } else if (node.startsWith(BINDING_PREFIX)) {
+                ImplementationBindingObservation binding = bindings.get(
+                        node.substring(BINDING_PREFIX.length()));
+                pending.addLast(classifierNode(binding.implementerClassifierId()));
+                pending.addLast(memberNode(binding.targetMemberKey()));
+                pending.addLast(bodyNode(binding.bodyKey()));
+            } else if (node.startsWith(BODY_PREFIX)) {
+                bindingsByBody.getOrDefault(node.substring(BODY_PREFIX.length()), Set.of())
+                        .forEach(key -> pending.addLast(bindingNode(key)));
             }
         }
         return result;
