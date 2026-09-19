@@ -30,7 +30,7 @@ final class AlloyWorkUnitPlanner {
     List<Observation> plan(Observation observation, InvariantDefinition definition) {
         Map<String, Set<String>> graph = graph(observation, definition.partitionRelations());
         if (requiresSourceRootedHierarchyPlan(observation, definition)) {
-            return sourceRootedHierarchyPlan(observation, definition, graph);
+            return sourceRootedHierarchyPlan(observation, definition);
         }
         Set<String> visited = new HashSet<>();
         List<Set<String>> components = new ArrayList<>();
@@ -65,7 +65,11 @@ final class AlloyWorkUnitPlanner {
      */
     private static boolean requiresSourceRootedHierarchyPlan(
             Observation observation, InvariantDefinition definition) {
-        if (!definition.partitionRelations().contains(ProjectionRelation.PARENTS)) return false;
+        if (!definition.partitionRoots().contains(ProjectionRoot.CLASSIFIER)
+                || definition.partitionRelations().contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)
+                || !(definition.partitionRelations().contains(ProjectionRelation.PARENTS)
+                    || definition.partitionRelations().contains(ProjectionRelation.OBSERVED_INHERITED_MEMBERS)
+                    || definition.partitionRelations().contains(ProjectionRelation.OVERRIDE_RELATIONS))) return false;
         Set<String> sourcePaths = sourcePaths(observation);
         return observation.classifiers().stream()
                 .anyMatch(classifier -> !sourcePaths.contains(classifier.sourcePath()));
@@ -73,13 +77,12 @@ final class AlloyWorkUnitPlanner {
 
     private static List<Observation> sourceRootedHierarchyPlan(
             Observation observation,
-            InvariantDefinition definition,
-            Map<String, Set<String>> graph) {
-        Map<String, Set<String>> parents = parentEdges(observation, definition.partitionRelations());
+            InvariantDefinition definition) {
         Set<String> sourcePaths = sourcePaths(observation);
         List<Set<String>> closures = observation.classifiers().stream()
                 .filter(classifier -> sourcePaths.contains(classifier.sourcePath()))
-                .map(classifier -> upwardClosure(classifierNode(classifier.id()), graph, parents))
+                .map(classifier -> upwardClosure(
+                        classifier, observation, definition.partitionRelations(), sourcePaths))
                 .toList();
         return pack(observation, closures, definition.partitionRelations());
     }
@@ -92,32 +95,39 @@ final class AlloyWorkUnitPlanner {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
-    private static Map<String, Set<String>> parentEdges(
-            Observation observation, Set<ProjectionRelation> relations) {
-        Map<String, Set<String>> result = new TreeMap<>();
-        if (!relations.contains(ProjectionRelation.PARENTS)) return result;
-        for (ClassifierObservation classifier : observation.classifiers()) {
-            result.put(classifierNode(classifier.id()), classifier.parentIds().stream()
-                    .map(AlloyWorkUnitPlanner::classifierNode)
-                    .collect(java.util.stream.Collectors.toCollection(TreeSet::new)));
-        }
-        return result;
-    }
-
     private static Set<String> upwardClosure(
-            String root, Map<String, Set<String>> graph, Map<String, Set<String>> parents) {
+            ClassifierObservation root,
+            Observation observation,
+            Set<ProjectionRelation> relations,
+            Set<String> sourcePaths) {
+        Map<String, ClassifierObservation> classifiers = new TreeMap<>();
+        for (ClassifierObservation classifier : observation.classifiers()) {
+            classifiers.put(classifier.id(), classifier);
+        }
+        Map<String, MemberObservation> members = new TreeMap<>();
+        for (MemberObservation member : observation.members()) members.put(member.technicalKey(), member);
         Set<String> result = new TreeSet<>();
         ArrayDeque<String> pending = new ArrayDeque<>();
-        pending.add(root);
+        pending.add(classifierNode(root.id()));
         while (!pending.isEmpty()) {
             String node = pending.removeFirst();
             if (!result.add(node)) continue;
-            for (String adjacent : graph.get(node)) {
-                boolean classifierEdge = node.startsWith(CLASSIFIER_PREFIX)
-                        && adjacent.startsWith(CLASSIFIER_PREFIX);
-                if (!classifierEdge || parents.getOrDefault(node, Set.of()).contains(adjacent)) {
-                    pending.addLast(adjacent);
+            if (node.startsWith(CLASSIFIER_PREFIX)) {
+                ClassifierObservation classifier = classifiers.get(node.substring(CLASSIFIER_PREFIX.length()));
+                if (relations.contains(ProjectionRelation.PARENTS)) {
+                    classifier.parentIds().forEach(id -> pending.addLast(classifierNode(id)));
                 }
+                if (relations.contains(ProjectionRelation.DECLARED_MEMBERS)) {
+                    classifier.declaredMemberKeys().forEach(key -> pending.addLast(memberNode(key)));
+                }
+                if (relations.contains(ProjectionRelation.OBSERVED_INHERITED_MEMBERS)
+                        && sourcePaths.contains(classifier.sourcePath())) {
+                    classifier.inheritedMemberKeys().forEach(key -> pending.addLast(memberNode(key)));
+                }
+            } else if (node.startsWith(MEMBER_PREFIX)
+                    && relations.contains(ProjectionRelation.OVERRIDE_RELATIONS)) {
+                members.get(node.substring(MEMBER_PREFIX.length())).overriddenMemberKeys()
+                        .forEach(key -> pending.addLast(memberNode(key)));
             }
         }
         return result;

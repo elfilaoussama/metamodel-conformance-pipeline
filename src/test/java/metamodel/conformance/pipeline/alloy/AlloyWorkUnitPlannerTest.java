@@ -163,6 +163,43 @@ class AlloyWorkUnitPlannerTest {
                 .anyMatch(item -> item.id().equals(platformRoot))));
     }
 
+    @Test
+    void sharedInheritedMemberDoesNotJoinIndependentSourceBranches() {
+        String platformRoot = classifierId("shared-platform-root");
+        String inherited = memberId("shared-inherited-member");
+        List<ClassifierObservation> classifiers = new ArrayList<>();
+        classifiers.add(new ClassifierObservation(platformRoot, "platform.Root", ClassifierKind.CLASS,
+                "platform/Root.class", 1, 1, List.of(), List.of(inherited)));
+        for (int index = 0; index < 600; index++) {
+            classifiers.add(new ClassifierObservation(
+                    classifierId("inheritor-" + index), "example.Inheritor" + index,
+                    ClassifierKind.CLASS, "example/A.java", 1, 1,
+                    List.of(platformRoot), List.of(), List.of(inherited)));
+        }
+        MemberObservation member = new MemberObservation(inherited, null, MemberKind.METHOD,
+                "inherited", "platform/Root.class", 1, 1, List.of());
+        Observation observation = new Observation("7", "test-adapter", "1.0.0", List.of(),
+                Set.of(EvidenceKind.HIERARCHY, EvidenceKind.DECLARATION_OWNERSHIP,
+                        EvidenceKind.LOCAL_SIGNATURES, EvidenceKind.INHERITABILITY,
+                        EvidenceKind.INHERITED_MEMBERS),
+                List.of(new SourceUnit(Language.JAVA, "example/A.java", Hashing.sha256("source")),
+                        new SourceUnit(Language.JAVA_PLATFORM, "platform/Root.class",
+                                Hashing.sha256("platform"))),
+                classifiers, List.of(member), List.of());
+
+        List<Observation> units = planner.plan(observation,
+                InvariantRegistry.load().require("inherited-view-consistency"));
+
+        assertTrue(units.size() > 1);
+        assertTrue(units.stream().allMatch(unit -> unit.classifiers().size()
+                + unit.members().size() <= AlloyWorkUnitPlanner.WORK_UNIT_ATOM_TARGET));
+        assertEquals(600, units.stream().flatMap(unit -> unit.classifiers().stream())
+                .filter(item -> item.sourcePath().equals("example/A.java"))
+                .map(ClassifierObservation::id).distinct().count());
+        assertTrue(units.stream().allMatch(unit -> unit.members().stream()
+                .anyMatch(item -> item.technicalKey().equals(inherited))));
+    }
+
     private static Observation observation(
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,
