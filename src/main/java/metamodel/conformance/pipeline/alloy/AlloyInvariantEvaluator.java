@@ -25,10 +25,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.stream.Collectors;
 
 public final class AlloyInvariantEvaluator {
@@ -116,24 +112,45 @@ public final class AlloyInvariantEvaluator {
             AlloyExecutionConfig executionConfig) {
         List<WitnessTuple> witnesses = new ArrayList<>();
         try {
-            ExecutorService executor = Executors.newFixedThreadPool(executionConfig.decomposeThreads());
-            try {
-                List<Callable<UnitResult>> tasks = new ArrayList<>();
-                for (int unitIndex = 0; unitIndex < workUnits.size(); unitIndex++) {
-                    int capturedIndex = unitIndex;
-                    Observation workUnit = workUnits.get(unitIndex);
-                    tasks.add(() -> evaluateWorkUnit(workUnit, capturedIndex, workUnits.size(),
-                            definition, encoder, executionConfig));
+            for (int unitIndex = 0; unitIndex < workUnits.size(); unitIndex++) {
+                Observation workUnit = workUnits.get(unitIndex);
+                long startedAt = System.nanoTime();
+                reportWorkUnit("start", definition, unitIndex, workUnits.size(), workUnit, 0L);
+                String model = encoder.encode(workUnit);
+                CompModule module = CompUtil.parseEverything_fromString(new A4Reporter(), model);
+                Command consistencyCommand = findCommand(module, "ObservationConsistency");
+                A4Solution exactSolution = TranslateAlloyToKodkod.execute_command(
+                        new A4Reporter(), module.getAllReachableSigs(), consistencyCommand,
+                        AlloyOptionsFactory.create(executionConfig));
+                if (!exactSolution.satisfiable()) {
+                    return notEvaluated(definition, "An exact Alloy work unit is inconsistent.");
                 }
-                for (var future : executor.invokeAll(tasks)) {
-                    UnitResult result = future.get();
-                    if (!result.consistent()) {
-                        return notEvaluated(definition, "An exact Alloy work unit is inconsistent.");
+
+                Func witnessFunction = findFunction(module, definition.witnessFunction());
+                Object evaluated = exactSolution.eval(witnessFunction.call());
+                if (!(evaluated instanceof A4TupleSet tuples)) {
+                    throw new IllegalStateException("witness function did not return a relation");
+                }
+                Map<String, String> atomKeys = encoder.atomTechnicalKeys(workUnit);
+                for (A4Tuple tuple : tuples) {
+                    if (tuple.arity() != definition.witnessArity()) {
+                        throw new IllegalStateException(
+                                "witness relation arity does not match the invariant registry");
                     }
-                    witnesses.addAll(result.witnesses());
+                    List<String> technicalKeys = new ArrayList<>();
+                    for (int index = 0; index < tuple.arity(); index++) {
+                        String atom = normalizeAtom(tuple.atom(index));
+                        String technicalKey = atomKeys.get(atom);
+                        if (technicalKey == null) {
+                            throw new IllegalStateException(
+                                    "witness atom has no observation mapping: " + atom);
+                        }
+                        technicalKeys.add(technicalKey);
+                    }
+                    witnesses.add(new WitnessTuple(technicalKeys));
                 }
-            } finally {
-                executor.shutdownNow();
+                reportWorkUnit("complete", definition, unitIndex, workUnits.size(), workUnit,
+                        System.nanoTime() - startedAt);
             }
             witnesses = witnesses.stream().distinct()
                     .sorted(Comparator.comparing(witness -> String.join("\0", witness.technicalKeys())))
@@ -150,50 +167,9 @@ public final class AlloyInvariantEvaluator {
                     definition.id(),
                     definition.violationMessage(),
                     witnesses);
-        } catch (InterruptedException failure) {
-            Thread.currentThread().interrupt();
-            return notEvaluated(definition, "Alloy work-unit evaluation was interrupted.");
-        } catch (ExecutionException | LinkageError | StackOverflowError failure) {
+        } catch (Exception | LinkageError | StackOverflowError failure) {
             return notEvaluated(definition, "Alloy work-unit evaluation failed: " + safeMessage(failure));
         }
-    }
-
-    private static UnitResult evaluateWorkUnit(
-            Observation workUnit, int unitIndex, int total, InvariantDefinition definition,
-            ExactAlloyEncoder encoder, AlloyExecutionConfig executionConfig) throws Exception {
-        long startedAt = System.nanoTime();
-        reportWorkUnit("start", definition, unitIndex, total, workUnit, 0L);
-        String model = encoder.encode(workUnit);
-        CompModule module = CompUtil.parseEverything_fromString(new A4Reporter(), model);
-        Command consistencyCommand = findCommand(module, "ObservationConsistency");
-        A4Solution exactSolution = TranslateAlloyToKodkod.execute_command(
-                new A4Reporter(), module.getAllReachableSigs(), consistencyCommand,
-                AlloyOptionsFactory.create(executionConfig));
-        if (!exactSolution.satisfiable()) return new UnitResult(false, List.of());
-        Func witnessFunction = findFunction(module, definition.witnessFunction());
-        Object evaluated = exactSolution.eval(witnessFunction.call());
-        if (!(evaluated instanceof A4TupleSet tuples)) {
-            throw new IllegalStateException("witness function did not return a relation");
-        }
-        Map<String, String> atomKeys = encoder.atomTechnicalKeys(workUnit);
-        List<WitnessTuple> witnesses = new ArrayList<>();
-        for (A4Tuple tuple : tuples) {
-            if (tuple.arity() != definition.witnessArity()) {
-                throw new IllegalStateException("witness relation arity does not match the invariant registry");
-            }
-            List<String> technicalKeys = new ArrayList<>();
-            for (int index = 0; index < tuple.arity(); index++) {
-                String technicalKey = atomKeys.get(normalizeAtom(tuple.atom(index)));
-                if (technicalKey == null) throw new IllegalStateException("witness atom has no observation mapping");
-                technicalKeys.add(technicalKey);
-            }
-            witnesses.add(new WitnessTuple(technicalKeys));
-        }
-        reportWorkUnit("complete", definition, unitIndex, total, workUnit, System.nanoTime() - startedAt);
-        return new UnitResult(true, witnesses);
-    }
-
-    private record UnitResult(boolean consistent, List<WitnessTuple> witnesses) {
     }
 
     private static Command findCommand(CompModule module, String commandName) {
