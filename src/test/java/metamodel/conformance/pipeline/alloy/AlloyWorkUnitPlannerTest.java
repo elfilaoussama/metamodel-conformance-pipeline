@@ -254,6 +254,58 @@ class AlloyWorkUnitPlannerTest {
                 .containsAll(List.of(first, second))));
     }
 
+    @Test
+    void partitionsIndependentBindingsWhenTwoSourcesShareOneBody() {
+        String platformRoot = classifierId("multi-source-platform-root");
+        String firstOwner = classifierId("multi-source-first");
+        String secondOwner = classifierId("multi-source-second");
+        List<ClassifierObservation> classifiers = new ArrayList<>();
+        List<MemberObservation> members = new ArrayList<>();
+        List<MethodBodyObservation> bodies = new ArrayList<>();
+        List<ImplementationBindingObservation> bindings = new ArrayList<>();
+        List<String> firstMembers = new ArrayList<>();
+        List<String> secondMembers = new ArrayList<>();
+        classifiers.add(new ClassifierObservation(platformRoot, "platform.Root", ClassifierKind.CLASS,
+                "platform/Root.class", 1, 1, List.of(), List.of()));
+        for (int index = 0; index < 100; index++) {
+            String member = memberId("multi-source-member-" + index);
+            String body = "body_" + Hashing.sha256("multi-source-body-" + (index == 50 ? 0 : index));
+            String binding = "bind_" + Hashing.sha256("multi-source-binding-" + index);
+            String owner = index < 50 ? firstOwner : secondOwner;
+            (index < 50 ? firstMembers : secondMembers).add(member);
+            members.add(new MemberObservation(member, null, MemberKind.METHOD,
+                    "work" + index, "example/A.java", 1, 1, List.of()));
+            if (index != 50) bodies.add(new MethodBodyObservation(body, "example/A.java", 1, 1));
+            bindings.add(new ImplementationBindingObservation(binding, owner, member, body));
+        }
+        classifiers.add(new ClassifierObservation(firstOwner, "example.First", ClassifierKind.CLASS,
+                "example/A.java", 1, 1, List.of(platformRoot), firstMembers));
+        classifiers.add(new ClassifierObservation(secondOwner, "example.Second", ClassifierKind.CLASS,
+                "example/A.java", 1, 1, List.of(platformRoot), secondMembers));
+        Observation observation = new Observation("7", "test-adapter", "1.0.0", List.of(),
+                Set.of(EvidenceKind.HIERARCHY, EvidenceKind.DECLARATION_OWNERSHIP,
+                        EvidenceKind.LOCAL_SIGNATURES, EvidenceKind.INHERITABILITY,
+                        EvidenceKind.METHOD_BODIES, EvidenceKind.METHOD_ABSTRACTION,
+                        EvidenceKind.IMPLEMENTATION_BINDINGS),
+                List.of(new SourceUnit(Language.JAVA, "example/A.java", Hashing.sha256("source")),
+                        new SourceUnit(Language.JAVA_PLATFORM, "platform/Root.class",
+                                Hashing.sha256("platform"))),
+                classifiers, members, bodies, bindings, List.of(), List.of());
+
+        List<Observation> units = planner.plan(observation,
+                InvariantRegistry.load().require("implementation-binding-consistency"));
+
+        assertTrue(units.size() > 1);
+        assertTrue(units.stream().allMatch(unit -> unit.classifiers().size()
+                + unit.members().size() + unit.methodBodies().size()
+                + unit.implementationBindings().size() <= AlloyWorkUnitPlanner.WORK_UNIT_ATOM_TARGET));
+        String first = "bind_" + Hashing.sha256("multi-source-binding-0");
+        String second = "bind_" + Hashing.sha256("multi-source-binding-50");
+        assertTrue(units.stream().anyMatch(unit -> unit.implementationBindings().stream()
+                .map(ImplementationBindingObservation::technicalKey).toList()
+                .containsAll(List.of(first, second))));
+    }
+
     private static Observation observation(
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,

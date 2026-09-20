@@ -134,12 +134,13 @@ final class AlloyWorkUnitPlanner {
                 if (visited.contains(node)) continue;
                 Set<String> group = component(node, graph, visited);
                 group.addAll(supportClassifiers);
-                group.stream().filter(item -> item.startsWith(BINDING_PREFIX))
+                Set<String> implementers = group.stream().filter(item -> item.startsWith(BINDING_PREFIX))
                         .map(item -> bindings.get(item.substring(BINDING_PREFIX.length())))
                         .map(ImplementationBindingObservation::implementerClassifierId)
                         .map(AlloyWorkUnitPlanner::classifierNode)
                         .filter(closure::contains)
-                        .forEach(group::add);
+                        .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+                group.addAll(implementers);
                 result.add(group);
             }
         }
