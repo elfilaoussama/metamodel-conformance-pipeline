@@ -107,12 +107,7 @@ final class AlloyWorkUnitPlanner {
         observation.implementationBindings().forEach(item -> bindings.put(item.technicalKey(), item));
         List<Set<String>> result = new ArrayList<>();
         for (Set<String> closure : closures) {
-            long sourceClassifiers = closure.stream().filter(node -> node.startsWith(CLASSIFIER_PREFIX))
-                    .map(node -> node.substring(CLASSIFIER_PREFIX.length()))
-                    .map(id -> observation.classifiers().stream()
-                            .filter(item -> item.id().equals(id)).findFirst().orElseThrow())
-                    .filter(item -> sourcePaths.contains(item.sourcePath())).count();
-            if (closure.size() <= WORK_UNIT_ATOM_TARGET || sourceClassifiers != 1) {
+            if (closure.size() <= WORK_UNIT_ATOM_TARGET) {
                 result.add(closure);
                 continue;
             }
@@ -126,12 +121,25 @@ final class AlloyWorkUnitPlanner {
                 connect(graph, node, bodyNode(binding.bodyKey()));
             }
             Set<String> visited = new HashSet<>();
-            Set<String> classifiers = closure.stream().filter(node -> node.startsWith(CLASSIFIER_PREFIX))
+            Set<String> supportClassifiers = closure.stream()
+                    .filter(node -> node.startsWith(CLASSIFIER_PREFIX))
+                    .filter(node -> {
+                        String id = node.substring(CLASSIFIER_PREFIX.length());
+                        ClassifierObservation classifier = observation.classifiers().stream()
+                                .filter(item -> item.id().equals(id)).findFirst().orElseThrow();
+                        return !sourcePaths.contains(classifier.sourcePath());
+                    })
                     .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
             for (String node : graph.keySet()) {
                 if (visited.contains(node)) continue;
                 Set<String> group = component(node, graph, visited);
-                group.addAll(classifiers);
+                group.addAll(supportClassifiers);
+                group.stream().filter(item -> item.startsWith(BINDING_PREFIX))
+                        .map(item -> bindings.get(item.substring(BINDING_PREFIX.length())))
+                        .map(ImplementationBindingObservation::implementerClassifierId)
+                        .map(AlloyWorkUnitPlanner::classifierNode)
+                        .filter(closure::contains)
+                        .forEach(group::add);
                 result.add(group);
             }
         }
