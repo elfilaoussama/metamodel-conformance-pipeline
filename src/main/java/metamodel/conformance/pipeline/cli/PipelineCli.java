@@ -149,8 +149,7 @@ public final class PipelineCli {
                 new ObservationXmiReader().read(Path.of(options.one("observation"))),
                 Files.readString(Path.of(options.one("alloy"))),
                 options.one("invariant"), unitIndex);
-        new ObjectMapper().writeValue(System.out, decision);
-        System.out.println();
+        System.out.println("WORKER_DECISION_JSON=" + new ObjectMapper().writeValueAsString(decision));
         return decision.status() == DecisionStatus.NON_CONFORMANT ? 2
                 : decision.status() == DecisionStatus.NOT_EVALUATED ? 3 : 0;
     }

@@ -18,13 +18,22 @@ import metamodel.conformance.pipeline.model.EvidenceKind;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.invariant.InvariantRegistry;
 import metamodel.conformance.pipeline.invariant.InvariantDefinition;
+import metamodel.conformance.pipeline.emf.ObservationXmiWriter;
+import metamodel.conformance.pipeline.cli.PipelineCli;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 public final class AlloyInvariantEvaluator {
@@ -74,6 +83,9 @@ public final class AlloyInvariantEvaluator {
             return orderedDecisions(registry, decisionsById);
         }
 
+        if (processWorkers() > 1) {
+            return evaluateInWorkerProcesses(observation, alloyModel, registry, evaluable, decisionsById);
+        }
         AlloyWorkUnitPlanner planner = new AlloyWorkUnitPlanner();
         for (InvariantDefinition definition : evaluable) {
             try {
@@ -85,6 +97,93 @@ public final class AlloyInvariantEvaluator {
             }
         }
         return orderedDecisions(registry, decisionsById);
+    }
+
+    private List<Decision> evaluateInWorkerProcesses(
+            Observation observation, String alloyModel, InvariantRegistry registry,
+            List<InvariantDefinition> evaluable, Map<String, Decision> decisionsById) {
+        Path directory = null;
+        try {
+            directory = Files.createTempDirectory("alloy-workers-");
+            Path observationPath = directory.resolve("observation.xmi");
+            Path alloyPath = directory.resolve("repository-instance.als");
+            new ObservationXmiWriter().write(observation, observationPath);
+            Files.writeString(alloyPath, alloyModel);
+            AlloyWorkUnitPlanner planner = new AlloyWorkUnitPlanner();
+            for (InvariantDefinition definition : evaluable) {
+                List<Observation> units = planner.plan(observation, definition);
+                decisionsById.put(definition.id(), evaluateInWorkerProcesses(
+                        definition, units.size(), observationPath, alloyPath));
+            }
+        } catch (Exception failure) {
+            evaluable.forEach(definition -> decisionsById.putIfAbsent(definition.id(), notEvaluated(
+                    definition, "Alloy process-worker setup failed: " + safeMessage(failure))));
+        } finally {
+            if (directory != null) deleteTree(directory);
+        }
+        return orderedDecisions(registry, decisionsById);
+    }
+
+    private Decision evaluateInWorkerProcesses(
+            InvariantDefinition definition, int unitCount, Path observationPath, Path alloyPath) throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(Math.min(processWorkers(), unitCount));
+        try {
+            List<Future<Decision>> futures = new ArrayList<>();
+            for (int index = 0; index < unitCount; index++) {
+                final int unitIndex = index;
+                futures.add(executor.submit(() -> invokeWorker(
+                        definition.id(), unitIndex, observationPath, alloyPath)));
+            }
+            List<WitnessTuple> witnesses = new ArrayList<>();
+            for (Future<Decision> future : futures) {
+                Decision result = future.get();
+                if (result.status() == DecisionStatus.NOT_EVALUATED) return result;
+                witnesses.addAll(result.witnesses());
+            }
+            witnesses = witnesses.stream().distinct().sorted(
+                    Comparator.comparing(witness -> String.join("\0", witness.technicalKeys()))).toList();
+            return witnesses.isEmpty()
+                    ? new Decision(DecisionStatus.CONFORMANT, definition.id(), definition.conformanceMessage(), List.of())
+                    : new Decision(DecisionStatus.NON_CONFORMANT, definition.id(), definition.violationMessage(), witnesses);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    private static Decision invokeWorker(String invariant, int index, Path observation, Path alloy) throws Exception {
+        String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+        Process process = new ProcessBuilder(java, "-Dmetamodel.conformance.alloy.processes=1", "-cp",
+                System.getProperty("java.class.path"), PipelineCli.class.getName(), "evaluate-work-unit",
+                "--observation", observation.toString(), "--alloy", alloy.toString(),
+                "--invariant", invariant, "--unit-index", Integer.toString(index))
+                .redirectErrorStream(true).start();
+        String output = new String(process.getInputStream().readAllBytes());
+        int exit = process.waitFor();
+        if (exit != 0 && exit != 2 && exit != 3) throw new IOException("worker failed: " + output);
+        String marker = "WORKER_DECISION_JSON=";
+        int start = output.lastIndexOf(marker);
+        if (start < 0) throw new IOException("worker produced no decision: " + output);
+        String json = output.substring(start + marker.length()).trim();
+        return new ObjectMapper().readValue(json, Decision.class);
+    }
+
+    private static int processWorkers() {
+        String value = System.getProperty("metamodel.conformance.alloy.processes", "1");
+        try {
+            int workers = Integer.parseInt(value);
+            if (workers < 1) throw new NumberFormatException();
+            return workers;
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException("metamodel.conformance.alloy.processes must be a positive integer");
+        }
+    }
+
+    private static void deleteTree(Path directory) {
+        try (var paths = Files.walk(directory)) {
+            paths.sorted(Comparator.reverseOrder()).forEach(path -> {
+                try { Files.deleteIfExists(path); } catch (IOException ignored) { }
+            });
+        } catch (IOException ignored) { }
     }
 
     /**
