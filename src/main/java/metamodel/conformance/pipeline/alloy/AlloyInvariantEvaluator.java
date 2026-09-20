@@ -87,6 +87,36 @@ public final class AlloyInvariantEvaluator {
         return orderedDecisions(registry, decisionsById);
     }
 
+    /**
+     * Evaluates one deterministic planner projection.  This is the process-worker boundary:
+     * callers may execute independent projections in separate JVMs and merge their witnesses
+     * in planner order without changing the canonical observation or Alloy encoding.
+     */
+    public Decision evaluateWorkUnit(
+            Observation observation, String alloyModel, String invariantId, int unitIndex) {
+        InvariantDefinition definition = InvariantRegistry.load().require(invariantId);
+        Set<EvidenceKind> missing = missingEvidence(observation, definition);
+        if (!missing.isEmpty()) {
+            String names = missing.stream().map(Enum::name).sorted().collect(Collectors.joining(", "));
+            return notEvaluated(definition, "Required evidence is incomplete: " + names);
+        }
+        ExactAlloyEncoder encoder = new ExactAlloyEncoder();
+        try {
+            if (!encoder.encode(observation).equals(alloyModel)) {
+                return notEvaluated(definition, "The Alloy artifact does not match the canonical observation.");
+            }
+            List<Observation> workUnits = new AlloyWorkUnitPlanner().plan(observation, definition);
+            if (unitIndex < 0 || unitIndex >= workUnits.size()) {
+                throw new IllegalArgumentException("work-unit index is outside the deterministic plan");
+            }
+            return evaluate(List.of(workUnits.get(unitIndex)), definition, encoder, executionConfig);
+        } catch (IllegalArgumentException failure) {
+            throw failure;
+        } catch (Exception | LinkageError | StackOverflowError failure) {
+            return notEvaluated(definition, "Alloy work-unit planning failed: " + safeMessage(failure));
+        }
+    }
+
     private static Set<EvidenceKind> missingEvidence(
             Observation observation, InvariantDefinition definition) {
         return definition.requiredEvidence().stream()

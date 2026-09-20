@@ -1,5 +1,6 @@
 package metamodel.conformance.pipeline.cli;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import metamodel.conformance.pipeline.ConformancePipeline;
 import metamodel.conformance.pipeline.PipelineResult;
 import metamodel.conformance.pipeline.adapter.SourceObserver;
@@ -7,12 +8,16 @@ import metamodel.conformance.pipeline.adapter.SourceObserverFactory;
 import metamodel.conformance.pipeline.adapter.java.JavaDependencyInputs;
 import metamodel.conformance.pipeline.capsule.CapsuleVerification;
 import metamodel.conformance.pipeline.capsule.CapsuleVerifier;
+import metamodel.conformance.pipeline.alloy.AlloyInvariantEvaluator;
+import metamodel.conformance.pipeline.decision.Decision;
+import metamodel.conformance.pipeline.emf.ObservationXmiReader;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.model.MemberObservation;
 import metamodel.conformance.pipeline.decision.DecisionStatus;
 
 import java.nio.file.Path;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -40,6 +45,7 @@ public final class PipelineCli {
             return switch (args[0]) {
                 case "analyze" -> analyze(slice(args));
                 case "verify-capsule" -> verifyCapsule(slice(args));
+                case "evaluate-work-unit" -> evaluateWorkUnit(slice(args));
                 default -> {
                     System.err.println("Unknown command: " + args[0]);
                     usage();
@@ -130,6 +136,25 @@ public final class PipelineCli {
         return verification.valid() ? 0 : 3;
     }
 
+    private static int evaluateWorkUnit(String[] args) throws Exception {
+        ParsedOptions options = ParsedOptions.parse(args,
+                Set.of("observation", "alloy", "invariant", "unit-index"), Set.of(), Set.of());
+        int unitIndex;
+        try {
+            unitIndex = Integer.parseInt(options.one("unit-index"));
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException("--unit-index must be an integer");
+        }
+        Decision decision = new AlloyInvariantEvaluator().evaluateWorkUnit(
+                new ObservationXmiReader().read(Path.of(options.one("observation"))),
+                Files.readString(Path.of(options.one("alloy"))),
+                options.one("invariant"), unitIndex);
+        new ObjectMapper().writeValue(System.out, decision);
+        System.out.println();
+        return decision.status() == DecisionStatus.NON_CONFORMANT ? 2
+                : decision.status() == DecisionStatus.NOT_EVALUATED ? 3 : 0;
+    }
+
     private static String[] slice(String[] values) {
         return java.util.Arrays.copyOfRange(values, 1, values.length);
     }
@@ -142,6 +167,8 @@ public final class PipelineCli {
                           [--dependency-jar <path>]...
                           [--dependency-manifest <source-set-to-jar.tsv>]
                   verify-capsule --capsule <verification-capsule.json>
+                  evaluate-work-unit --observation <observation.xmi> --alloy <repository-instance.als>
+                                     --invariant <id> --unit-index <zero-based-index>
 
                 Java dependency inputs may be global JARs or one source-set-scoped manifest, but not both.
                 Manifest rows are: canonical-source-set-relative-path<TAB>absolute-or-resolved-jar-path.
