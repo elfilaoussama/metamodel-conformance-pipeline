@@ -23,8 +23,11 @@ import metamodel.conformance.pipeline.cli.PipelineCli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -126,13 +129,19 @@ public final class AlloyInvariantEvaluator {
 
     private Decision evaluateInWorkerProcesses(
             InvariantDefinition definition, int unitCount, Path observationPath, Path alloyPath) throws Exception {
+        if (unitCount == 0) {
+            return new Decision(DecisionStatus.CONFORMANT, definition.id(),
+                    definition.conformanceMessage(), List.of());
+        }
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(processWorkers(), unitCount));
         try {
             List<Future<Decision>> futures = new ArrayList<>();
-            for (int index = 0; index < unitCount; index++) {
-                final int unitIndex = index;
+            int batchSize = (unitCount + processWorkers() - 1) / processWorkers();
+            for (int index = 0; index < unitCount; index += batchSize) {
+                final int first = index;
+                final int end = Math.min(unitCount, index + batchSize);
                 futures.add(executor.submit(() -> invokeWorker(
-                        definition.id(), unitIndex, observationPath, alloyPath)));
+                        definition.id(), first, end, observationPath, alloyPath)));
             }
             List<WitnessTuple> witnesses = new ArrayList<>();
             for (Future<Decision> future : futures) {
@@ -150,20 +159,43 @@ public final class AlloyInvariantEvaluator {
         }
     }
 
-    private static Decision invokeWorker(String invariant, int index, Path observation, Path alloy) throws Exception {
+    private static Decision invokeWorker(String invariant, int first, int end,
+            Path observation, Path alloy) throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
-        Process process = new ProcessBuilder(java, "-Dmetamodel.conformance.alloy.processes=1", "-cp",
-                System.getProperty("java.class.path"), PipelineCli.class.getName(), "evaluate-work-unit",
+        List<String> command = new ArrayList<>(List.of(java,
+                "-Dmetamodel.conformance.alloy.processes=1"));
+        if (Boolean.getBoolean("metamodel.conformance.alloy.profile")) {
+            command.add("-Dmetamodel.conformance.alloy.profile=true");
+        }
+        command.addAll(List.of("-cp", System.getProperty("java.class.path"),
+                PipelineCli.class.getName(), "evaluate-work-units",
                 "--observation", observation.toString(), "--alloy", alloy.toString(),
-                "--invariant", invariant, "--unit-index", Integer.toString(index))
-                .redirectErrorStream(true).start();
-        String output = new String(process.getInputStream().readAllBytes());
-        int exit = process.waitFor();
-        if (exit != 0 && exit != 2 && exit != 3) throw new IOException("worker failed: " + output);
+                "--invariant", invariant, "--first-unit-index", Integer.toString(first),
+                "--end-unit-index", Integer.toString(end)));
+        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
         String marker = "WORKER_DECISION_JSON=";
-        int start = output.lastIndexOf(marker);
-        if (start < 0) throw new IOException("worker produced no decision: " + output);
-        String json = output.substring(start + marker.length()).trim();
+        String json = null;
+        StringBuilder diagnostics = new StringBuilder();
+        try (BufferedReader output = new BufferedReader(new InputStreamReader(
+                process.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = output.readLine()) != null) {
+                if (line.startsWith(marker)) {
+                    json = line.substring(marker.length());
+                } else {
+                    if (line.startsWith("ALLOY_WORK_UNIT")) {
+                        System.err.printf("ALLOY_BATCH invariant=%s first=%d end=%d %s%n",
+                                invariant, first, end, line);
+                    }
+                    if (diagnostics.length() < 4096) diagnostics.append(line).append('\n');
+                }
+            }
+        }
+        int exit = process.waitFor();
+        if (exit != 0 && exit != 2 && exit != 3) {
+            throw new IOException("worker failed with exit " + exit + ": " + diagnostics);
+        }
+        if (json == null) throw new IOException("worker produced no decision: " + diagnostics);
         return new ObjectMapper().readValue(json, Decision.class);
     }
 
@@ -193,6 +225,12 @@ public final class AlloyInvariantEvaluator {
      */
     public Decision evaluateWorkUnit(
             Observation observation, String alloyModel, String invariantId, int unitIndex) {
+        return evaluateWorkUnits(observation, alloyModel, invariantId, unitIndex, unitIndex + 1);
+    }
+
+    public Decision evaluateWorkUnits(
+            Observation observation, String alloyModel, String invariantId,
+            int firstUnitIndex, int endUnitIndex) {
         InvariantDefinition definition = InvariantRegistry.load().require(invariantId);
         Set<EvidenceKind> missing = missingEvidence(observation, definition);
         if (!missing.isEmpty()) {
@@ -205,10 +243,11 @@ public final class AlloyInvariantEvaluator {
                 return notEvaluated(definition, "The Alloy artifact does not match the canonical observation.");
             }
             List<Observation> workUnits = new AlloyWorkUnitPlanner().plan(observation, definition);
-            if (unitIndex < 0 || unitIndex >= workUnits.size()) {
-                throw new IllegalArgumentException("work-unit index is outside the deterministic plan");
+            if (firstUnitIndex < 0 || endUnitIndex <= firstUnitIndex || endUnitIndex > workUnits.size()) {
+                throw new IllegalArgumentException("work-unit range is outside the deterministic plan");
             }
-            return evaluate(List.of(workUnits.get(unitIndex)), definition, encoder, executionConfig);
+            return evaluate(workUnits.subList(firstUnitIndex, endUnitIndex),
+                    definition, encoder, executionConfig);
         } catch (IllegalArgumentException failure) {
             throw failure;
         } catch (Exception | LinkageError | StackOverflowError failure) {

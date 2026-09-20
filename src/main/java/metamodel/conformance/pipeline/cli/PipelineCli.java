@@ -46,6 +46,7 @@ public final class PipelineCli {
                 case "analyze" -> analyze(slice(args));
                 case "verify-capsule" -> verifyCapsule(slice(args));
                 case "evaluate-work-unit" -> evaluateWorkUnit(slice(args));
+                case "evaluate-work-units" -> evaluateWorkUnits(slice(args));
                 default -> {
                     System.err.println("Unknown command: " + args[0]);
                     usage();
@@ -154,6 +155,26 @@ public final class PipelineCli {
                 : decision.status() == DecisionStatus.NOT_EVALUATED ? 3 : 0;
     }
 
+    private static int evaluateWorkUnits(String[] args) throws Exception {
+        ParsedOptions options = ParsedOptions.parse(args,
+                Set.of("observation", "alloy", "invariant", "first-unit-index", "end-unit-index"), Set.of(), Set.of());
+        int first;
+        int end;
+        try {
+            first = Integer.parseInt(options.one("first-unit-index"));
+            end = Integer.parseInt(options.one("end-unit-index"));
+        } catch (NumberFormatException failure) {
+            throw new IllegalArgumentException("work-unit indexes must be integers");
+        }
+        Decision decision = new AlloyInvariantEvaluator().evaluateWorkUnits(
+                new ObservationXmiReader().read(Path.of(options.one("observation"))),
+                Files.readString(Path.of(options.one("alloy"))),
+                options.one("invariant"), first, end);
+        System.out.println("WORKER_DECISION_JSON=" + new ObjectMapper().writeValueAsString(decision));
+        return decision.status() == DecisionStatus.NON_CONFORMANT ? 2
+                : decision.status() == DecisionStatus.NOT_EVALUATED ? 3 : 0;
+    }
+
     private static String[] slice(String[] values) {
         return java.util.Arrays.copyOfRange(values, 1, values.length);
     }
@@ -168,6 +189,9 @@ public final class PipelineCli {
                   verify-capsule --capsule <verification-capsule.json>
                   evaluate-work-unit --observation <observation.xmi> --alloy <repository-instance.als>
                                      --invariant <id> --unit-index <zero-based-index>
+                  evaluate-work-units --observation <observation.xmi> --alloy <repository-instance.als>
+                                      --invariant <id> --first-unit-index <inclusive-index>
+                                      --end-unit-index <exclusive-index>
 
                 Java dependency inputs may be global JARs or one source-set-scoped manifest, but not both.
                 Manifest rows are: canonical-source-set-relative-path<TAB>absolute-or-resolved-jar-path.
