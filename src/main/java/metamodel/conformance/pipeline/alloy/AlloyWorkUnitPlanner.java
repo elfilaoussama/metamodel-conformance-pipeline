@@ -95,7 +95,47 @@ final class AlloyWorkUnitPlanner {
                 }
             }
         }
+        if (definition.partitionRelations().contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)) {
+            closures = splitBindingClosures(closures, observation, sourcePaths);
+        }
         return pack(observation, closures, definition.partitionRelations());
+    }
+
+    private static List<Set<String>> splitBindingClosures(
+            List<Set<String>> closures, Observation observation, Set<String> sourcePaths) {
+        Map<String, ImplementationBindingObservation> bindings = new TreeMap<>();
+        observation.implementationBindings().forEach(item -> bindings.put(item.technicalKey(), item));
+        List<Set<String>> result = new ArrayList<>();
+        for (Set<String> closure : closures) {
+            long sourceClassifiers = closure.stream().filter(node -> node.startsWith(CLASSIFIER_PREFIX))
+                    .map(node -> node.substring(CLASSIFIER_PREFIX.length()))
+                    .map(id -> observation.classifiers().stream()
+                            .filter(item -> item.id().equals(id)).findFirst().orElseThrow())
+                    .filter(item -> sourcePaths.contains(item.sourcePath())).count();
+            if (closure.size() <= WORK_UNIT_ATOM_TARGET || sourceClassifiers != 1) {
+                result.add(closure);
+                continue;
+            }
+            Map<String, Set<String>> graph = new TreeMap<>();
+            closure.stream().filter(node -> !node.startsWith(CLASSIFIER_PREFIX))
+                    .forEach(node -> graph.put(node, new TreeSet<>()));
+            for (String node : graph.keySet()) {
+                if (!node.startsWith(BINDING_PREFIX)) continue;
+                ImplementationBindingObservation binding = bindings.get(node.substring(BINDING_PREFIX.length()));
+                connect(graph, node, memberNode(binding.targetMemberKey()));
+                connect(graph, node, bodyNode(binding.bodyKey()));
+            }
+            Set<String> visited = new HashSet<>();
+            Set<String> classifiers = closure.stream().filter(node -> node.startsWith(CLASSIFIER_PREFIX))
+                    .collect(java.util.stream.Collectors.toCollection(TreeSet::new));
+            for (String node : graph.keySet()) {
+                if (visited.contains(node)) continue;
+                Set<String> group = component(node, graph, visited);
+                group.addAll(classifiers);
+                result.add(group);
+            }
+        }
+        return List.copyOf(result);
     }
 
     private static Set<String> sourcePaths(Observation observation) {
