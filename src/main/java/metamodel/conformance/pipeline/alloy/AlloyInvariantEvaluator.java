@@ -112,7 +112,10 @@ public final class AlloyInvariantEvaluator {
             AlloyExecutionConfig executionConfig) {
         List<WitnessTuple> witnesses = new ArrayList<>();
         try {
-            for (Observation workUnit : workUnits) {
+            for (int unitIndex = 0; unitIndex < workUnits.size(); unitIndex++) {
+                Observation workUnit = workUnits.get(unitIndex);
+                long startedAt = System.nanoTime();
+                reportWorkUnit("start", definition, unitIndex, workUnits.size(), workUnit, 0L);
                 String model = encoder.encode(workUnit);
                 CompModule module = CompUtil.parseEverything_fromString(new A4Reporter(), model);
                 Command consistencyCommand = findCommand(module, "ObservationConsistency");
@@ -146,6 +149,8 @@ public final class AlloyInvariantEvaluator {
                     }
                     witnesses.add(new WitnessTuple(technicalKeys));
                 }
+                reportWorkUnit("complete", definition, unitIndex, workUnits.size(), workUnit,
+                        System.nanoTime() - startedAt);
             }
             witnesses = witnesses.stream().distinct()
                     .sorted(Comparator.comparing(witness -> String.join("\0", witness.technicalKeys())))
@@ -193,6 +198,20 @@ public final class AlloyInvariantEvaluator {
 
     private static Decision notEvaluated(InvariantDefinition definition, String message) {
         return new Decision(DecisionStatus.NOT_EVALUATED, definition.id(), message, List.of());
+    }
+
+    private static void reportWorkUnit(
+            String phase,
+            InvariantDefinition definition,
+            int index,
+            int total,
+            Observation workUnit,
+            long elapsedNanos) {
+        if (!Boolean.getBoolean("metamodel.conformance.alloy.profile")) return;
+        int atoms = workUnit.classifiers().size() + workUnit.members().size()
+                + workUnit.methodBodies().size() + workUnit.implementationBindings().size();
+        System.err.printf("ALLOY_WORK_UNIT phase=%s invariant=%s unit=%d/%d atoms=%d elapsedMillis=%d%n",
+                phase, definition.id(), index + 1, total, atoms, elapsedNanos / 1_000_000L);
     }
 
     private static String safeMessage(Throwable failure) {
