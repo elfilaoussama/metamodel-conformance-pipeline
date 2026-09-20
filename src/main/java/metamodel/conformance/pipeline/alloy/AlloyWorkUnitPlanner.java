@@ -21,7 +21,7 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 
 final class AlloyWorkUnitPlanner {
-    static final int WORK_UNIT_ATOM_TARGET = 256;
+    static final int WORK_UNIT_ATOM_TARGET = 64;
     private static final String CLASSIFIER_PREFIX = "C:";
     private static final String MEMBER_PREFIX = "M:";
     private static final String BODY_PREFIX = "B:";
