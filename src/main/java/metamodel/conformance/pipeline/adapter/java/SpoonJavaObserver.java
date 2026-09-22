@@ -159,7 +159,9 @@ public final class SpoonJavaObserver implements SourceObserver {
                     } else if (internalCandidates != null && !internalCandidates.isEmpty()) {
                         unresolved.add(new UnresolvedParent(
                                 draft.id(), parentName, draft.path(), referenceLine(parent, draft.startLine())));
-                    } else if (!PLATFORM_ROOTS.contains(parentName) && !allowed.contains(parentName)) {
+                    } else if (!allowed.contains(parentName)
+                            && (!PLATFORM_ROOTS.contains(parentName)
+                                || !compilationInputs.contexts().isEmpty())) {
                         unresolved.add(new UnresolvedParent(
                                 draft.id(), parentName, draft.path(), referenceLine(parent, draft.startLine())));
                     }
@@ -396,6 +398,13 @@ public final class SpoonJavaObserver implements SourceObserver {
         List<CtTypeReference<?>> parents = new ArrayList<>();
         if (type instanceof CtClass<?> ctClass && ctClass.getSuperclass() != null) {
             parents.add(ctClass.getSuperclass());
+        }
+        // Spoon does not expose the JLS-mandated Enum<E> superclass through
+        // CtClass because CtEnum is a separate declaration kind. Preserve the
+        // semantic edge; the compilation-context observer resolves its actual
+        // platform carrier under the selected --release/system profile.
+        if (type instanceof CtEnum<?>) {
+            parents.add(type.getFactory().Type().createReference("java.lang.Enum"));
         }
         parents.addAll(type.getSuperInterfaces());
         return parents.stream().sorted(Comparator.comparing(CtTypeReference::getQualifiedName)).toList();

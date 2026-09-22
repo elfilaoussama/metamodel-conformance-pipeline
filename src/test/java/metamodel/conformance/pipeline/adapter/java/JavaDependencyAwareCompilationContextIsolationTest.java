@@ -138,6 +138,29 @@ class JavaDependencyAwareCompilationContextIsolationTest {
     }
 
     @Test
+    void materializesTheImplicitEnumSuperclassFromTheCompilationProfile() throws Exception {
+        Path source = temporary.resolve("code/main/app/Choice.java");
+        Files.createDirectories(source.getParent());
+        Files.writeString(source, "package app; public enum Choice { FIRST, SECOND }\n");
+        Path manifest = temporary.resolve("enum-platform-context.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tmain\tcode/main") + "\n");
+
+        Observation observed = new JavaDependencyAwareSourceObserver(
+                JavaDependencyInputs.fromManifest(manifest)).observe(temporary, Set.of());
+
+        ClassifierObservation choice = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("app.Choice")).findFirst().orElseThrow();
+        ClassifierObservation enumType = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("java.lang.Enum")).findFirst().orElseThrow();
+        assertEquals(List.of(enumType.id()), choice.parentIds());
+        assertTrue(observed.completeEvidence().contains(EvidenceKind.HIERARCHY));
+        assertTrue(observed.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
+        assertTrue(observed.diagnostics().isEmpty(), () -> observed.diagnostics().toString());
+    }
+
+    @Test
     void downstreamContextRecoversDependencyMembersThroughExplicitUpstreamContext() throws Exception {
         Path baseSource = temporary.resolve("code/production/app/Base.java");
         Files.createDirectories(baseSource.getParent());
