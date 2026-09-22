@@ -74,6 +74,37 @@ class OverrideDisciplineInvariantTest {
     }
 
     @Test
+    void distinguishesJavacGenericOverrideFromStrictDeclaredReturnPolicy() throws Exception {
+        Path source = Files.createDirectory(temporary.resolve("generic-return"));
+        Files.writeString(source.resolve("Base.java"), """
+                class Base<T> {
+                    T value() { return null; }
+                }
+                """);
+        Files.writeString(source.resolve("Child.java"), """
+                class Child extends Base<String> {
+                    @Override String value() { return "value"; }
+                }
+                """);
+
+        Observation observation = new JavaImplementationSourceObserver(List.of()).observe(source, Set.of());
+        assertTrue(observation.completeEvidence().contains(EvidenceKind.METHOD_RETURN_TYPES));
+        assertTrue(observation.completeEvidence().contains(EvidenceKind.OVERRIDE_RELATIONS));
+        assertEquals(1, observation.members().stream()
+                .mapToLong(member -> member.overriddenMemberKeys().size()).sum());
+        assertEquals(Set.of("T", "java.lang.String"), observation.members().stream()
+                .filter(member -> member.kind() == MemberKind.METHOD)
+                .map(member -> member.returnType()).collect(java.util.stream.Collectors.toSet()));
+
+        // javac recognizes the override, while the manuscript profile compares
+        // declaration-level return types and deliberately reports T != String.
+        assertEquals(DecisionStatus.CONFORMANT,
+                decision(observation, "override-relation-consistency"));
+        assertEquals(DecisionStatus.NON_CONFORMANT,
+                decision(observation, "override-discipline"));
+    }
+
+    @Test
     void acceptsAbstractOverrideWithoutConcreteBinding() throws Exception {
         Path source = Files.createDirectory(temporary.resolve("abstract-override"));
         Files.writeString(source.resolve("Base.java"), """

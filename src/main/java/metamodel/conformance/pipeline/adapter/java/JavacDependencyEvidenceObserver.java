@@ -224,7 +224,12 @@ final class JavacDependencyEvidenceObserver {
                 }
                 Owner owner = ownerOf(
                         root, trees, elements, element, sourceByLocation, productionByName, supportByName);
-                if (owner == null || owner.classifier().id().equals(classifier.id())) {
+                if (owner == null) {
+                    return incomplete(classifiers,
+                            "javac inherited declaration owner is outside the canonical evidence boundary: "
+                                    + element);
+                }
+                if (owner.classifier().id().equals(classifier.id())) {
                     continue;
                 }
                 MemberObservation declaration = !owner.binary() && element instanceof ExecutableElement method
@@ -235,10 +240,9 @@ final class JavacDependencyEvidenceObserver {
                         element,
                         types, elements);
                 if (declaration == null) {
-                    if (owner.binary()) {
-                        continue;
-                    }
-                    return incomplete(classifiers, "javac inherited declaration could not be mapped uniquely");
+                    return incomplete(classifiers,
+                            "javac inherited declaration could not be mapped uniquely: "
+                                    + owner.classifier().qualifiedName() + "." + element);
                 }
                 inherited.add(declaration.technicalKey());
             }
@@ -327,8 +331,11 @@ final class JavacDependencyEvidenceObserver {
             }
             Owner ancestorOwner = ownerOfType(
                     root, trees, elements, ancestorType, sourceByLocation, productionByName, supportByName);
-            if (ancestorOwner != null) {
-                for (Element candidate : ancestorType.getEnclosedElements()) {
+            if (ancestorOwner == null) {
+                return "javac override ancestor is outside the canonical evidence boundary: "
+                        + ancestorType.getQualifiedName();
+            }
+            for (Element candidate : ancestorType.getEnclosedElements()) {
                     if (!(candidate instanceof ExecutableElement inheritedMethod)
                             || candidate.getKind() != ElementKind.METHOD) {
                         continue;
@@ -347,14 +354,10 @@ final class JavacDependencyEvidenceObserver {
                             candidate,
                             types, elements);
                     if (target == null) {
-                        if (ancestorOwner.binary()) {
-                            continue;
-                        }
                         return "javac override target could not be mapped uniquely: "
                                 + ancestorType.getQualifiedName() + "." + inheritedMethod;
                     }
                     targets.add(target.technicalKey());
-                }
             }
             String nested = collectOverrideTargets(
                     root, trees, elements, types, sourceOwner, ancestorType, local,
