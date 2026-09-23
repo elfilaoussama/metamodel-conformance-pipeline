@@ -161,6 +161,29 @@ class JavaDependencyAwareCompilationContextIsolationTest {
     }
 
     @Test
+    void materializesTheImplicitObjectSuperclassFromTheCompilationProfile() throws Exception {
+        Path source = temporary.resolve("code/main/app/Plain.java");
+        Files.createDirectories(source.getParent());
+        Files.writeString(source, "package app; public class Plain {}\n");
+        Path manifest = temporary.resolve("object-platform-context.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tmain\tcode/main") + "\n");
+
+        Observation observed = new JavaDependencyAwareSourceObserver(
+                JavaDependencyInputs.fromManifest(manifest)).observe(temporary, Set.of());
+
+        ClassifierObservation plain = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("app.Plain")).findFirst().orElseThrow();
+        ClassifierObservation object = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("java.lang.Object")).findFirst().orElseThrow();
+        assertEquals(List.of(object.id()), plain.parentIds());
+        assertTrue(observed.completeEvidence().contains(EvidenceKind.HIERARCHY));
+        assertTrue(observed.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
+        assertTrue(observed.diagnostics().isEmpty(), () -> observed.diagnostics().toString());
+    }
+
+    @Test
     void downstreamContextRecoversDependencyMembersThroughExplicitUpstreamContext() throws Exception {
         Path baseSource = temporary.resolve("code/production/app/Base.java");
         Files.createDirectories(baseSource.getParent());

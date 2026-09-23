@@ -396,8 +396,10 @@ public final class SpoonJavaObserver implements SourceObserver {
 
     private static List<CtTypeReference<?>> directParents(CtType<?> type) {
         List<CtTypeReference<?>> parents = new ArrayList<>();
-        if (type instanceof CtClass<?> ctClass && ctClass.getSuperclass() != null) {
-            parents.add(ctClass.getSuperclass());
+        if (type instanceof CtClass<?> ctClass) {
+            parents.add(ctClass.getSuperclass() != null
+                    ? ctClass.getSuperclass()
+                    : type.getFactory().Type().createReference("java.lang.Object"));
         }
         // Spoon does not expose the JLS-mandated Enum<E> superclass through
         // CtClass because CtEnum is a separate declaration kind. Preserve the
