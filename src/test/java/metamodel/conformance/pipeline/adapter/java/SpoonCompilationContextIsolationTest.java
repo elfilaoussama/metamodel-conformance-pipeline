@@ -140,7 +140,20 @@ class SpoonCompilationContextIsolationTest {
                 source\tb\tbeta
                 """);
         Observation result = new JavaDependencyAwareSourceObserver(inputs).observe(root, Set.of());
-        assertEquals(6, result.classifiers().size());
+        assertEquals(7, result.classifiers().size());
+        var objectSupport = result.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("java.lang.Object"))
+                .findFirst().orElseThrow();
+        var alphaOuter = result.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("same.Outer")
+                        && item.sourcePath().equals("alpha/Outer.java"))
+                .findFirst().orElseThrow();
+        var alphaBase = result.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("same.Outer$Base")
+                        && item.sourcePath().equals("alpha/Outer.java"))
+                .findFirst().orElseThrow();
+        assertTrue(alphaOuter.parentIds().contains(objectSupport.id()));
+        assertTrue(alphaBase.parentIds().contains(objectSupport.id()));
         assertEquals(2, result.methodBodies().size());
         assertTrue(result.diagnostics().isEmpty(), result.diagnostics().toString());
         Path xmi = root.resolve("context-evidence.xmi");

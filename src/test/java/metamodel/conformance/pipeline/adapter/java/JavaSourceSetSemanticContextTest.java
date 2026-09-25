@@ -1,9 +1,11 @@
 package metamodel.conformance.pipeline.adapter.java;
 
+import metamodel.conformance.pipeline.adapter.SourceObserverFactory;
 import metamodel.conformance.pipeline.alloy.AlloyInvariantEvaluator;
 import metamodel.conformance.pipeline.alloy.ExactAlloyEncoder;
 import metamodel.conformance.pipeline.decision.DecisionStatus;
 import metamodel.conformance.pipeline.model.EvidenceKind;
+import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.model.MemberKind;
 import metamodel.conformance.pipeline.model.Observation;
 import org.junit.jupiter.api.Test;
@@ -56,7 +58,7 @@ class JavaSourceSetSemanticContextTest {
                 }
                 """);
 
-        Observation observation = new JavaImplementationSourceObserver(contextInputs(root))
+        Observation observation = SourceObserverFactory.create(Language.JAVA, contextInputs(root))
                 .observe(root, Set.of());
 
         assertTrue(observation.completeEvidence().containsAll(Set.of(

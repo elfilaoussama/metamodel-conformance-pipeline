@@ -251,9 +251,15 @@ class SpoonJavaObserverTest {
         assertEquals(2, duplicates.stream().map(item -> item.sourcePath()).distinct().count());
         assertTrue(observation.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP));
         assertTrue(observation.completeEvidence().contains(EvidenceKind.LOCAL_SIGNATURES));
-        assertTrue(observation.completeEvidence().contains(EvidenceKind.HIERARCHY));
-        assertTrue(observation.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
-        assertTrue(observation.unresolvedParents().isEmpty());
+        assertFalse(observation.completeEvidence().contains(EvidenceKind.HIERARCHY));
+        assertFalse(observation.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
+        assertEquals(2, observation.unresolvedParents().size());
+        assertTrue(observation.unresolvedParents().stream()
+                .allMatch(item -> item.targetName().equals("java.lang.Object")));
+        assertEquals(
+                new java.util.TreeSet<>(duplicates.stream().map(item -> item.id()).toList()),
+                new java.util.TreeSet<>(observation.unresolvedParents().stream()
+                        .map(item -> item.ownerId()).toList()));
         var child = observation.classifiers().stream()
                 .filter(item -> item.qualifiedName().equals("example.Child"))
                 .findFirst().orElseThrow();

@@ -1,8 +1,10 @@
 package metamodel.conformance.pipeline;
 
 import metamodel.conformance.pipeline.adapter.ObservationException;
+import metamodel.conformance.pipeline.adapter.SourceObserverFactory;
 import metamodel.conformance.pipeline.adapter.java.JavaImplementationSourceObserver;
 import metamodel.conformance.pipeline.adapter.java.JavaDependencyInputs;
+import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.capsule.CapsuleVerifier;
 import metamodel.conformance.pipeline.decision.DecisionStatus;
 import metamodel.conformance.pipeline.emf.ObservationXmiReader;
@@ -129,7 +131,7 @@ class ConformancePipelineTest {
                 unscoped.invariant("acyclic-generalization").status());
 
         PipelineResult result = new ConformancePipeline(
-                new JavaImplementationSourceObserver(duplicateCompilationContexts()))
+                SourceObserverFactory.create(Language.JAVA, duplicateCompilationContexts()))
                 .analyze(fixture, temporary.resolve("duplicate-source-sets-scoped"), Set.of());
 
         assertTrue(result.observation().unresolvedParents().isEmpty());

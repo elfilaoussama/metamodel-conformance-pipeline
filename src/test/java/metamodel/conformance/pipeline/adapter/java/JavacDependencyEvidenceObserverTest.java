@@ -104,6 +104,30 @@ class JavacDependencyEvidenceObserverTest {
         JavaDependencyObservation.Result support = JavaDependencyObservation.materialize(
                 new JavaDependencySymbols.Result(List.of(parent), Set.of()));
 
+        // javac's effective member view of Child also contains the members that
+        // dep.Parent inherits from java.lang.Object. The production stack
+        // materializes that platform root from the compilation profile before
+        // the boundary audit can accept the observation, so the component
+        // boundary must include the same platform support evidence.
+        Path platformManifest = temporary.resolve("platform-context.tsv");
+        Files.writeString(platformManifest, String.join("\n",
+                "context\tplatform\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tplatform\tverification/units/app") + "\n");
+        JavaPlatformProvenance platform = JavaPlatformProvenance.capture(
+                JavaDependencyInputs.fromManifest(platformManifest).context("platform"));
+        JavaDependencyObservation.Result platformSupport = JavaDependencyObservation.materialize(
+                JavaDependencySymbols.resolve(
+                        JavaDependencyClasspath.resolve(List.of()),
+                        Set.of("java.lang.Object"),
+                        platform,
+                        List.of("--release", "17")));
+        List<ClassifierObservation> boundaryClassifiers =
+                new java.util.ArrayList<>(support.classifiers());
+        boundaryClassifiers.addAll(platformSupport.classifiers());
+        List<MemberObservation> boundaryMembers =
+                new java.util.ArrayList<>(support.members());
+        boundaryMembers.addAll(platformSupport.members());
+
         String childId = "cls_" + "1".repeat(64);
         String localWorkKey = "mem_" + "2".repeat(64);
         MemberObservation localWork = new MemberObservation(
@@ -142,8 +166,8 @@ class JavacDependencyEvidenceObserverTest {
                         List.of(localWork),
                         List.of(),
                         List.of(),
-                        support.classifiers(),
-                        support.members(),
+                        boundaryClassifiers,
+                        boundaryMembers,
                         List.of("--release", "17", "--class-path", archive.toString()));
 
         assertTrue(evidence.complete(), () -> evidence.diagnostics().toString());
@@ -151,8 +175,11 @@ class JavacDependencyEvidenceObserverTest {
                 "dep.Parent", MemberKind.METHOD, "work", List.of("java.lang.String"));
         String inheritedCount = support.memberKey(
                 "dep.Parent", MemberKind.ATTRIBUTE, "count", List.of());
+        String inheritedGetClass = platformSupport.memberKey(
+                "java.lang.Object", MemberKind.METHOD, "getClass", List.of());
         assertFalse(evidence.inheritedByClassifier().get(childId).contains(inheritedWork));
         assertTrue(evidence.inheritedByClassifier().get(childId).contains(inheritedCount));
+        assertTrue(evidence.inheritedByClassifier().get(childId).contains(inheritedGetClass));
         assertEquals(List.of(inheritedWork),
                 evidence.overriddenMemberKeysByMember().get(localWorkKey));
         assertEquals("java.lang.String", evidence.returnTypesByMember().get(localWorkKey));

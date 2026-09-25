@@ -75,7 +75,18 @@ class JavacUpstreamIsolationTest {
         // still uses the original manifest and independently rebuilds upstreams.
         var observed = new JavaDependencyAwareSourceObserver(inputs).observe(root, java.util.Set.of());
         assertTrue(observed.diagnostics().isEmpty(), observed.diagnostics().toString());
-        assertEquals(2, observed.classifiers().size());
+        assertEquals(3, observed.classifiers().size());
+        var objectSupport = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("java.lang.Object"))
+                .findFirst().orElseThrow();
+        var apiClassifier = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("sample.api.Api"))
+                .findFirst().orElseThrow();
+        var appClassifier = observed.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("sample.app.App"))
+                .findFirst().orElseThrow();
+        assertTrue(apiClassifier.parentIds().contains(objectSupport.id()));
+        assertTrue(appClassifier.parentIds().contains(objectSupport.id()));
         Path xmi = root.resolve("modules.xmi");
         new metamodel.conformance.pipeline.emf.ObservationXmiWriter().write(observed, xmi);
         var replayed = new metamodel.conformance.pipeline.emf.ObservationXmiReader().read(xmi);
