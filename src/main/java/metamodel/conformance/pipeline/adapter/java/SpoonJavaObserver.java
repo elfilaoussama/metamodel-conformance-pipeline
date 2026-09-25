@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.12.0";
+    public static final String ADAPTER_VERSION = "0.12.1";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -437,7 +437,16 @@ public final class SpoonJavaObserver implements SourceObserver {
     }
 
     private static String packageName(CtType<?> type) {
-        String value = type.getPackage() == null ? null : type.getPackage().getQualifiedName();
+        // Local and anonymous Spoon types have no direct CtPackage even though
+        // their compilation unit has a declared package. Package membership is
+        // lexical source evidence, so recover it from that unit instead of
+        // treating those declarations as members of the default package.
+        var observedPackage = type.getPackage();
+        if (observedPackage == null && type.getPosition().isValidPosition()
+                && type.getPosition().getCompilationUnit() != null) {
+            observedPackage = type.getPosition().getCompilationUnit().getDeclaredPackage();
+        }
+        String value = observedPackage == null ? null : observedPackage.getQualifiedName();
         return value == null || value.isBlank() ? "<default>" : value;
     }
 

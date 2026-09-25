@@ -69,6 +69,40 @@ class JavaSemanticOraclePipelineTest {
         }
     }
 
+    @Test
+    void preservesAnonymousClassPackageAcrossObservationAndFormalViews() throws Exception {
+        Path source = Files.createDirectories(temporary.resolve("anonymous-package/example"));
+        Files.writeString(source.resolve("Corpus.java"), """
+                package example;
+                abstract class Base {
+                    void inheritedPackageMethod() {}
+                    abstract void implementedHere();
+                }
+                class Factory {
+                    Base create() {
+                        return new Base() {
+                            @Override void implementedHere() {}
+                        };
+                    }
+                }
+                """);
+
+        PipelineResult result = new ConformancePipeline(
+                new JavaImplementationSourceObserver(List.of())).analyze(
+                temporary.resolve("anonymous-package"),
+                temporary.resolve("anonymous-package-result"), Set.of());
+
+        assertTrue(result.observation().diagnostics().isEmpty(),
+                result.observation().diagnostics().toString());
+        assertTrue(result.observation().classifiers().stream()
+                .allMatch(classifier -> classifier.packageName().equals("example")),
+                result.observation().classifiers().toString());
+        assertEquals(DecisionStatus.CONFORMANT,
+                result.invariant("inherited-view-consistency").status());
+        assertEquals(DecisionStatus.CONFORMANT,
+                result.invariant("override-relation-consistency").status());
+    }
+
     private record Scenario(
             String name,
             String source,

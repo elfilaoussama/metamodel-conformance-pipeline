@@ -152,6 +152,29 @@ class SpoonJavaObserverTest {
     }
 
     @Test
+    void derivesNestedLocalAndAnonymousPackagesFromTheirLexicalContainer() throws Exception {
+        Files.writeString(temporary.resolve("Outer.java"), """
+                package example.deep;
+                class Outer {
+                    class Member {}
+                    void work() {
+                        class Local {}
+                        Runnable action = new Runnable() {
+                            public void run() {}
+                        };
+                    }
+                }
+                """);
+
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertEquals(4, observation.classifiers().size(), observation.classifiers().toString());
+        assertTrue(observation.classifiers().stream()
+                .allMatch(classifier -> classifier.packageName().equals("example.deep")),
+                observation.classifiers().toString());
+    }
+
+    @Test
     void usesFingerprintedDependencyArchiveWithoutClaimingUnmaterializedHierarchy() throws Exception {
         Path source = temporary.resolve("dependency-source");
         Path classes = temporary.resolve("dependency-classes");
