@@ -143,6 +143,17 @@ gradle.projectsEvaluated {
                     }
                     def id = safe("gradle|${rel(project.projectDir)}|${project.path}|${sourceSet.name}")
                     def entries = sourceSet.compileClasspath.files.collect { it.canonicalFile }
+                    // Compilation classpaths may reference project-produced archives
+                    // (test-fixture or explicitly requested jar variants). Their
+                    // producing tasks must run in this isolated worktree so the
+                    // manifest points at authentic built artifacts instead of
+                    // missing paths; dropping the entry or substituting a classes
+                    // directory would fabricate evidence.
+                    if (observationTask != null) {
+                        observationTask.configure {
+                            dependsOn(sourceSet.compileClasspath.buildDependencies)
+                        }
+                    }
                     def outputs = sourceSet.output.classesDirs.files.collect { it.canonicalFile }
                     contexts << [id:id, module:rel(project.projectDir), projectPath:project.path,
                                  sourceSetName:sourceSet.name, roots:roots.collect(rel), entries:entries,
