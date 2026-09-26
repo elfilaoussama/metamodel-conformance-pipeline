@@ -48,8 +48,9 @@ elif [[ "$all" == *"__mcpObserveJavaContexts"* ]]; then
   [[ -n "$worktree_mount" ]]
   grep -Fq "replace('\\n',' ')" "$init_mount"
   grep -Fq "mcp.build.output is required" "$init_mount"
-  grep -Fq "def observationTask = null" "$init_mount"
-  grep -Fq "observationTask = project.tasks.register('__mcpObserveJavaContexts')" "$init_mount"
+  grep -Fq "def rootObservationTask = null" "$init_mount"
+  grep -Fq "def observation = project.tasks.register('__mcpObserveJavaContexts')" "$init_mount"
+  grep -Fq "rootObservationTask = observation" "$init_mount"
   grep -Fq 'def owners = outputOwners[entry.path]' "$init_mount"
   ! grep -Fq 'mainContextOwners' "$init_mount"
   ! grep -Fq 'projectBuildRoots' "$init_mount"

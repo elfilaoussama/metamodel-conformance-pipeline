@@ -98,85 +98,126 @@ def level = { Object value ->
 }
 def safe = { String value -> value.replace('\t',' ').replace('\n',' ').replace('\r',' ') }
 
-def observationTask = null
+def rootObservationTask = null
+
 gradle.beforeProject { project ->
     def relativeProjectDir = rel(project.projectDir)
     def outputDir = new File(buildOutputRoot, relativeProjectDir == '.' ? 'root' : relativeProjectDir)
     project.layout.buildDirectory.set(outputDir)
+    def observation = project.tasks.register('__mcpObserveJavaContexts') { }
+    // Each project observes its own source sets: a project may resolve its own
+    // configurations at task execution, while Gradle 9 rejects resolving another
+    // project's configuration there (notably under parallel execution). Every
+    // project writes a fragment; the root task aggregates fragments after every
+    // archive-producing dependency has run.
+    observation.configure {
+        doLast {
+            def outputPath = System.getProperty('mcp.context.output')
+            if (outputPath == null || outputPath.trim().isEmpty()) throw new GradleException('mcp.context.output is required')
+            def partsDir = new File(outputPath + '.parts')
+            partsDir.mkdirs()
+            def key = project.path == ':' ? '%3A' : project.path.replace('%', '%25').replace(':', '%3A')
+            def fragment = new File(partsDir, key + '.tsv')
+            fragment.text = ''
+            def sourceSets = project.extensions.findByType(SourceSetContainer)
+            if (sourceSets == null) return
+            sourceSets.sort { a, b -> a.name <=> b.name }.each { sourceSet ->
+                def roots = sourceSet.java.srcDirs.findAll { dir ->
+                    try { dir.canonicalFile.toPath().startsWith(repositoryRoot.toPath()) } catch (Throwable ignored) { false }
+                }.sort { a, b -> a.canonicalPath <=> b.canonicalPath }
+                def hasJava = roots.any { dir -> dir.isDirectory() && !project.fileTree(dir).matching { include '**/*.java' }.files.isEmpty() }
+                if (!hasJava) return
+                def compileTask = project.tasks.findByName(sourceSet.compileJavaTaskName)
+                def release = ''
+                def sourceLevel = ''
+                def targetLevel = ''
+                def preview = false
+                def platform = ''
+                if (compileTask instanceof JavaCompile) {
+                    try {
+                        def r = compileTask.options.release.orNull
+                        if (r != null) release = r.toString()
+                    } catch (Throwable ignored) { }
+                    if (release.isEmpty()) {
+                        sourceLevel = level(compileTask.sourceCompatibility)
+                        targetLevel = level(compileTask.targetCompatibility)
+                    }
+                    preview = compileTask.options.compilerArgs.contains('--enable-preview')
+                    // Do not materialize javaCompiler: that can provision a toolchain
+                    // solely to inspect metadata. An unavailable executable compiler is
+                    // represented by absent platform evidence, never guessed semantics.
+                }
+                def id = safe("gradle|${rel(project.projectDir)}|${project.path}|${sourceSet.name}")
+                def entries = sourceSet.compileClasspath.files.collect { it.canonicalFile }
+                def outputs = sourceSet.output.classesDirs.files.collect { it.canonicalFile }
+                fragment << "context\t${id}\t${rel(project.projectDir)}\t${sourceLevel}\t${targetLevel}\t${release}\t${preview}\t${platform}" + System.lineSeparator()
+                roots.collect(rel).each { root -> fragment << "source\t${id}\t${root}" + System.lineSeparator() }
+                outputs.sort { a, b -> a.path <=> b.path }.each { out ->
+                    fragment << "output\t${id}\t${out.path}" + System.lineSeparator()
+                }
+                entries.each { entry -> fragment << "classpath\t${id}\t${entry.path}" + System.lineSeparator() }
+            }
+        }
+    }
     if (project == gradle.rootProject) {
-        observationTask = project.tasks.register('__mcpObserveJavaContexts') { }
+        rootObservationTask = observation
+    }
+    // Compilation classpaths may reference project-produced archives
+    // (test-fixture or explicitly requested jar variants). Their
+    // producing tasks must run in this isolated worktree so the
+    // manifest points at authentic built artifacts instead of
+    // missing paths; dropping the entry or substituting a classes
+    // directory would fabricate evidence.
+    project.afterEvaluate {
+        def sourceSets = project.extensions.findByType(SourceSetContainer)
+        if (sourceSets == null) return
+        sourceSets.each { sourceSet ->
+            observation.configure {
+                dependsOn(sourceSet.compileClasspath.buildDependencies)
+            }
+        }
     }
 }
 
 gradle.projectsEvaluated {
-    def outputPath = System.getProperty('mcp.context.output')
-    if (outputPath == null || outputPath.trim().isEmpty()) throw new GradleException('mcp.context.output is required')
-    def contexts = []
-    gradle.rootProject.allprojects.sort { a, b -> a.path <=> b.path }.each { project ->
-                def sourceSets = project.extensions.findByType(SourceSetContainer)
-                if (sourceSets == null) return
-                sourceSets.sort { a, b -> a.name <=> b.name }.each { sourceSet ->
-                    def roots = sourceSet.java.srcDirs.findAll { dir ->
-                        try { dir.canonicalFile.toPath().startsWith(repositoryRoot.toPath()) } catch (Throwable ignored) { false }
-                    }.sort { a, b -> a.canonicalPath <=> b.canonicalPath }
-                    def hasJava = roots.any { dir -> dir.isDirectory() && !project.fileTree(dir).matching { include '**/*.java' }.files.isEmpty() }
-                    if (!hasJava) return
-                    def compileTask = project.tasks.findByName(sourceSet.compileJavaTaskName)
-                    def release = ''
-                    def sourceLevel = ''
-                    def targetLevel = ''
-                    def preview = false
-                    def platform = ''
-                    if (compileTask instanceof JavaCompile) {
-                        try {
-                            def r = compileTask.options.release.orNull
-                            if (r != null) release = r.toString()
-                        } catch (Throwable ignored) { }
-                        if (release.isEmpty()) {
-                            sourceLevel = level(compileTask.sourceCompatibility)
-                            targetLevel = level(compileTask.targetCompatibility)
-                        }
-                        preview = compileTask.options.compilerArgs.contains('--enable-preview')
-                        // Do not materialize javaCompiler: that can provision a toolchain
-                        // solely to inspect metadata. An unavailable executable compiler is
-                        // represented by absent platform evidence, never guessed semantics.
-                    }
-                    def id = safe("gradle|${rel(project.projectDir)}|${project.path}|${sourceSet.name}")
-                    // Compilation classpaths may reference project-produced archives
-                    // (test-fixture or explicitly requested jar variants). Their
-                    // producing tasks must run in this isolated worktree so the
-                    // manifest points at authentic built artifacts instead of
-                    // missing paths; dropping the entry or substituting a classes
-                    // directory would fabricate evidence.
-                    if (observationTask != null) {
-                        observationTask.configure {
-                            dependsOn(sourceSet.compileClasspath.buildDependencies)
+    if (rootObservationTask == null) return
+    def observation = rootObservationTask
+    observation.configure {
+        dependsOn(gradle.rootProject.allprojects.collect { project ->
+            project.path == ':' ? ':__mcpObserveJavaContexts' : project.path + ':__mcpObserveJavaContexts'
+        }.findAll { it != ':__mcpObserveJavaContexts' })
+    }
+    observation.configure {
+        doLast {
+            def outputPath = System.getProperty('mcp.context.output')
+            if (outputPath == null || outputPath.trim().isEmpty()) throw new GradleException('mcp.context.output is required')
+            def partsDir = new File(outputPath + '.parts')
+            def contexts = []
+            if (partsDir.isDirectory()) {
+                partsDir.listFiles().findAll { it.isFile() && it.name.endsWith('.tsv') }.sort { it.name <=> it.name }.each { fragment ->
+                    def current = null
+                    fragment.eachLine { line ->
+                        def fields = line.split('\t', -1)
+                        if (fields[0] == 'context') {
+                            current = [id:fields[1], module:fields[2], source:fields[3], target:fields[4],
+                                       release:fields[5], preview:fields[6], platform:fields[7],
+                                       roots:[], outputs:[], entries:[]]
+                            contexts << current
+                        } else if (current != null && fields[0] == 'source') {
+                            current.roots << fields[2]
+                        } else if (current != null && fields[0] == 'output') {
+                            current.outputs << new File(fields[2])
+                        } else if (current != null && fields[0] == 'classpath') {
+                            current.entries << new File(fields[2])
                         }
                     }
-                    // Classpaths and outputs are resolved at execution, not during
-                    // configuration: Gradle 9 rejects resolving another project's
-                    // configuration without its exclusive lock, and the manifest must
-                    // reflect archives that were actually built by the time the
-                    // observation runs.
-                    contexts << [id:id, module:rel(project.projectDir), roots:roots.collect(rel),
-                                 source:sourceLevel, target:targetLevel, release:release,
-                                 preview:preview, platform:platform,
-                                 resolveEntries:{ sourceSet.compileClasspath.files.collect { it.canonicalFile } },
-                                 resolveOutputs:{ sourceSet.output.classesDirs.files.collect { it.canonicalFile } }]
                 }
             }
-    observationTask.configure {
-        doLast {
             def output = new File(outputPath)
             output.parentFile.mkdirs()
             output.text = ''
-            def resolved = contexts.collect { ctx ->
-                [id:ctx.id, module:ctx.module, source:ctx.source, target:ctx.target, release:ctx.release,
-                 preview:ctx.preview, platform:ctx.platform, roots:ctx.roots,
-                 entries:ctx.resolveEntries(), outputs:ctx.resolveOutputs()]
-            }
             def outputOwners = [:]
-            resolved.each { ctx -> ctx.outputs.each { out ->
+            contexts.each { ctx -> ctx.outputs.each { out ->
                 if (!outputOwners.containsKey(out.path)) outputOwners[out.path] = [] as Set
                 outputOwners[out.path].add(ctx.id)
             } }
@@ -184,7 +225,7 @@ gradle.projectsEvaluated {
             // ownership. Project identity or build-directory containment cannot identify
             // archive variants (test fixtures, custom/shaded JARs, generated resources).
             // Preserve archives, including unresolved ones, for fail-closed validation.
-            resolved.sort { a, b -> a.id <=> b.id }.each { ctx ->
+            contexts.sort { a, b -> a.id <=> b.id }.each { ctx ->
                 output << "context\t${ctx.id}\t${ctx.module}\t${ctx.source}\t${ctx.target}\t${ctx.release}\t${ctx.preview}\t${ctx.platform}" + System.lineSeparator()
                 ctx.roots.each { root -> output << "source\t${ctx.id}\t${root}" + System.lineSeparator() }
                 ctx.outputs.sort { a, b -> a.path <=> b.path }.each { out ->

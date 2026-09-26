@@ -19,7 +19,7 @@ def temp = Files.createTempDirectory('gradle-emission-').toFile()
 def failures = []
 def context = { id, project, set, outputs, entries, artifacts ->
     [id:id, module:project, roots:['code/' + id], source:'17', target:'17', release:'', preview:false,
-     platform:'', resolveEntries:{ entries }, resolveOutputs:{ outputs }]
+     platform:'', entries:entries, outputs:outputs]
 }
 def check = { name, List contexts, List buildRoots, Closure assertion ->
     def out = new File(temp, name + '.tsv')
