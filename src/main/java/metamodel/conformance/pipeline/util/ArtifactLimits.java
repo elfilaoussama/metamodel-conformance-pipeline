@@ -6,9 +6,15 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 public final class ArtifactLimits {
-    public static final long MAX_CAPSULE_BYTES = 1024L * 1024L;
-    public static final long MAX_ALLOY_BYTES = 16L * 1024L * 1024L;
-    public static final long MAX_XMI_BYTES = 32L * 1024L * 1024L;
+    // Runaway guards, not semantic size limits: supported repositories must
+    // never be rejected because their exact observation is large. Measured
+    // examples: Commons Codec Alloy 5.3 MiB, jackson-core 8.5 MiB,
+    // ArchUnit 20.6 MiB, caffeine 17.4 MiB. Workflow execution budgets are a
+    // separate operational control; these bounds only stop pathological
+    // output growth.
+    public static final long MAX_CAPSULE_BYTES = 64L * 1024L * 1024L;
+    public static final long MAX_ALLOY_BYTES = 1024L * 1024L * 1024L;
+    public static final long MAX_XMI_BYTES = 512L * 1024L * 1024L;
 
     private ArtifactLimits() {
     }
