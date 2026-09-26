@@ -39,7 +39,45 @@ grep -Fq $'context\tmaven|.|compile\t.\t\t\t17\tfalse\t' "$work/maven.tsv"
 grep -Fq $'source\tmaven|.|compile\tcode/alpha' "$work/maven.tsv"
 grep -Fq $'source\tmaven|.|test\tchecks/beta' "$work/maven.tsv"
 ! grep -Eq 'src/(main|test)/java' "$work/maven.tsv"
+! grep -Eq $'^module-path\t' "$work/maven.tsv"
 printf 'REAL_MAVEN_PROVIDER_OK\n'
+
+maven_modular="$work/maven-modular"
+mkdir -p "$maven_modular/src/main/java/app"
+cat > "$maven_modular/pom.xml" <<'POM'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>fixture</groupId><artifactId>modular-app</artifactId><version>1</version>
+  <properties><maven.compiler.release>17</maven.compiler.release></properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.13</version>
+    </dependency>
+  </dependencies>
+</project>
+POM
+cat > "$maven_modular/src/main/java/module-info.java" <<'JAVA'
+module app.modular {
+    requires org.slf4j;
+    exports app;
+}
+JAVA
+cat > "$maven_modular/src/main/java/app/Alpha.java" <<'JAVA'
+package app;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+public class Alpha {
+    private static final Logger LOG = LoggerFactory.getLogger(Alpha.class);
+}
+JAVA
+"$repo_root/scripts/resolve-maven-dependencies.sh" "$maven_modular" "$work/maven-modular.tsv"
+printf 'REAL_MAVEN_MODULAR_MANIFEST\n'
+cat "$work/maven-modular.tsv"
+grep -Eq $'^module-path\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/maven-modular.tsv"
+! grep -Eq $'^classpath\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/maven-modular.tsv"
+printf 'REAL_MAVEN_MODULAR_PROVIDER_OK\n'
 
 gradle="$work/gradle"
 mkdir -p "$gradle/odd/primary/app" "$gradle/odd/verification/app"

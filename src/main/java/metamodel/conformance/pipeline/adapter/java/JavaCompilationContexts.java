@@ -23,12 +23,26 @@ final class JavaCompilationContexts {
         contexts.stream().sorted(Comparator.comparing(JavaCompilationContext::id))
                 .forEach(context -> grouped.put(context.id(), new ArrayList<>()));
         ArrayList<Path> unowned = new ArrayList<>();
+        Set<String> noncompiled = actual.noncompiledSources();
         for (Path file : files) {
             String relative = relativePath(root, file);
-            List<JavaCompilationContext> owners = contexts.stream()
-                    .filter(context -> context.ownsSourcePath(relative)).toList();
-            if (owners.isEmpty()) {
+            if (noncompiled.contains(relative)) {
+                continue;
+            }
+            boolean coveredByRoots = contexts.stream()
+                    .anyMatch(context -> context.ownsSourcePath(relative));
+            if (!coveredByRoots) {
                 unowned.add(file);
+                continue;
+            }
+            List<JavaCompilationContext> owners = contexts.stream()
+                    .filter(context -> context.ownsSourcePath(relative))
+                    .filter(context -> !actual.excludedSources(context.id()).contains(relative))
+                    .toList();
+            if (owners.isEmpty()) {
+                // Every context that owns the path declares it excluded: the
+                // build facts prove no observed compilation consumes it, so it
+                // is not an unowned-source ambiguity.
                 continue;
             }
             owners.forEach(context -> grouped.get(context.id()).add(file));

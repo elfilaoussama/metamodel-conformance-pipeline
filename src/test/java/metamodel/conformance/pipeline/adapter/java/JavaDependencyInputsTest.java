@@ -69,6 +69,22 @@ class JavaDependencyInputsTest {
     }
 
     @Test
+    void recordsDeclaredCompilerExclusionsAndNonCompilationInputs() throws Exception {
+        Path manifest = temporary.resolve("exclusions.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\t",
+                "source\tmain\tsrc/main/java",
+                "exclude\tmain\tsrc/main/java/module-info.java",
+                "noncompiled\tsrc/main/java-templates/app/Version.java") + "\n");
+
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        assertEquals(Set.of("src/main/java/module-info.java"), inputs.excludedSources("main"));
+        assertEquals(Set.of("src/main/java-templates/app/Version.java"), inputs.noncompiledSources());
+        assertTrue(inputs.excludedSources("absent").isEmpty());
+    }
+
+    @Test
     void legacyManifestIsOnlyACompatibilityAdapterAndDoesNotInferRelationships() throws Exception {
         Path jar = Files.write(temporary.resolve("legacy.jar"), new byte[]{1}).toAbsolutePath().normalize();
         Path manifest = temporary.resolve("legacy.tsv");

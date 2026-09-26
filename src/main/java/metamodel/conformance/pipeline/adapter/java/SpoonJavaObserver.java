@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.12.1";
+    public static final String ADAPTER_VERSION = "0.12.2";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",

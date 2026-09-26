@@ -27,8 +27,15 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
     private final List<JavaCompilationContext> contexts;
     private final Map<String, JavaCompilationContext> byId;
     private final List<Path> allArchives;
+    private final Map<String, Set<String>> excludedByContext;
+    private final Set<String> noncompiledSources;
 
     private JavaDependencyInputs(List<JavaCompilationContext> contexts) {
+        this(contexts, Map.of(), Set.of());
+    }
+
+    private JavaDependencyInputs(List<JavaCompilationContext> contexts,
+            Map<String, Set<String>> excludedByContext, Set<String> noncompiledSources) {
         ArrayList<JavaCompilationContext> ordered = new ArrayList<>(contexts == null ? List.of() : contexts);
         ordered.sort(Comparator.comparing(JavaCompilationContext::id));
         LinkedHashMap<String, JavaCompilationContext> indexed = new LinkedHashMap<>();
@@ -60,6 +67,8 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
             }
         }
         this.allArchives = List.copyOf(archives);
+        this.excludedByContext = Map.copyOf(excludedByContext == null ? Map.of() : excludedByContext);
+        this.noncompiledSources = Set.copyOf(noncompiledSources == null ? Set.of() : noncompiledSources);
     }
 
     public static JavaDependencyInputs none() {
@@ -95,7 +104,7 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                 .map(line -> line.split("\\t", -1)[0])
                 .anyMatch(kind -> Set.of("context", "source", "generated-source", "classpath",
                         "module-path", "processor-path", "upgrade-module-path", "platform-path",
-                        "patch-module", "output", "upstream").contains(kind));
+                        "patch-module", "output", "upstream", "exclude", "noncompiled").contains(kind));
         return typed ? parseTyped(lines) : parseLegacy(lines);
     }
 
@@ -105,6 +114,20 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
 
     public JavaCompilationContext context(String id) {
         return byId.get(id);
+    }
+
+    /**
+     * Java paths that build facts declare as inputs no observed compilation
+     * consumes (for example templating-plugin template trees). They stay inside
+     * the observation boundary without an ownership claim.
+     */
+    public Set<String> noncompiledSources() {
+        return noncompiledSources;
+    }
+
+    /** Java paths one context's build configuration excludes from compilation. */
+    public Set<String> excludedSources(String contextId) {
+        return excludedByContext.getOrDefault(contextId, Set.of());
     }
 
     public List<JavaCompilationContext> contextsForSourcePath(String sourcePath) {
@@ -272,6 +295,7 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
 
     private static JavaDependencyInputs parseTyped(List<String> lines) throws IOException {
         LinkedHashMap<String, MutableContext> contexts = new LinkedHashMap<>();
+        Set<String> noncompiledSources = new LinkedHashSet<>();
         int lineNumber = 0;
         for (String line : lines) {
             lineNumber++;
@@ -321,6 +345,16 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                         requireFields(fields, 3);
                         requireContext(contexts, fields[1]).upstream.add(token(fields[2], "upstream id"));
                     }
+                    case "exclude" -> {
+                        requireFields(fields, 3);
+                        requireContext(contexts, fields[1]).excludedSources.add(
+                                JavaCompilationContext.canonicalRelativePath(fields[2], "excluded source"));
+                    }
+                    case "noncompiled" -> {
+                        requireFields(fields, 2);
+                        noncompiledSources.add(
+                                JavaCompilationContext.canonicalRelativePath(fields[1], "noncompiled source"));
+                    }
                     default -> throw new IllegalArgumentException("unknown manifest row kind: " + fields[0]);
                 }
             } catch (IllegalArgumentException failure) {
@@ -328,11 +362,15 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
             }
         }
         ArrayList<JavaCompilationContext> built = new ArrayList<>();
+        LinkedHashMap<String, Set<String>> excluded = new LinkedHashMap<>();
         for (MutableContext context : contexts.values()) {
             built.add(context.build());
+            if (!context.excludedSources.isEmpty()) {
+                excluded.put(context.id, Set.copyOf(context.excludedSources));
+            }
         }
         try {
-            return new JavaDependencyInputs(built);
+            return new JavaDependencyInputs(built, excluded, noncompiledSources);
         } catch (IllegalArgumentException failure) {
             throw new IOException("invalid dependency manifest graph: " + failure.getMessage(), failure);
         }
@@ -405,6 +443,7 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
         private final String platform;
         private final List<String> sources = new ArrayList<>();
         private final List<String> generatedSources = new ArrayList<>();
+        private final Set<String> excludedSources = new LinkedHashSet<>();
         private final Map<PathKey, List<Path>> paths = new LinkedHashMap<>();
         private final List<Path> outputs = new ArrayList<>();
         private final Set<String> upstream = new LinkedHashSet<>();

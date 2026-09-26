@@ -129,19 +129,64 @@ test_target_level=major(first(
 if test_release: test_source_level=test_target_level=''
 compile_preview=has_preview(compile_cfg,compiler_cfg)
 test_preview=has_preview(test_cfg,compiler_cfg)
+def exclusions(cfg, *names):
+    values=[]
+    for name in names:
+        node=child(cfg,name)
+        if node is None: continue
+        values.extend((item.text or '').strip() for item in node
+                      if local(item.tag)=='exclude' and (item.text or '').strip())
+    return values
+compile_excludes=exclusions(compile_cfg,'excludes')
+test_excludes=exclusions(test_cfg,'testExcludes','excludes')
+def templating_source_directory():
+    # A supported plugin profile: the templating plugin's input tree contains
+    # Java-looking template files that no observed compiler execution consumes.
+    plugins=child(build,'plugins')
+    if plugins is None: return ''
+    for plugin in plugins:
+        if local(plugin.tag)!='plugin': continue
+        if text(plugin,'artifactId')!='templating-maven-plugin': continue
+        value=text(child(plugin,'configuration'),'sourceDirectory')
+        if value: return value
+        executions=child(plugin,'executions')
+        if executions is not None:
+            for execution in executions:
+                if local(execution.tag)!='execution': continue
+                value=text(child(execution,'configuration'),'sourceDirectory')
+                if value: return value
+    return ''
+templates=templating_source_directory()
 def normalize(v):
     if not v: return ''
     # Effective Maven paths may use host-independent /workspace/source values in the container.
     return v.replace('\\','/')
 sep=chr(31)
-print(sep.join(['compile',source,out,compile_source,compile_target,compile_release,compile_preview]))
-print(sep.join(['test',test,testout,test_source_level,test_target_level,test_release,test_preview]))
+records=chr(30)
+print(sep.join(['compile',source,out,compile_source,compile_target,compile_release,compile_preview,
+                records.join(compile_excludes)]))
+print(sep.join(['test',test,testout,test_source_level,test_target_level,test_release,test_preview,
+                records.join(test_excludes)]))
+if templates:
+    print(sep.join(['noncompiled',normalize(templates)]))
 PY
 
   observed_compile_context=''
-  while IFS=$'\x1f' read -r kind source_dir output_dir source_level target_level release preview extra; do
-    [[ -z "${extra:-}" ]] || { echo "invalid Maven effective-model metadata" >&2; exit 70; }
+  while IFS=$'\x1f' read -r kind source_dir output_dir source_level target_level release preview excludes_field; do
     [[ -n "$source_dir" ]] || continue
+    if [[ "$kind" == noncompiled ]]; then
+      case "$source_dir" in
+        "$container_source"/*) relative_dir="${source_dir#$container_source/}" ;;
+        "$source_root"/*) relative_dir="${source_dir#$source_root/}" ;;
+        *) continue ;;
+      esac
+      host_dir="$source_root/$relative_dir"
+      [[ -d "$host_dir" ]] || continue
+      while IFS= read -r -d '' template_file; do
+        printf 'noncompiled\t%s\n' "${template_file#$source_root/}" >> "$output_file"
+      done < <(find "$host_dir" -type f -name '*.java' -print0 | sort -z)
+      continue
+    fi
     case "$source_dir" in
       "$container_source"/*) relative_source="${source_dir#$container_source/}" ;;
       "$source_root"/*) relative_source="${source_dir#$source_root/}" ;;
@@ -151,6 +196,12 @@ PY
     [[ -d "$host_source" ]] || continue
     find "$host_source" -type f -name '*.java' -print -quit | grep -q . || continue
     context_id="maven|$module_key|$kind"
+    resolution_role=classpath
+    # A context that compiles a module descriptor needs its dependency archives
+    # on the module path: a classpath archive stays in the unnamed module and
+    # cannot satisfy the descriptor's requires clauses. Non-modular contexts
+    # keep every dependency on the classpath, as observed before.
+    [[ -f "$host_source/module-info.java" ]] && resolution_role=module-path
     printf 'context\t%s\t%s\t%s\t%s\t%s\t%s\t\n' \
       "$context_id" "$module_key" "$source_level" "$target_level" "$release" "$preview" >> "$output_file"
     printf 'source\t%s\t%s\n' "$context_id" "$relative_source" >> "$output_file"
@@ -170,6 +221,22 @@ PY
         *) host_output='' ;;
       esac
       [[ -z "$host_output" ]] || printf 'output\t%s\t%s\n' "$context_id" "$host_output" >> "$output_file"
+    fi
+    # Declared compiler exclusions are build facts: the execution does not
+    # consume these files even though they live under its source root. They
+    # are matched against the observed source tree so every row is file-exact.
+    if [[ -n "$excludes_field" ]]; then
+      IFS=$'\x1e' read -r -a exclude_patterns <<< "$excludes_field"
+      while IFS= read -r -d '' excluded_file; do
+        relative_file="${excluded_file#$host_source/}"
+        for pattern in "${exclude_patterns[@]}"; do
+          [[ -n "$pattern" ]] || continue
+          if [[ "$relative_file" == $pattern ]]; then
+            printf 'exclude\t%s\t%s\n' "$context_id" "$relative_source/$relative_file" >> "$output_file"
+            break
+          fi
+        done
+      done < <(find "$host_source" -type f -name '*.java' -print0 | sort -z)
     fi
 
     cpfile="$resolution_root/result/classpath-$index-$kind.txt"
@@ -200,12 +267,13 @@ PY
       real="$(realpath -m -- "$host")"
       [[ -n "${seen[$real]+x}" ]] && continue
       seen[$real]=1
-      printf 'classpath\t%s\t%s\n' "$context_id" "$real" >> "$output_file"
+      printf '%s\t%s\t%s\n' "$resolution_role" "$context_id" "$real" >> "$output_file"
     done
   done < "$metadata"
 done
 
-# Convert classpath references to another observed context's output into explicit upstream edges.
+# Convert classpath or module-path references to another observed context's
+# output into explicit upstream edges.
 python3 - "$output_file" <<'PY'
 import sys
 p=sys.argv[1]
@@ -213,7 +281,7 @@ rows=[line.rstrip('\n').split('\t') for line in open(p,encoding='utf-8') if line
 outputs={r[2]:r[1] for r in rows if r[0]=='output' and len(r)==3}
 seen=set(); out=[]
 for r in rows:
-    if r[0]=='classpath' and len(r)==3 and r[2] in outputs and outputs[r[2]]!=r[1]:
+    if r[0] in ('classpath', 'module-path') and len(r)==3 and r[2] in outputs and outputs[r[2]]!=r[1]:
         r=['upstream',r[1],outputs[r[2]]]
     key=tuple(r)
     if key not in seen:

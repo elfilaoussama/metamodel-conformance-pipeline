@@ -406,6 +406,38 @@ class SpoonJavaObserverTest {
                 fixture("parse-error").toAbsolutePath().toString()));
     }
 
+    @Test
+    void declaredExclusionsAndNonCompilationInputsRemainCompleteWithoutOwnership() throws Exception {
+        Path kept = temporary.resolve("src/main/java/app/Kept.java");
+        Files.createDirectories(kept.getParent());
+        Files.writeString(kept, "package app; public class Kept {}\n");
+        Files.writeString(temporary.resolve("src/main/java/app/Excluded.java"),
+                "package app; public class Excluded {}\n");
+        Path template = temporary.resolve("src/main/java-templates/app/Version.java");
+        Files.createDirectories(template.getParent());
+        Files.writeString(template, "package app; public class Version {}\n");
+        Path manifest = temporary.resolve("contexts.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tmain\tsrc/main/java",
+                "exclude\tmain\tsrc/main/java/app/Excluded.java",
+                "noncompiled\tsrc/main/java-templates/app/Version.java") + "\n");
+
+        Observation observation = new JavaDependencyAwareSourceObserver(
+                JavaDependencyInputs.fromManifest(manifest)).observe(temporary, Set.of());
+
+        assertTrue(observation.diagnostics().isEmpty(), observation.diagnostics().toString());
+        assertTrue(observation.completeEvidence().containsAll(Set.of(
+                EvidenceKind.DECLARATION_OWNERSHIP, EvidenceKind.HIERARCHY,
+                EvidenceKind.LOCAL_SIGNATURES, EvidenceKind.INHERITED_MEMBERS)));
+        assertTrue(observation.classifiers().stream()
+                .anyMatch(classifier -> classifier.qualifiedName().equals("app.Kept")));
+        assertTrue(observation.classifiers().stream()
+                .noneMatch(classifier -> classifier.qualifiedName().equals("app.Excluded")));
+        assertTrue(observation.classifiers().stream()
+                .noneMatch(classifier -> classifier.qualifiedName().equals("app.Version")));
+    }
+
     private JavaDependencyInputs duplicateCompilationContexts() throws Exception {
         Path manifest = temporary.resolve("duplicate-contexts.tsv");
         Files.writeString(manifest, String.join("\n",
