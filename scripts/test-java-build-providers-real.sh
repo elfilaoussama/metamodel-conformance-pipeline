@@ -129,4 +129,33 @@ jar_entry="$(awk -F '\t' '$1 == "classpath" && $2 == "gradle|.|:|verification" &
 [[ -f "$jar_entry" ]]
 ! grep -Eq 'src/(main|test)/java' "$work/gradle.tsv"
 
+# Configuration on demand activates only projects needed by the requested task.
+# Cross-project archive producers registered as observation dependencies must
+# still run, and the emitted classpath must point at the built archive.
+gradle_cod="$work/gradle-cod"
+mkdir -p "$gradle_cod/lib/src/main/java/lib" "$gradle_cod/app/src/main/java/app"
+cat > "$gradle_cod/settings.gradle" <<'GRADLE'
+rootProject.name = 'cod-consumer'
+include 'lib', 'app'
+GRADLE
+printf 'org.gradle.configureondemand=true\n' > "$gradle_cod/gradle.properties"
+cat > "$gradle_cod/lib/build.gradle" <<'GRADLE'
+plugins { id 'java' }
+GRADLE
+cat > "$gradle_cod/app/build.gradle" <<'GRADLE'
+plugins { id 'java' }
+dependencies { implementation project(':lib') }
+GRADLE
+printf 'package lib; public class Lib {}\n' > "$gradle_cod/lib/src/main/java/lib/Lib.java"
+printf 'package app; public class App { lib.Lib value; }\n' > "$gradle_cod/app/src/main/java/app/App.java"
+"$repo_root/scripts/resolve-gradle-dependencies.sh" "$gradle_cod" "$work/gradle-cod.tsv"
+printf 'REAL_GRADLE_CONFIGURATION_ON_DEMAND_MANIFEST\n'
+cat "$work/gradle-cod.tsv"
+grep -Fq $'source\tgradle|app|:app|main\tapp/src/main/java' "$work/gradle-cod.tsv"
+grep -Fq $'source\tgradle|lib|:lib|main\tlib/src/main/java' "$work/gradle-cod.tsv"
+cod_jar="$(awk -F '\t' '$1 == "classpath" && $2 == "gradle|app|:app|main" && $3 ~ /lib.*\.jar$/ { print $3; exit }' "$work/gradle-cod.tsv")"
+[[ -n "$cod_jar" ]]
+[[ -f "$cod_jar" ]]
+printf 'REAL_GRADLE_CONFIGURATION_ON_DEMAND_OK\n'
+
 printf 'REAL_JAVA_BUILD_PROVIDERS_OK\n'

@@ -142,7 +142,6 @@ gradle.projectsEvaluated {
                         // represented by absent platform evidence, never guessed semantics.
                     }
                     def id = safe("gradle|${rel(project.projectDir)}|${project.path}|${sourceSet.name}")
-                    def entries = sourceSet.compileClasspath.files.collect { it.canonicalFile }
                     // Compilation classpaths may reference project-produced archives
                     // (test-fixture or explicitly requested jar variants). Their
                     // producing tasks must run in this isolated worktree so the
@@ -154,15 +153,30 @@ gradle.projectsEvaluated {
                             dependsOn(sourceSet.compileClasspath.buildDependencies)
                         }
                     }
-                    def outputs = sourceSet.output.classesDirs.files.collect { it.canonicalFile }
-                    contexts << [id:id, module:rel(project.projectDir), projectPath:project.path,
-                                 sourceSetName:sourceSet.name, roots:roots.collect(rel), entries:entries,
-                                 outputs:outputs, source:sourceLevel, target:targetLevel, release:release,
-                                 preview:preview, platform:platform]
+                    // Classpaths and outputs are resolved at execution, not during
+                    // configuration: Gradle 9 rejects resolving another project's
+                    // configuration without its exclusive lock, and the manifest must
+                    // reflect archives that were actually built by the time the
+                    // observation runs.
+                    contexts << [id:id, module:rel(project.projectDir), roots:roots.collect(rel),
+                                 source:sourceLevel, target:targetLevel, release:release,
+                                 preview:preview, platform:platform,
+                                 resolveEntries:{ sourceSet.compileClasspath.files.collect { it.canonicalFile } },
+                                 resolveOutputs:{ sourceSet.output.classesDirs.files.collect { it.canonicalFile } }]
                 }
             }
+    observationTask.configure {
+        doLast {
+            def output = new File(outputPath)
+            output.parentFile.mkdirs()
+            output.text = ''
+            def resolved = contexts.collect { ctx ->
+                [id:ctx.id, module:ctx.module, source:ctx.source, target:ctx.target, release:ctx.release,
+                 preview:ctx.preview, platform:ctx.platform, roots:ctx.roots,
+                 entries:ctx.resolveEntries(), outputs:ctx.resolveOutputs()]
+            }
             def outputOwners = [:]
-            contexts.each { ctx -> ctx.outputs.each { out ->
+            resolved.each { ctx -> ctx.outputs.each { out ->
                 if (!outputOwners.containsKey(out.path)) outputOwners[out.path] = [] as Set
                 outputOwners[out.path].add(ctx.id)
             } }
@@ -170,12 +184,7 @@ gradle.projectsEvaluated {
             // ownership. Project identity or build-directory containment cannot identify
             // archive variants (test fixtures, custom/shaded JARs, generated resources).
             // Preserve archives, including unresolved ones, for fail-closed validation.
-    observationTask.configure {
-        doLast {
-            def output = new File(outputPath)
-            output.parentFile.mkdirs()
-            output.text = ''
-            contexts.sort { a, b -> a.id <=> b.id }.each { ctx ->
+            resolved.sort { a, b -> a.id <=> b.id }.each { ctx ->
                 output << "context\t${ctx.id}\t${ctx.module}\t${ctx.source}\t${ctx.target}\t${ctx.release}\t${ctx.preview}\t${ctx.platform}" + System.lineSeparator()
                 ctx.roots.each { root -> output << "source\t${ctx.id}\t${root}" + System.lineSeparator() }
                 ctx.outputs.sort { a, b -> a.path <=> b.path }.each { out ->
@@ -242,7 +251,7 @@ for index in "${!build_roots[@]}"; do
     -e HOME="$container_home" -e GRADLE_USER_HOME="$container_gradle_home" \
     -e JAVA_TOOL_OPTIONS="$gradle_runtime_opts" \
     -w "$container_build" "$resolver_image" "${gradle_command[@]}" \
-    --project-cache-dir "$container_project_cache" --no-daemon --no-configuration-cache --console=plain --stacktrace --init-script "$container_init" \
+    --project-cache-dir "$container_project_cache" --no-daemon --no-configuration-cache --no-configure-on-demand --console=plain --stacktrace --init-script "$container_init" \
     -Dmcp.repository.root="$container_worktree" -Dmcp.context.output="$container_raw" -Dmcp.build.output="$container_build_output" \
     __mcpObserveJavaContexts
   [[ -f "$raw" ]] || { echo "isolated Gradle resolver produced no context manifest for $build_key" >&2; exit 70; }

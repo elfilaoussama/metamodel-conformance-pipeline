@@ -8,17 +8,18 @@ class TaskHarness {
 assert args.length == 1 : 'usage: groovy test-gradle-emission-local.groovy repository-root'
 def script = new File(args[0], 'scripts/resolve-gradle-dependencies.sh').text
 def init = script.split("<<'GRADLE'\\n", 2)[1].split('\\nGRADLE\\n', 2)[0]
-def start = init.indexOf('def outputOwners =')
+def start = init.indexOf('def output = new File(outputPath)')
 assert start >= 0
 def emission = init.substring(start).trim()
 assert emission.endsWith('}')
-emission = emission.substring(0, emission.length() - 1) // outer projectsEvaluated closure
+emission = emission.substring(0, emission.length() - 1).trim() // outer projectsEvaluated closure
+emission = emission.substring(0, emission.length() - 1).trim() // observationTask.configure closure
+emission = emission.substring(0, emission.length() - 1).trim() // doLast closure
 def temp = Files.createTempDirectory('gradle-emission-').toFile()
 def failures = []
 def context = { id, project, set, outputs, entries, artifacts ->
-    [id:id, module:project, projectPath:project, sourceSetName:set,
-     roots:['code/' + id], source:'17', target:'17', release:'', preview:false,
-     platform:'', outputs:outputs, entries:entries, internalArtifactProjects:artifacts]
+    [id:id, module:project, roots:['code/' + id], source:'17', target:'17', release:'', preview:false,
+     platform:'', resolveEntries:{ entries }, resolveOutputs:{ outputs }]
 }
 def check = { name, List contexts, List buildRoots, Closure assertion ->
     def out = new File(temp, name + '.tsv')
