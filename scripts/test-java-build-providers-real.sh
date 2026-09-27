@@ -79,6 +79,121 @@ grep -Eq $'^module-path\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/
 ! grep -Eq $'^classpath\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/maven-modular.tsv"
 printf 'REAL_MAVEN_MODULAR_PROVIDER_OK\n'
 
+# Declared generated sources must be materialized and attributed to the compile
+# context; the template tree itself remains a declared non-compilation input.
+maven_templated="$work/maven-templated"
+mkdir -p "$maven_templated/src/main/java-templates/app" "$maven_templated/src/main/java/app"
+cat > "$maven_templated/pom.xml" <<'POM'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>fixture</groupId><artifactId>templated-app</artifactId><version>7</version>
+  <properties><maven.compiler.release>17</maven.compiler.release></properties>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>templating-maven-plugin</artifactId>
+        <version>3.0.0</version>
+        <executions>
+          <execution>
+            <id>filtering-java-templates</id>
+            <goals><goal>filter-sources</goal></goals>
+            <configuration>
+              <sourceDirectory>${project.basedir}/src/main/java-templates</sourceDirectory>
+              <outputDirectory>${project.build.directory}/generated-sources/java-templates</outputDirectory>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+POM
+cat > "$maven_templated/src/main/java-templates/app/Generated.java" <<'JAVA'
+package app;
+public final class Generated {
+    public static final String VERSION = "${project.version}";
+}
+JAVA
+cat > "$maven_templated/src/main/java/app/Use.java" <<'JAVA'
+package app;
+public final class Use {
+    public String version() {
+        return Generated.VERSION;
+    }
+}
+JAVA
+"$repo_root/scripts/resolve-maven-dependencies.sh" "$maven_templated" "$work/maven-templated.tsv"
+printf 'REAL_MAVEN_TEMPLATING_MANIFEST\n'
+cat "$work/maven-templated.tsv"
+grep -Fq $'noncompiled\tsrc/main/java-templates/app/Generated.java' "$work/maven-templated.tsv"
+grep -Fq $'generated-source\tmaven|.|compile\ttarget/generated-sources/java-templates' "$work/maven-templated.tsv"
+generated_template="$maven_templated/target/generated-sources/java-templates/app/Generated.java"
+[[ -f "$generated_template" ]]
+grep -Fq 'VERSION = "7"' "$generated_template"
+printf 'REAL_MAVEN_TEMPLATING_PROVIDER_OK\n'
+
+# A replacer execution writes a single declared output file; the file-exact
+# generated root must be attributed to the same compile context.
+maven_replaced="$work/maven-replaced"
+mkdir -p "$maven_replaced/src/main/version/app" "$maven_replaced/src/main/java/app"
+cat > "$maven_replaced/pom.xml" <<'POM'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>fixture</groupId><artifactId>replaced-app</artifactId><version>9</version>
+  <properties><maven.compiler.release>17</maven.compiler.release></properties>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>com.google.code.maven-replacer-plugin</groupId>
+        <artifactId>replacer</artifactId>
+        <version>1.5.3</version>
+        <executions>
+          <execution>
+            <id>process-packageVersion</id>
+            <phase>generate-sources</phase>
+            <goals><goal>replace</goal></goals>
+            <configuration>
+              <file>${project.basedir}/src/main/version/app/Version.java.in</file>
+              <outputFile>${project.build.directory}/generated-sources/version/app/Version.java</outputFile>
+              <replacements>
+                <replacement><token>@version@</token><value>${project.version}</value></replacement>
+              </replacements>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+POM
+cat > "$maven_replaced/src/main/version/app/Version.java.in" <<'JAVA'
+package app;
+public final class Version {
+    public static final String VALUE = "@version@";
+}
+JAVA
+cat > "$maven_replaced/src/main/java/app/Use.java" <<'JAVA'
+package app;
+public final class Use {
+    public String value() {
+        return Version.VALUE;
+    }
+}
+JAVA
+"$repo_root/scripts/resolve-maven-dependencies.sh" "$maven_replaced" "$work/maven-replaced.tsv"
+printf 'REAL_MAVEN_REPLACER_MANIFEST\n'
+cat "$work/maven-replaced.tsv"
+grep -Fq $'generated-source\tmaven|.|compile\ttarget/generated-sources/version/app/Version.java' "$work/maven-replaced.tsv"
+generated_replaced="$maven_replaced/target/generated-sources/version/app/Version.java"
+[[ -f "$generated_replaced" ]]
+grep -Fq 'VALUE = "9"' "$generated_replaced"
+printf 'REAL_MAVEN_REPLACER_PROVIDER_OK\n'
+
 gradle="$work/gradle"
 mkdir -p "$gradle/odd/primary/app" "$gradle/odd/verification/app"
 cat > "$gradle/settings.gradle" <<'GRADLE'

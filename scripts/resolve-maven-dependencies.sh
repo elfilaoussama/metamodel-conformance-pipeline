@@ -43,6 +43,13 @@ container_path() {
   else echo "path escapes source root: $host" >&2; return 70; fi
 }
 
+# Order- and path-independent content digest of a declared generated output.
+# Two generation runs must agree on it before any generated evidence is kept.
+generated_hash() {
+  find "$1" -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum 2>/dev/null \
+    | awk '{print $1}' | sort | sha256sum | awk '{print $1}'
+}
+
 for index in "${!poms[@]}"; do
   pom="${poms[$index]}"; module_dir="$(dirname "$pom")"
   module_key="$(realpath --relative-to="$source_root" "$module_dir")"
@@ -51,6 +58,8 @@ for index in "${!poms[@]}"; do
   container_pom="$(container_path "$pom")"
   effective="$resolution_root/result/effective-$index.xml"
   container_effective="$container_out/result/effective-$index.xml"
+  generators_file="$resolution_root/result/generators-$index.tsv"
+  : > "$generators_file"
 
   docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
     --tmpfs /tmp:rw,nosuid,nodev,noexec \
@@ -65,9 +74,9 @@ for index in "${!poms[@]}"; do
   [[ -f "$effective" ]] || { echo "Maven effective model unavailable for $module_key" >&2; exit 70; }
 
   metadata="$resolution_root/result/metadata-$index.tsv"
-  python3 - "$effective" "$module_key" "$container_source" > "$metadata" <<'PY'
+  python3 - "$effective" "$module_key" "$container_source" "$generators_file" > "$metadata" <<'PY'
 import sys, xml.etree.ElementTree as ET
-path,module,root=sys.argv[1:]
+path,module,root,generators_path=sys.argv[1:]
 tree=ET.parse(path); r=tree.getroot()
 def local(tag): return tag.rsplit('}',1)[-1]
 def child(node,name):
@@ -161,6 +170,46 @@ def normalize(v):
     if not v: return ''
     # Effective Maven paths may use host-independent /workspace/source values in the container.
     return v.replace('\\','/')
+def plugin_executions(artifact_id, goal_name):
+    results=[]
+    plugins=child(build,'plugins')
+    if plugins is None: return results
+    for plugin in plugins:
+        if local(plugin.tag)!='plugin': continue
+        if text(plugin,'artifactId')!=artifact_id: continue
+        version=text(plugin,'version')
+        plugin_cfg=child(plugin,'configuration')
+        executions=child(plugin,'executions')
+        if executions is None: continue
+        for execution in executions:
+            if local(execution.tag)!='execution': continue
+            goals_node=child(execution,'goals')
+            goals=[] if goals_node is None else [
+                (item.text or '').strip() for item in goals_node if local(item.tag)=='goal'
+            ]
+            if goal_name not in goals: continue
+            results.append((text(execution,'id'), version, child(execution,'configuration'), plugin_cfg))
+    return results
+def build_parent(output_directory):
+    value=normalize(output_directory)
+    if not value or '/' not in value: return ''
+    return value.rsplit('/',1)[0]
+generators=[]
+for exec_id, version, exec_cfg, plugin_cfg in plugin_executions('templating-maven-plugin','filter-sources'):
+    src=first(text(exec_cfg,'sourceDirectory'), text(plugin_cfg,'sourceDirectory'))
+    out_dir=first(text(exec_cfg,'outputDirectory'), text(plugin_cfg,'outputDirectory'))
+    if exec_id and out_dir:
+        generators.append(('templating',exec_id,'filter-sources',version,normalize(src),
+                           normalize(out_dir),build_parent(out)))
+for exec_id, version, exec_cfg, plugin_cfg in plugin_executions('replacer','replace'):
+    src=first(text(exec_cfg,'file'), text(plugin_cfg,'file'))
+    out_file=first(text(exec_cfg,'outputFile'), text(plugin_cfg,'outputFile'))
+    if exec_id and out_file:
+        generators.append(('replacer',exec_id,'replace',version,normalize(src),
+                           normalize(out_file),build_parent(out)))
+with open(generators_path,'w',encoding='utf-8') as handle:
+    for record in generators:
+        handle.write('\t'.join(record)+'\n')
 sep=chr(31)
 records=chr(30)
 print(sep.join(['compile',source,out,compile_source,compile_target,compile_release,compile_preview,
@@ -270,6 +319,74 @@ PY
       printf '%s\t%s\t%s\n' "$resolution_role" "$context_id" "$real" >> "$output_file"
     done
   done < "$metadata"
+
+  # Facts 3: declared generated sources of a module whose compile context was
+  # observed are materialized so that context can compile types that do not
+  # exist in the checkout. Only provider-declared generator executions are run,
+  # and each is run twice to prove the output is byte-stable; undeclared or
+  # unstable output keeps failing closed. The declared outputs live under the
+  # module build directory, which is why this step mounts the source writable.
+  if [[ -n "$observed_compile_context" && -s "$generators_file" ]]; then
+    while IFS=$'\t' read -r generator_type generator_execution generator_goal generator_version \
+        generator_input generator_output generator_builddir; do
+      [[ -n "$generator_output" && -n "$generator_version" && -n "$generator_builddir" ]] || continue
+      case "$generator_type" in
+        templating) generator_plugin='org.codehaus.mojo:templating-maven-plugin' ;;
+        replacer) generator_plugin='com.google.code.maven-replacer-plugin:replacer' ;;
+        *) continue ;;
+      esac
+      case "$generator_output" in
+        "$container_source"/*) generated_relative="${generator_output#$container_source/}" ;;
+        "$source_root"/*) generated_relative="${generator_output#$source_root/}" ;;
+        *) echo "declared generated output escapes source root: $generator_output" >&2; exit 70 ;;
+      esac
+      case "$generator_builddir" in
+        "$container_source"/*) build_relative="${generator_builddir#$container_source/}" ;;
+        "$source_root"/*) build_relative="${generator_builddir#$source_root/}" ;;
+        *) echo "declared build directory escapes source root: $generator_builddir" >&2; exit 70 ;;
+      esac
+      # Never delete anything a checkout could own: only declared build output.
+      case "$generated_relative" in
+        "$build_relative"/*) ;;
+        *) echo "declared generated output is outside the module build directory: $generator_output" >&2; continue ;;
+      esac
+      host_generated="$source_root/$generated_relative"
+      run_generator() {
+        docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+          --tmpfs /tmp:rw,nosuid,nodev,noexec \
+          --user "$(id -u):$(id -g)" \
+          --mount "type=bind,src=$source_root,dst=$container_source" \
+          --mount "type=bind,src=$resolution_root,dst=$container_out" \
+          -e HOME="$container_home" -e MAVEN_CONFIG="$container_maven_config" \
+          -e MAVEN_OPTS="$maven_runtime_opts" -w "$container_source" "$resolver_image" \
+          mvn --batch-mode --no-transfer-progress -q -f "$container_pom" \
+            -Dmaven.repo.local="$container_out/repository" \
+            "${generator_plugin}:${generator_version}:${generator_goal}@${generator_execution}"
+      }
+      rm -rf -- "$host_generated"
+      if ! run_generator >> "$resolution_root/generation.log" 2>&1; then
+        echo "generated-source execution failed: $generator_execution ($module_key)" >&2
+        continue
+      fi
+      if [[ ! -e "$host_generated" ]]; then
+        echo "generated-source execution produced no declared output: $generator_execution ($module_key)" >&2
+        continue
+      fi
+      first_generation="$(generated_hash "$host_generated")"
+      rm -rf -- "$host_generated"
+      if ! run_generator >> "$resolution_root/generation.log" 2>&1; then
+        echo "generated-source repeat execution failed: $generator_execution ($module_key)" >&2
+        continue
+      fi
+      second_generation="$(generated_hash "$host_generated")"
+      if [[ -z "$first_generation" || "$first_generation" != "$second_generation" ]]; then
+        echo "generated-source output is not deterministic: $generator_execution ($module_key)" >&2
+        rm -rf -- "$host_generated"
+        continue
+      fi
+      printf 'generated-source\t%s\t%s\n' "$observed_compile_context" "$generated_relative" >> "$output_file"
+    done < "$generators_file"
+  fi
 done
 
 # Convert classpath or module-path references to another observed context's
