@@ -140,10 +140,15 @@ class SpoonCompilationContextIsolationTest {
                 source\tb\tbeta
                 """);
         Observation result = new JavaDependencyAwareSourceObserver(inputs).observe(root, Set.of());
-        assertEquals(7, result.classifiers().size());
-        var objectSupport = result.classifiers().stream()
-                .filter(item -> item.qualifiedName().equals("java.lang.Object"))
-                .findFirst().orElseThrow();
+        // The platform is selected per compilation release, so the release-11 and
+        // release-17 contexts observe distinct platform units and each source
+        // context links to its own release's java.lang.Object.
+        assertEquals(8, result.classifiers().size());
+        String alphaPlatform = platformSha(result, "a");
+        String betaPlatform = platformSha(result, "b");
+        assertNotEquals(alphaPlatform, betaPlatform);
+        var alphaObject = objectSupport(result, alphaPlatform);
+        var betaObject = objectSupport(result, betaPlatform);
         var alphaOuter = result.classifiers().stream()
                 .filter(item -> item.qualifiedName().equals("same.Outer")
                         && item.sourcePath().equals("alpha/Outer.java"))
@@ -152,8 +157,18 @@ class SpoonCompilationContextIsolationTest {
                 .filter(item -> item.qualifiedName().equals("same.Outer$Base")
                         && item.sourcePath().equals("alpha/Outer.java"))
                 .findFirst().orElseThrow();
-        assertTrue(alphaOuter.parentIds().contains(objectSupport.id()));
-        assertTrue(alphaBase.parentIds().contains(objectSupport.id()));
+        var betaOuter = result.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("same.Outer")
+                        && item.sourcePath().equals("beta/Outer.java"))
+                .findFirst().orElseThrow();
+        var betaBase = result.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("same.Outer$Base")
+                        && item.sourcePath().equals("beta/Outer.java"))
+                .findFirst().orElseThrow();
+        assertTrue(alphaOuter.parentIds().contains(alphaObject.id()));
+        assertTrue(alphaBase.parentIds().contains(alphaObject.id()));
+        assertTrue(betaOuter.parentIds().contains(betaObject.id()));
+        assertTrue(betaBase.parentIds().contains(betaObject.id()));
         assertEquals(2, result.methodBodies().size());
         assertTrue(result.diagnostics().isEmpty(), result.diagnostics().toString());
         Path xmi = root.resolve("context-evidence.xmi");
@@ -165,6 +180,20 @@ class SpoonCompilationContextIsolationTest {
         assertFalse(decisions.isEmpty());
         decisions.forEach(item -> assertEquals(metamodel.conformance.pipeline.decision.DecisionStatus.CONFORMANT,
                 item.status(), item.toString()));
+    }
+
+    private static String platformSha(Observation observation, String contextId) {
+        return observation.platformEvidence().stream()
+                .filter(item -> item.contextId().equals(contextId))
+                .findFirst().orElseThrow().platformContentSha256();
+    }
+
+    private static metamodel.conformance.pipeline.model.ClassifierObservation objectSupport(
+            Observation observation, String platformSha) {
+        return observation.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("java.lang.Object")
+                        && item.sourcePath().equals("platform/" + platformSha + "/release"))
+                .findFirst().orElseThrow();
     }
 
     private JavaDependencyInputs inputs(String text) throws Exception {

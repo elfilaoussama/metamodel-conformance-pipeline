@@ -105,6 +105,7 @@ final class JavaDependencyObservation {
         return "cls_" + Hashing.sha256(
                 "java-bytecode-classifier\0"
                         + type.archiveSha256() + "\0"
+                        + type.resolutionPlatformSha256() + "\0"
                         + type.qualifiedName() + "\0"
                         + type.kind());
     }
@@ -115,6 +116,7 @@ final class JavaDependencyObservation {
         return "mem_" + Hashing.sha256(
                 "java-bytecode-member\0"
                         + owner.archiveSha256() + "\0"
+                        + owner.resolutionPlatformSha256() + "\0"
                         + owner.qualifiedName() + "\0"
                         + member.kind() + "\0"
                         + member.name() + "\0"

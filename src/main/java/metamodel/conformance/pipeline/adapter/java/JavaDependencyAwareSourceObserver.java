@@ -32,7 +32,7 @@ import java.util.TreeSet;
 /** Adds dependency bytecode evidence under exact build-observed compilation contexts. */
 public final class JavaDependencyAwareSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = JavaImplementationSourceObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.12.0";
+    public static final String ADAPTER_VERSION = "1.12.1";
 
     private final JavaDependencyInputs dependencyInputs;
     private final SourceObserver delegate;
@@ -339,14 +339,18 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
             ClassifierObservation previous = classifiers.putIfAbsent(classifier.id(), classifier);
             if (previous != null && !previous.equals(classifier)) {
                 throw new ObservationException(
-                        "dependency support classifier identity collision: " + classifier.id());
+                        "dependency support classifier identity collision: " + classifier.id()
+                                + " (" + classifier.qualifiedName() + ") "
+                                + previous.sourcePath() + " vs " + classifier.sourcePath());
             }
         }
         for (MemberObservation member : support.members()) {
             MemberObservation previous = members.putIfAbsent(member.technicalKey(), member);
             if (previous != null && !previous.equals(member)) {
                 throw new ObservationException(
-                        "dependency support member identity collision: " + member.technicalKey());
+                        "dependency support member identity collision: " + member.technicalKey()
+                                + " (" + member.memberName() + ") "
+                                + previous.sourcePath() + " vs " + member.sourcePath());
             }
         }
     }

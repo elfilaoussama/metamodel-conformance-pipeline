@@ -146,6 +146,7 @@ final class JavaDependencySymbols {
                 TypeSymbol symbol = new TypeSymbol(
                         archive == null ? platform.unitPath() : archive.unit().path(),
                         archive == null ? platform.sha256() : archive.unit().sha256(),
+                        platform == null ? "" : platform.sha256(),
                         archive == null ? Language.JAVA_PLATFORM : Language.JAVA_ARCHIVE,
                         qualifiedName,
                         packageName(elements, type),
@@ -170,7 +171,8 @@ final class JavaDependencySymbols {
                     .map(TypeSymbol::qualifiedName).collect(java.util.stream.Collectors.toSet());
             List<TypeSymbol> canonical = materialized.values().stream().distinct()
                     .map(type -> new TypeSymbol(
-                            type.archiveUnitPath(), type.archiveSha256(), type.sourceLanguage(),
+                            type.archiveUnitPath(), type.archiveSha256(), type.resolutionPlatformSha256(),
+                            type.sourceLanguage(),
                             type.qualifiedName(), type.packageName(), type.kind(), type.abstraction(),
                             type.parentQualifiedNames().stream().filter(materializedNames::contains).toList(),
                             type.members()))
@@ -263,6 +265,7 @@ final class JavaDependencySymbols {
     record TypeSymbol(
             String archiveUnitPath,
             String archiveSha256,
+            String resolutionPlatformSha256,
             Language sourceLanguage,
             String qualifiedName,
             String packageName,
@@ -271,6 +274,7 @@ final class JavaDependencySymbols {
             List<String> parentQualifiedNames,
             List<MemberSymbol> members) {
         TypeSymbol {
+            resolutionPlatformSha256 = resolutionPlatformSha256 == null ? "" : resolutionPlatformSha256;
             parentQualifiedNames = List.copyOf(parentQualifiedNames);
             members = List.copyOf(members);
         }
@@ -284,7 +288,7 @@ final class JavaDependencySymbols {
                 ClassifierAbstraction abstraction,
                 List<String> parentQualifiedNames,
                 List<MemberSymbol> members) {
-            this(archiveUnitPath, archiveSha256, Language.JAVA_ARCHIVE, qualifiedName, packageName,
+            this(archiveUnitPath, archiveSha256, "", Language.JAVA_ARCHIVE, qualifiedName, packageName,
                     kind, abstraction, parentQualifiedNames, members);
         }
     }

@@ -36,8 +36,15 @@ final class JavaPlatformProvenance {
                 }
                 ctSymDigest = Hashing.sha256(ctSym);
             }
-            String digest = Hashing.sha256(releaseDigest + "\0" + ctSymDigest);
             JavaCompilerSemantics semantics = context.compilerSemantics();
+            // The platform home and ct.sym file are shared across --release levels;
+            // the effective platform API surface is selected by --release and
+            // preview. Fingerprint them together so contexts that observe
+            // different platform signatures never share one platform identity.
+            String platformSemantics = "release=" + level(semantics.releaseLevel())
+                    + ";preview=" + semantics.previewEnabled();
+            String digest = Hashing.sha256(
+                    releaseDigest + "\0" + ctSymDigest + "\0" + platformSemantics);
             String configuredIdentity = semantics.platformIdentity().isBlank()
                     ? "compiler-default" : semantics.platformIdentity();
             String compilerIdentity = System.getProperty("java.vendor", "unknown") + " "
