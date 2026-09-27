@@ -248,9 +248,20 @@ PY
     resolution_role=classpath
     # A context that compiles a module descriptor needs its dependency archives
     # on the module path: a classpath archive stays in the unnamed module and
-    # cannot satisfy the descriptor's requires clauses. Non-modular contexts
-    # keep every dependency on the classpath, as observed before.
-    [[ -f "$host_source/module-info.java" ]] && resolution_role=module-path
+    # cannot satisfy the descriptor's requires clauses. A descriptor the
+    # compiler execution excludes is not compiled, so such a context stays
+    # non-modular and keeps its dependencies on the classpath.
+    if [[ -f "$host_source/module-info.java" ]]; then
+      descriptor_compiled=1
+      if [[ -n "$excludes_field" ]]; then
+        IFS=$'\x1e' read -r -a descriptor_patterns <<< "$excludes_field"
+        for pattern in "${descriptor_patterns[@]}"; do
+          [[ -n "$pattern" ]] || continue
+          if [[ "module-info.java" == $pattern ]]; then descriptor_compiled=0; break; fi
+        done
+      fi
+      [[ $descriptor_compiled -eq 1 ]] && resolution_role=module-path
+    fi
     printf 'context\t%s\t%s\t%s\t%s\t%s\t%s\t\n' \
       "$context_id" "$module_key" "$source_level" "$target_level" "$release" "$preview" >> "$output_file"
     printf 'source\t%s\t%s\n' "$context_id" "$relative_source" >> "$output_file"

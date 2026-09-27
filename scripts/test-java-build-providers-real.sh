@@ -79,6 +79,62 @@ grep -Eq $'^module-path\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/
 ! grep -Eq $'^classpath\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/maven-modular.tsv"
 printf 'REAL_MAVEN_MODULAR_PROVIDER_OK\n'
 
+# A descriptor the compiler execution excludes is not compiled: the context is
+# non-modular and must keep dependencies on the classpath, not the module path.
+maven_modular_excluded="$work/maven-modular-excluded"
+mkdir -p "$maven_modular_excluded/src/main/java/app"
+cat > "$maven_modular_excluded/pom.xml" <<'POM'
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>fixture</groupId><artifactId>modular-excluded</artifactId><version>1</version>
+  <properties><maven.compiler.release>17</maven.compiler.release></properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.slf4j</groupId><artifactId>slf4j-api</artifactId><version>2.0.13</version>
+    </dependency>
+  </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>default-compile</id>
+            <configuration>
+              <excludes><exclude>module-info.java</exclude></excludes>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+</project>
+POM
+cat > "$maven_modular_excluded/src/main/java/module-info.java" <<'JAVA'
+module app.modular {
+    requires org.slf4j;
+    exports app;
+}
+JAVA
+cat > "$maven_modular_excluded/src/main/java/app/Alpha.java" <<'JAVA'
+package app;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+public class Alpha {
+    private static final Logger LOG = LoggerFactory.getLogger(Alpha.class);
+}
+JAVA
+"$repo_root/scripts/resolve-maven-dependencies.sh" "$maven_modular_excluded" "$work/maven-modular-excluded.tsv"
+printf 'REAL_MAVEN_MODULAR_EXCLUDED_MANIFEST\n'
+cat "$work/maven-modular-excluded.tsv"
+grep -Fq $'exclude\tmaven|.|compile\tsrc/main/java/module-info.java' "$work/maven-modular-excluded.tsv"
+grep -Eq $'^classpath\tmaven\|\.\|compile\t.*slf4j-api-2\.0\.13\.jar$' "$work/maven-modular-excluded.tsv"
+! grep -Eq $'^module-path\t' "$work/maven-modular-excluded.tsv"
+printf 'REAL_MAVEN_MODULAR_EXCLUDED_PROVIDER_OK\n'
+
 # Declared generated sources must be materialized and attributed to the compile
 # context; the template tree itself remains a declared non-compilation input.
 maven_templated="$work/maven-templated"
