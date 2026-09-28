@@ -85,6 +85,24 @@ class JavaDependencyInputsTest {
     }
 
     @Test
+    void recordsDeclaredCompilerArgumentsPerContext() throws Exception {
+        Path manifest = temporary.resolve("compiler-args.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\t",
+                "source\tmain\tsrc/main/java",
+                "compiler-arg\tmain\t--add-exports",
+                "compiler-arg\tmain\ta/b=c",
+                "context\tother\t.\t\t\t17\tfalse\t",
+                "source\tother\tsrc/other") + "\n");
+
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        assertEquals(List.of("--add-exports", "a/b=c"),
+                inputs.context("main").compilerSemantics().compilerArgs());
+        assertTrue(inputs.context("other").compilerSemantics().compilerArgs().isEmpty());
+    }
+
+    @Test
     void legacyManifestIsOnlyACompatibilityAdapterAndDoesNotInferRelationships() throws Exception {
         Path jar = Files.write(temporary.resolve("legacy.jar"), new byte[]{1}).toAbsolutePath().normalize();
         Path manifest = temporary.resolve("legacy.tsv");

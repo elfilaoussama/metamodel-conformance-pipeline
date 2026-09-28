@@ -86,15 +86,16 @@ final class JavacCompilationContext implements AutoCloseable {
                         result.diagnostics(),
                         temporary);
             }
-            compiled.put(upstream.id(), new CompiledOutput(upstream, output));
+            compiled.put(upstream.id(), new CompiledOutput(upstream, output, modular(upstreamFiles)));
         }
 
         List<CompiledOutput> visible = visibleOutputs(actual, context.id(), compiled);
+        boolean modularContext = modular(filesByContext.getOrDefault(context.id(), List.of()));
         String classpath;
         List<String> options;
         try {
-            classpath = classpath(context, visible, emptyClasspath);
-            options = compilerOptions(context, classpath, visible);
+            classpath = classpath(context, visible, emptyClasspath, modularContext);
+            options = compilerOptions(context, classpath, visible, modularContext);
         } catch (IllegalArgumentException failure) {
             return new JavacCompilationContext(
                     false,
@@ -161,8 +162,10 @@ final class JavacCompilationContext implements AutoCloseable {
         try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
                 collector, Locale.ROOT, StandardCharsets.UTF_8)) {
             Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
-            String classpath = classpath(context, upstreamOutputs, output);
-            ArrayList<String> options = new ArrayList<>(compilerOptions(context, classpath, upstreamOutputs));
+            boolean modularContext = modular(files);
+            String classpath = classpath(context, upstreamOutputs, output, modularContext);
+            ArrayList<String> options = new ArrayList<>(
+                    compilerOptions(context, classpath, upstreamOutputs, modularContext));
             options.add("-d");
             options.add(output.toString());
             Boolean success = compiler.getTask(null, fileManager, collector, options, null, sources).call();
@@ -185,7 +188,7 @@ final class JavacCompilationContext implements AutoCloseable {
     }
 
     private static List<String> compilerOptions(JavaCompilationContext context, String classpath,
-            List<CompiledOutput> upstreamOutputs) {
+            List<CompiledOutput> upstreamOutputs, boolean modularContext) {
         ArrayList<String> options = new ArrayList<>(List.of("-proc:none", "-implicit:none", "-Xlint:none"));
         JavaCompilerSemantics semantics = context.compilerSemantics();
         if (semantics.releaseLevel() != null) {
@@ -208,7 +211,7 @@ final class JavacCompilationContext implements AutoCloseable {
             options.add("-classpath");
             options.add(classpath);
         }
-        appendPath(options, "--module-path", resolvedEntries(context, JavaResolutionPathRole.MODULE_PATH, upstreamOutputs));
+        appendPath(options, "--module-path", modulePath(context, upstreamOutputs, modularContext));
         appendPath(options, "--upgrade-module-path",
                 resolvedEntries(context, JavaResolutionPathRole.UPGRADE_MODULE_PATH, upstreamOutputs));
         appendPath(options, "-processorpath", resolvedEntries(context, JavaResolutionPathRole.PROCESSOR_PATH, upstreamOutputs));
@@ -229,6 +232,10 @@ final class JavacCompilationContext implements AutoCloseable {
                 options.add(path.qualifier() + "=" + join(replaceOutputs(path.entries(), upstreamOutputs)));
             }
         }
+        // Provider-declared compiler arguments (for example --add-exports for a
+        // modular test context) are build facts, appended after the reconstructed
+        // options.
+        options.addAll(semantics.compilerArgs());
         return List.copyOf(options);
     }
 
@@ -240,13 +247,19 @@ final class JavacCompilationContext implements AutoCloseable {
     }
 
     private static String classpath(JavaCompilationContext context, List<CompiledOutput> upstreamOutputs,
-            Path emptyClasspath) {
+            Path emptyClasspath, boolean modularContext) {
         LinkedHashSet<Path> entries = new LinkedHashSet<>();
         // An upstream edge without an explicit path retains the compatibility
         // classpath role. When a role/position is observed, preserve it exactly.
         Set<Path> explicit = context.resolutionPaths().stream().flatMap(path -> path.entries().stream())
                 .collect(java.util.stream.Collectors.toSet());
         for (CompiledOutput output : upstreamOutputs) {
+            // A modular downstream context must see an upstream module on the
+            // module path, not the classpath: a classpath module stays in the
+            // unnamed module and cannot satisfy the descriptor's requires clause.
+            if (modularContext && output.modular()) {
+                continue;
+            }
             if (output.context().outputs().stream().noneMatch(explicit::contains)) {
                 entries.add(output.directory());
             }
@@ -268,6 +281,25 @@ final class JavacCompilationContext implements AutoCloseable {
         return replaceOutputs(context.resolutionEntries(role), outputs);
     }
 
+    /** Module path entries plus any upstream module compiled output for a modular context. */
+    private static List<Path> modulePath(JavaCompilationContext context,
+            List<CompiledOutput> upstreamOutputs, boolean modularContext) {
+        List<Path> entries = new ArrayList<>(resolvedEntries(
+                context, JavaResolutionPathRole.MODULE_PATH, upstreamOutputs));
+        if (modularContext) {
+            for (CompiledOutput output : upstreamOutputs) {
+                if (output.modular() && !entries.contains(output.directory())) {
+                    entries.add(output.directory());
+                }
+            }
+        }
+        return entries;
+    }
+
+    private static boolean modular(List<Path> files) {
+        return files.stream().anyMatch(file -> "module-info.java".equals(file.getFileName().toString()));
+    }
+
     private static List<Path> replaceOutputs(List<Path> entries, List<CompiledOutput> outputs) {
         Map<Path, Path> replacements = new LinkedHashMap<>();
         for (CompiledOutput output : outputs) {
@@ -281,7 +313,7 @@ final class JavacCompilationContext implements AutoCloseable {
         return entries.stream().map(path -> replacements.getOrDefault(path, path)).toList();
     }
 
-    private record CompiledOutput(JavaCompilationContext context, Path directory) {}
+    private record CompiledOutput(JavaCompilationContext context, Path directory, boolean modular) {}
 
     private static String join(List<Path> entries) {
         return entries.stream().map(Path::toString)

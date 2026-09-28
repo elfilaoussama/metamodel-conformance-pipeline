@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  */
 public final class JavaImplementationSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = SpoonJavaObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.6.2";
+    public static final String ADAPTER_VERSION = "1.6.3";
 
     private final JavaDependencyInputs dependencyInputs;
 

@@ -116,6 +116,23 @@ def has_preview(*configs):
         args=child(cfg,'compilerArgs')
         if args is not None and any((x.text or '').strip()=='--enable-preview' for x in args): return 'true'
     return 'false'
+def compiler_arguments(*configs):
+    values=[]
+    for cfg in configs:
+        args=child(cfg,'compilerArgs')
+        if args is None: continue
+        for item in args:
+            if local(item.tag)!='arg': continue
+            value=(item.text or '').strip()
+            if not value: continue
+            # Options already reconstructed from the observed semantics are not
+            # repeated here; provider-declared extras (for example --add-exports)
+            # are preserved verbatim.
+            if value in ('--release','-source','-target','--enable-preview',
+                         '-classpath','-cp','-d','-processorpath'):
+                continue
+            values.append(value)
+    return values
 def major(v):
     v=(v or '').strip()
     if not v: return ''
@@ -148,6 +165,8 @@ def exclusions(cfg, *names):
     return values
 compile_excludes=exclusions(compile_cfg,'excludes')
 test_excludes=exclusions(test_cfg,'testExcludes','excludes')
+compile_arguments=compiler_arguments(compile_cfg,compiler_cfg)
+test_arguments=compiler_arguments(test_cfg,compiler_cfg)
 def templating_source_directory():
     # A supported plugin profile: the templating plugin's input tree contains
     # Java-looking template files that no observed compiler execution consumes.
@@ -213,15 +232,15 @@ with open(generators_path,'w',encoding='utf-8') as handle:
 sep=chr(31)
 records=chr(30)
 print(sep.join(['compile',source,out,compile_source,compile_target,compile_release,compile_preview,
-                records.join(compile_excludes)]))
+                records.join(compile_excludes),records.join(compile_arguments)]))
 print(sep.join(['test',test,testout,test_source_level,test_target_level,test_release,test_preview,
-                records.join(test_excludes)]))
+                records.join(test_excludes),records.join(test_arguments)]))
 if templates:
     print(sep.join(['noncompiled',normalize(templates)]))
 PY
 
   observed_compile_context=''
-  while IFS=$'\x1f' read -r kind source_dir output_dir source_level target_level release preview excludes_field; do
+  while IFS=$'\x1f' read -r kind source_dir output_dir source_level target_level release preview excludes_field args_field; do
     [[ -n "$source_dir" ]] || continue
     if [[ "$kind" == noncompiled ]]; then
       case "$source_dir" in
@@ -281,6 +300,15 @@ PY
         *) host_output='' ;;
       esac
       [[ -z "$host_output" ]] || printf 'output\t%s\t%s\n' "$context_id" "$host_output" >> "$output_file"
+    fi
+    # Provider-declared compiler arguments are build facts of the execution and
+    # are replayed verbatim by the compilation-context reconstruction.
+    if [[ -n "$args_field" ]]; then
+      IFS=$'\x1e' read -r -a compiler_arguments <<< "$args_field"
+      for compiler_argument in "${compiler_arguments[@]}"; do
+        [[ -n "$compiler_argument" ]] || continue
+        printf 'compiler-arg\t%s\t%s\n' "$context_id" "$compiler_argument" >> "$output_file"
+      done
     fi
     # Declared compiler exclusions are build facts: the execution does not
     # consume these files even though they live under its source root. They

@@ -338,6 +338,34 @@ class JavaDependencyAwareCompilationContextIsolationTest {
                 .anyMatch(item -> item.kind() == DiagnosticKind.EVIDENCE_INCOMPLETE));
     }
 
+    @Test
+    void modularDownstreamContextReceivesUpstreamModuleOnTheModulePath() throws Exception {
+        Path moduleA = temporary.resolve("code/a");
+        Files.createDirectories(moduleA.resolve("app/a"));
+        Files.writeString(moduleA.resolve("module-info.java"), "module a { exports app.a; }\n");
+        Files.writeString(moduleA.resolve("app/a/A.java"), "package app.a; public class A {}\n");
+        Path moduleB = temporary.resolve("code/b");
+        Files.createDirectories(moduleB.resolve("app/b"));
+        Files.writeString(moduleB.resolve("module-info.java"), "module b { requires a; }\n");
+        Files.writeString(moduleB.resolve("app/b/B.java"),
+                "package app.b; public class B { app.a.A field; }\n");
+
+        Path manifest = temporary.resolve("modular-contexts.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\ta\t.\t\t\t17\tfalse\tjdk-17",
+                "source\ta\tcode/a",
+                "context\tb\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tb\tcode/b",
+                "upstream\tb\ta") + "\n");
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        Observation observed = new JavaDependencyAwareSourceObserver(inputs).observe(temporary, Set.of());
+
+        assertTrue(observed.diagnostics().isEmpty(), () -> observed.diagnostics().toString());
+        assertTrue(observed.classifiers().stream().anyMatch(item -> item.qualifiedName().equals("app.a.A")));
+        assertTrue(observed.classifiers().stream().anyMatch(item -> item.qualifiedName().equals("app.b.B")));
+    }
+
     private JavaDependencyInputs contexts(
             String productionRoot, Path productionJar,
             String verificationRoot, Path verificationJar,

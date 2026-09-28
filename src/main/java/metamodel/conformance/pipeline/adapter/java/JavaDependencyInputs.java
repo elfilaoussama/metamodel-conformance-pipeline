@@ -104,7 +104,8 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                 .map(line -> line.split("\\t", -1)[0])
                 .anyMatch(kind -> Set.of("context", "source", "generated-source", "classpath",
                         "module-path", "processor-path", "upgrade-module-path", "platform-path",
-                        "patch-module", "output", "upstream", "exclude", "noncompiled").contains(kind));
+                        "patch-module", "output", "upstream", "exclude", "noncompiled",
+                        "compiler-arg").contains(kind));
         return typed ? parseTyped(lines) : parseLegacy(lines);
     }
 
@@ -355,6 +356,10 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                         noncompiledSources.add(
                                 JavaCompilationContext.canonicalRelativePath(fields[1], "noncompiled source"));
                     }
+                    case "compiler-arg" -> {
+                        requireFields(fields, 3);
+                        requireContext(contexts, fields[1]).compilerArgs.add(token(fields[2], "compiler argument"));
+                    }
                     default -> throw new IllegalArgumentException("unknown manifest row kind: " + fields[0]);
                 }
             } catch (IllegalArgumentException failure) {
@@ -443,6 +448,7 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
         private final String platform;
         private final List<String> sources = new ArrayList<>();
         private final List<String> generatedSources = new ArrayList<>();
+        private final List<String> compilerArgs = new ArrayList<>();
         private final Set<String> excludedSources = new LinkedHashSet<>();
         private final Map<PathKey, List<Path>> paths = new LinkedHashMap<>();
         private final List<Path> outputs = new ArrayList<>();
@@ -471,7 +477,7 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                     .toList();
             return new JavaCompilationContext(
                     id, module, sources, generatedSources, resolutionPaths, outputs, upstream,
-                    new JavaCompilerSemantics(source, target, release, preview, platform));
+                    new JavaCompilerSemantics(source, target, release, preview, platform, compilerArgs));
         }
     }
 
