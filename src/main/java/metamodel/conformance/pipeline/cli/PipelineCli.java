@@ -11,9 +11,12 @@ import metamodel.conformance.pipeline.capsule.CapsuleVerifier;
 import metamodel.conformance.pipeline.alloy.AlloyInvariantEvaluator;
 import metamodel.conformance.pipeline.decision.Decision;
 import metamodel.conformance.pipeline.emf.ObservationXmiReader;
+import metamodel.conformance.pipeline.emf.ObservationXmiWriter;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.Language;
 import metamodel.conformance.pipeline.model.MemberObservation;
+import metamodel.conformance.pipeline.model.Observation;
+import metamodel.conformance.pipeline.model.ObservationDiagnostic;
 import metamodel.conformance.pipeline.decision.DecisionStatus;
 
 import java.nio.file.Path;
@@ -24,6 +27,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 public final class PipelineCli {
     private PipelineCli() {
@@ -44,6 +48,7 @@ public final class PipelineCli {
             }
             return switch (args[0]) {
                 case "analyze" -> analyze(slice(args));
+                case "observe" -> observe(slice(args));
                 case "verify-capsule" -> verifyCapsule(slice(args));
                 case "evaluate-work-unit" -> evaluateWorkUnit(slice(args));
                 case "evaluate-work-units" -> evaluateWorkUnits(slice(args));
@@ -129,6 +134,51 @@ public final class PipelineCli {
                 ? 3 : 0;
     }
 
+    /**
+     * Observation only: runs the source observer, writes observation.xmi, and
+     * prints a diagnostic summary without encoding Alloy or evaluating
+     * invariants. This is the fast triage path for provider-fact work; a full
+     * analyze/replay is only needed once for recorded capsule evidence.
+     */
+    private static int observe(String[] args) throws Exception {
+        ParsedOptions options = ParsedOptions.parse(
+                args,
+                Set.of("source", "output"),
+                Set.of("language", "dependency-manifest"),
+                Set.of("external-parent", "dependency-jar"));
+        Path source = Path.of(options.one("source"));
+        Path output = Path.of(options.one("output"));
+        List<Path> dependencyArchives = options.many("dependency-jar").stream().map(Path::of).toList();
+        String dependencyManifest = options.optional("dependency-manifest");
+        if (dependencyManifest != null && !dependencyArchives.isEmpty()) {
+            throw new IllegalArgumentException(
+                    "--dependency-manifest and --dependency-jar cannot be combined");
+        }
+        JavaDependencyInputs dependencyInputs = dependencyManifest == null
+                ? JavaDependencyInputs.global(dependencyArchives)
+                : JavaDependencyInputs.fromManifest(Path.of(dependencyManifest));
+        Language language = SourceObserverFactory.parseLanguage(options.optional("language"));
+        SourceObserver observer = SourceObserverFactory.create(language, dependencyInputs);
+        Observation observation = observer.observe(source, new HashSet<>(options.many("external-parent")));
+        Files.createDirectories(output);
+        Path observationPath = output.resolve("observation.xmi");
+        new ObservationXmiWriter().write(observation, observationPath);
+        System.out.println("OBSERVE_DIAGNOSTICS=" + observation.diagnostics().size());
+        observation.diagnostics().stream()
+                .collect(Collectors.groupingBy(ObservationDiagnostic::sourcePath, Collectors.counting()))
+                .entrySet().stream()
+                .sorted((first, second) -> Long.compare(second.getValue(), first.getValue()))
+                .limit(15)
+                .forEach(entry -> System.out.println("DIAG " + entry.getValue() + " " + entry.getKey()));
+        System.out.println("EVIDENCE=" + observation.completeEvidence().stream()
+                .map(Enum::name).sorted().collect(Collectors.joining(",")));
+        System.out.println("UNRESOLVED_PARENTS=" + observation.unresolvedParents().size());
+        System.out.println("CLASSIFIERS=" + observation.classifiers().size()
+                + " MEMBERS=" + observation.members().size());
+        System.out.println("OBSERVATION=" + observationPath);
+        return observation.diagnostics().isEmpty() ? 0 : 3;
+    }
+
     private static int verifyCapsule(String[] args) {
         ParsedOptions options = ParsedOptions.parse(
                 args, Set.of("capsule"), Set.of(), Set.of());
@@ -183,6 +233,10 @@ public final class PipelineCli {
         System.out.println("""
                 Usage:
                   analyze --source <dir> --output <dir> [--language <java|python|cpp>]
+                          [--external-parent <qualified-name>]...
+                          [--dependency-jar <path>]...
+                          [--dependency-manifest <source-set-to-jar.tsv>]
+                  observe --source <dir> --output <dir> [--language <java|python|cpp>]
                           [--external-parent <qualified-name>]...
                           [--dependency-jar <path>]...
                           [--dependency-manifest <source-set-to-jar.tsv>]
