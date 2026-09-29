@@ -177,26 +177,83 @@ def assigned_names(target):
     return []
 
 
+def mangled_name(name, owner):
+    # CPython private name mangling: a class-body identifier starting with two
+    # underscores and not ending with two underscores is rewritten to
+    # _<ClassName><name> before class creation, so the effective attribute name
+    # observed through inheritance is the mangled form.
+    if name.startswith("__") and not name.endswith("__"):
+        simple = owner.rsplit(".", 1)[-1]
+        if simple:
+            return "_" + simple + name
+    return name
+
+
+def is_staticmethod(node):
+    for decorator in getattr(node, "decorator_list", []):
+        try:
+            text = ast.unparse(decorator)
+        except Exception:
+            continue
+        if text == "staticmethod" or text.endswith(".staticmethod"):
+            return True
+    return False
+
+
+def signature_subset(node):
+    """Annotation-based signature subset. Returns (type_tokens, supported).
+
+    The supported subset is a conventional implicit self/cls receiver (excluded
+    from the annotation requirement), followed by plain fully-annotated
+    positional parameters. Positional-only markers, keyword-only parameters,
+    variadic parameters, and defaults are unsupported shapes: the observation
+    schema cannot represent them yet, so such methods stay outside the subset
+    and local-signature evidence remains incomplete for the observation.
+    Parameter names are never used as type tokens.
+    """
+    args = node.args
+    if args.posonlyargs or args.kwonlyargs or args.vararg or args.kwarg:
+        return [], False
+    if args.defaults:
+        return [], False
+    positional = list(args.args)
+    if positional and positional[0].arg in ("self", "cls") and not is_staticmethod(node):
+        positional = positional[1:]
+    tokens = []
+    for argument in positional:
+        if argument.annotation is None:
+            return [], False
+        try:
+            tokens.append(ast.unparse(argument.annotation))
+        except Exception:
+            return [], False
+    return tokens, True
+
+
 def class_members(body, owner):
     result = []
 
-    def add(node, kind, name):
-        result.append(
-            {
-                "definitionKey": member_definition_key(current_rel, node, owner, kind, name),
-                "kind": kind,
-                "name": name,
-                "line": getattr(node, "lineno", 1) or 1,
-                "endLine": getattr(node, "end_lineno", None)
-                or getattr(node, "lineno", 1)
-                or 1,
-            }
-        )
+    def add(node, kind, name, parameters=None, signature_supported=None):
+        name = mangled_name(name, owner)
+        member = {
+            "definitionKey": member_definition_key(current_rel, node, owner, kind, name),
+            "kind": kind,
+            "name": name,
+            "line": getattr(node, "lineno", 1) or 1,
+            "endLine": getattr(node, "end_lineno", None)
+            or getattr(node, "lineno", 1)
+            or 1,
+        }
+        if parameters is not None:
+            member["parameters"] = parameters
+            member["signatureSupported"] = signature_supported
+        result.append(member)
 
     def walk(statements):
         for statement in statements:
             if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                add(statement, "METHOD", statement.name)
+                parameters, supported = signature_subset(statement)
+                add(statement, "METHOD", statement.name, parameters, supported)
             elif isinstance(statement, ast.Assign):
                 names = []
                 for target in statement.targets:

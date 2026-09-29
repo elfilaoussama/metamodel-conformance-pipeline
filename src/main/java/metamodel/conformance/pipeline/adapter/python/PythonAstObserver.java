@@ -44,13 +44,20 @@ import java.util.stream.Stream;
  * the observed source. Source declarations have independent definition identities; runtime
  * name bindings are tracked separately so aliases and straight-line redefinitions can be
  * resolved without collapsing distinct declarations. Source-declared methods and assignment/
- * annotation attributes are mapped to canonical members with unknown visibility and
- * inheritability. Signature, language-specific visibility/inheritability, and inherited-member
- * evidence deliberately remain incomplete.</p>
+ * annotation attributes are mapped to canonical members with unknown visibility. Method
+ * inheritability is INHERITABLE per C3 namespace lookup, including double-underscore
+ * methods, whose effective attribute name is the CPython-mangled form ({@code A.__run}
+ * becomes {@code _A__run}); attribute inheritability remains unknown. Local signatures are
+ * observed only for the annotation-based subset: a conventional implicit self/cls receiver,
+ * then fully-annotated plain positional parameters; parameter names are never used as type
+ * tokens, and unsupported parameter shapes (defaults, positional-only, keyword-only,
+ * variadic) stay outside the subset so local-signature evidence remains incomplete for
+ * the observation. Inherited-member, language-specific visibility, and attribute
+ * inheritability evidence deliberately remain incomplete.</p>
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.4.0";
+    public static final String ADAPTER_VERSION = "0.5.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -125,6 +132,9 @@ public final class PythonAstObserver implements SourceObserver {
             Map<String, List<String>> memberKeysByOwner = new HashMap<>();
             Set<String> memberTechnicalKeys = new HashSet<>();
             boolean declarationIncomplete = false;
+            boolean signaturesIncomplete = false;
+            int methodCount = 0;
+            int unsupportedMethodCount = 0;
             for (TypeDraft draft : drafts.stream().sorted(Comparator.comparing(TypeDraft::id)).toList()) {
                 List<String> keys = new ArrayList<>();
                 for (BridgeMember source : draft.members()) {
@@ -149,6 +159,13 @@ public final class PythonAstObserver implements SourceObserver {
                                 "unsupported Python source-member kind: " + source.kind()));
                         continue;
                     }
+                    if (kind == MemberKind.METHOD) {
+                        methodCount++;
+                        if (!source.signatureSupported()) {
+                            signaturesIncomplete = true;
+                            unsupportedMethodCount++;
+                        }
+                    }
                     String technicalKey = stableMemberKey(draft.path(), source.definitionKey());
                     if (!memberTechnicalKeys.add(technicalKey)) {
                         declarationIncomplete = true;
@@ -162,13 +179,14 @@ public final class PythonAstObserver implements SourceObserver {
                             technicalKey,
                             null,
                             kind,
-                            Inheritability.UNKNOWN,
+                            kind == MemberKind.METHOD
+                                    ? Inheritability.INHERITABLE : Inheritability.UNKNOWN,
                             MemberVisibility.UNKNOWN,
                             source.name(),
                             draft.path(),
                             source.line(),
                             source.endLine(),
-                            List.of());
+                            kind == MemberKind.METHOD ? safe(source.parameters()) : List.of());
                     members.add(member);
                     keys.add(member.technicalKey());
                 }
@@ -221,15 +239,28 @@ public final class PythonAstObserver implements SourceObserver {
             diagnostics.add(new ObservationDiagnostic(
                     DiagnosticKind.EVIDENCE_INCOMPLETE,
                     evidencePath, 0,
-                    "Python adapter observes classifier hierarchy and source-declared method/attribute ownership; "
-                            + "local signatures, language-specific visibility/inheritability, and inherited-member "
+                    "Python adapter observes classifier hierarchy, source-declared method/attribute "
+                            + "ownership, and annotation-based method signatures; language-specific "
+                            + "visibility, attribute inheritability, and inherited-member "
                             + "evidence remain incomplete."));
+            if (signaturesIncomplete) {
+                diagnostics.add(new ObservationDiagnostic(
+                        DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0,
+                        "Python local signatures remain incomplete: " + unsupportedMethodCount
+                                + " of " + methodCount + " methods are outside the annotation-based "
+                                + "signature subset (unannotated parameters or unsupported parameter "
+                                + "shapes)"));
+            }
 
             boolean parseError = diagnostics.stream()
                     .anyMatch(item -> item.kind() == DiagnosticKind.PARSE_ERROR);
             EnumSet<EvidenceKind> completeEvidence = EnumSet.noneOf(EvidenceKind.class);
             if (!parseError && !declarationIncomplete) {
                 completeEvidence.add(EvidenceKind.DECLARATION_OWNERSHIP);
+                if (!signaturesIncomplete) {
+                    completeEvidence.add(EvidenceKind.LOCAL_SIGNATURES);
+                }
             }
             if (!parseError && !hierarchyIncomplete && unresolved.isEmpty()) {
                 completeEvidence.add(EvidenceKind.HIERARCHY);
@@ -418,7 +449,9 @@ public final class PythonAstObserver implements SourceObserver {
             String kind,
             String name,
             int line,
-            int endLine) {
+            int endLine,
+            List<String> parameters,
+            boolean signatureSupported) {
     }
 
     private record BridgeBase(

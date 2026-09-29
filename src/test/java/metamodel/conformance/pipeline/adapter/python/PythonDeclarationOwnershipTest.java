@@ -4,6 +4,7 @@ import metamodel.conformance.pipeline.ConformancePipeline;
 import metamodel.conformance.pipeline.adapter.SourceObserverFactory;
 import metamodel.conformance.pipeline.capsule.CapsuleVerifier;
 import metamodel.conformance.pipeline.decision.DecisionStatus;
+import metamodel.conformance.pipeline.model.DiagnosticKind;
 import metamodel.conformance.pipeline.model.EvidenceKind;
 import metamodel.conformance.pipeline.model.Inheritability;
 import metamodel.conformance.pipeline.model.Language;
@@ -43,10 +44,15 @@ class PythonDeclarationOwnershipTest {
         Observation observation = new PythonAstObserver().observe(temporary, Set.of());
 
         assertEquals("8", observation.schemaVersion());
-        assertTrue(observation.adapterVersion().startsWith("0.4.0/python-"));
+        assertTrue(observation.adapterVersion().startsWith("0.5.0/python-"));
         assertTrue(observation.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP));
         assertTrue(observation.completeEvidence().contains(EvidenceKind.HIERARCHY));
+        // The unannotated load(self, value) keeps local signatures incomplete for the
+        // whole observation: no parameter name is ever used as an invented type token.
         assertFalse(observation.completeEvidence().contains(EvidenceKind.LOCAL_SIGNATURES));
+        assertTrue(observation.diagnostics().stream().anyMatch(item ->
+                item.kind() == DiagnosticKind.EVIDENCE_INCOMPLETE
+                        && item.message().contains("1 of 2")));
         assertFalse(observation.completeEvidence().contains(EvidenceKind.INHERITABILITY));
         assertFalse(observation.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
 
@@ -61,10 +67,19 @@ class PythonDeclarationOwnershipTest {
                 .filter(item -> item.kind() == MemberKind.ATTRIBUTE).count());
         assertTrue(observation.members().stream()
                 .allMatch(item -> item.visibility() == MemberVisibility.UNKNOWN));
+        // Methods are inheritable through C3 namespace lookup; attributes stay unknown.
         assertTrue(observation.members().stream()
+                .filter(item -> item.kind() == MemberKind.METHOD)
+                .allMatch(item -> item.inheritability() == Inheritability.INHERITABLE));
+        assertTrue(observation.members().stream()
+                .filter(item -> item.kind() == MemberKind.ATTRIBUTE)
                 .allMatch(item -> item.inheritability() == Inheritability.UNKNOWN));
-        assertTrue(observation.members().stream()
-                .allMatch(item -> item.parameterTypes().isEmpty()));
+        var unannotated = observation.members().stream()
+                .filter(item -> item.memberName().equals("load")).findFirst().orElseThrow();
+        var annotated = observation.members().stream()
+                .filter(item -> item.memberName().equals("save")).findFirst().orElseThrow();
+        assertTrue(unannotated.parameterTypes().isEmpty());
+        assertEquals(List.of("int"), annotated.parameterTypes());
     }
 
     @Test

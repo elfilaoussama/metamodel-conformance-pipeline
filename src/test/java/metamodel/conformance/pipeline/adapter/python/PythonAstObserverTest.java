@@ -35,7 +35,7 @@ class PythonAstObserverTest {
         Observation observation = new PythonAstObserver().observe(temp, Set.of());
 
         assertEquals("python-ast", observation.adapterId());
-        assertTrue(observation.adapterVersion().startsWith("0.4.0/python-"));
+        assertTrue(observation.adapterVersion().startsWith("0.5.0/python-"));
         assertEquals(1, observation.units().size());
         assertEquals(Language.PYTHON, observation.units().get(0).language());
         assertEquals(2, observation.classifiers().size());
