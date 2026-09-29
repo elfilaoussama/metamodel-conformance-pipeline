@@ -150,12 +150,19 @@ gradle.beforeProject { project ->
                 def id = safe("gradle|${rel(project.projectDir)}|${project.path}|${sourceSet.name}")
                 def entries = sourceSet.compileClasspath.files.collect { it.canonicalFile }
                 def outputs = sourceSet.output.classesDirs.files.collect { it.canonicalFile }
+                // A source set that compiles a module descriptor needs its
+                // dependency archives on the module path: a classpath archive
+                // stays in the unnamed module and cannot satisfy requires
+                // clauses. Gradle compiler-exclusion facts are not observed
+                // yet, so descriptor presence alone selects the module path.
+                def modular = roots.any { dir -> new File(dir, 'module-info.java').isFile() }
+                def resolutionRole = modular ? 'module-path' : 'classpath'
                 fragment << "context\t${id}\t${rel(project.projectDir)}\t${sourceLevel}\t${targetLevel}\t${release}\t${preview}\t${platform}" + System.lineSeparator()
                 roots.collect(rel).each { root -> fragment << "source\t${id}\t${root}" + System.lineSeparator() }
                 outputs.sort { a, b -> a.path <=> b.path }.each { out ->
                     fragment << "output\t${id}\t${out.path}" + System.lineSeparator()
                 }
-                entries.each { entry -> fragment << "classpath\t${id}\t${entry.path}" + System.lineSeparator() }
+                entries.each { entry -> fragment << "${resolutionRole}\t${id}\t${entry.path}" + System.lineSeparator() }
             }
         }
     }
@@ -207,8 +214,8 @@ gradle.projectsEvaluated {
                             current.roots << fields[2]
                         } else if (current != null && fields[0] == 'output') {
                             current.outputs << new File(fields[2])
-                        } else if (current != null && fields[0] == 'classpath') {
-                            current.entries << new File(fields[2])
+                        } else if (current != null && (fields[0] == 'classpath' || fields[0] == 'module-path')) {
+                            current.entries << [file:new File(fields[2]), role:fields[0]]
                         }
                     }
                 }
@@ -233,10 +240,10 @@ gradle.projectsEvaluated {
                 }
                 def seenUpstream = [] as Set
                 ctx.entries.each { entry ->
-                    def owners = outputOwners[entry.path]
+                    def owners = outputOwners[entry.file.path]
                     if (owners != null && owners.size() > 1) {
                         throw new IllegalStateException('Ambiguous compilation-context output ownership: '
-                                + entry.path + ' -> ' + owners.toList().sort().join(', '))
+                                + entry.file.path + ' -> ' + owners.toList().sort().join(', '))
                     }
                     def owner = owners == null ? null : owners.iterator().next()
                     if (owner != null && owner != ctx.id) {
@@ -244,7 +251,7 @@ gradle.projectsEvaluated {
                     }
                     // Ownership adds a compilation dependency; it must not erase
                     // the output's observed position relative to external entries.
-                    output << "classpath\t${ctx.id}\t${entry.path}" + System.lineSeparator()
+                    output << "${entry.role}\t${ctx.id}\t${entry.file.path}" + System.lineSeparator()
                 }
             }
         }

@@ -300,6 +300,41 @@ jar_entry="$(awk -F '\t' '$1 == "classpath" && $2 == "gradle|.|:|verification" &
 [[ -f "$jar_entry" ]]
 ! grep -Eq 'src/(main|test)/java' "$work/gradle.tsv"
 
+# A Gradle source set that compiles a module descriptor needs its dependency
+# archives on the module path; classpath archives stay in the unnamed module
+# and cannot satisfy requires clauses.
+gradle_modular="$work/gradle-modular"
+mkdir -p "$gradle_modular/src/main/java/app"
+cat > "$gradle_modular/settings.gradle" <<'GRADLE'
+rootProject.name = 'gradle-modular'
+GRADLE
+cat > "$gradle_modular/build.gradle" <<'GRADLE'
+plugins { id 'java' }
+repositories { mavenCentral() }
+dependencies { implementation 'org.slf4j:slf4j-api:2.0.13' }
+tasks.withType(JavaCompile).configureEach { options.release = 17 }
+GRADLE
+cat > "$gradle_modular/src/main/java/module-info.java" <<'JAVA'
+module fixture.modular {
+    requires org.slf4j;
+    exports app;
+}
+JAVA
+cat > "$gradle_modular/src/main/java/app/Alpha.java" <<'JAVA'
+package app;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+public class Alpha {
+    private static final Logger LOG = LoggerFactory.getLogger(Alpha.class);
+}
+JAVA
+"$repo_root/scripts/resolve-gradle-dependencies.sh" "$gradle_modular" "$work/gradle-modular.tsv"
+printf 'REAL_GRADLE_MODULAR_MANIFEST\n'
+cat "$work/gradle-modular.tsv"
+grep -Eq $'^module-path\tgradle\|\.\|:\|main\t.*slf4j-api-2\.0\.13\.jar$' "$work/gradle-modular.tsv"
+! grep -Eq $'^classpath\tgradle\|\.\|:\|main\t.*slf4j-api-2\.0\.13\.jar$' "$work/gradle-modular.tsv"
+printf 'REAL_GRADLE_MODULAR_PROVIDER_OK\n'
+
 # Configuration on demand activates only projects needed by the requested task.
 # Cross-project archive producers registered as observation dependencies must
 # still run, and the emitted classpath must point at the built archive.
