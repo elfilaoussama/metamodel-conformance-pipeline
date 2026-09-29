@@ -119,6 +119,49 @@ class JavaDependencySymbolsTest {
     }
 
     @Test
+    void resolvesBinaryNestedDependencyRootNames() throws Exception {
+        Path source = temporary.resolve("source");
+        Path classes = temporary.resolve("classes");
+        Files.createDirectories(source.resolve("dep"));
+        Files.createDirectories(classes);
+        Files.writeString(source.resolve("dep/Outer.java"), """
+                package dep;
+                public class Outer {
+                    public static class Inner {
+                        public int value;
+                    }
+                }
+                """);
+        int compiled = ToolProvider.getSystemJavaCompiler().run(
+                null, null, null,
+                "-d", classes.toString(),
+                source.resolve("dep/Outer.java").toString());
+        assertEquals(0, compiled);
+
+        Path archive = temporary.resolve("nested.jar");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(archive))) {
+            for (String entry : List.of("dep/Outer.class", "dep/Outer$Inner.class")) {
+                JarEntry jarEntry = new JarEntry(entry);
+                jarEntry.setTime(0L);
+                output.putNextEntry(jarEntry);
+                output.write(Files.readAllBytes(classes.resolve(entry)));
+                output.closeEntry();
+            }
+        }
+        JavaDependencyClasspath.Result classpath = JavaDependencyClasspath.resolve(List.of(archive));
+
+        // Unresolved parents can arrive in binary nested form; the canonical
+        // name must resolve instead of failing materialization.
+        JavaDependencySymbols.Result result = JavaDependencySymbols.resolve(
+                classpath, Set.of("dep.Outer$Inner"));
+
+        assertTrue(result.unresolvedRootTypes().isEmpty());
+        var inner = result.requireType("dep.Outer.Inner");
+        var value = inner.members().stream().filter(member -> member.name().equals("value")).findFirst().orElseThrow();
+        assertEquals(MemberKind.ATTRIBUTE, value.kind());
+    }
+
+    @Test
     void unsupportedCompilerReleaseFailsClosedAsUnresolvedRoots() throws Exception {
         Path archive = temporary.resolve("empty.jar");
         try (JarOutputStream ignored = new JarOutputStream(Files.newOutputStream(archive))) {

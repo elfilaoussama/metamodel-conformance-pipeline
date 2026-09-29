@@ -109,6 +109,11 @@ final class JavaDependencySymbols {
                     continue;
                 }
                 TypeElement type = elements.getTypeElement(requestedName);
+                if (type == null && requestedName.indexOf('$') >= 0) {
+                    // Unresolved parents may arrive in binary nested form
+                    // (Outer$Inner); javac's element lookup uses canonical names.
+                    type = elements.getTypeElement(requestedName.replace('$', '.'));
+                }
                 if (type == null) {
                     unresolved.add(requestedName);
                     continue;
