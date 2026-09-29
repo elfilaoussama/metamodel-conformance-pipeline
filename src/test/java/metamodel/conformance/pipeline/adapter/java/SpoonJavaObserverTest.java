@@ -119,8 +119,22 @@ class SpoonJavaObserverTest {
 
         Observation observation = observer.observe(temporary, Set.of());
 
+        // Spoon 11.5.0 parses this descriptor in noClasspath mode, so the failure
+        // surfaces as compiler-evidence incompleteness instead of a parse failure:
+        // no classifier is invented, javac reports the unresolved symbols, and the
+        // javac-dependent evidence kinds stay withheld. Structural kinds are claimed
+        // vacuously over the empty model, matching the standing evidence split that
+        // the build-backed corpus runs under (spoon.version 11.2.1 -> 11.5.0).
         assertFalse(observation.diagnostics().isEmpty());
-        assertTrue(observation.completeEvidence().isEmpty());
+        assertTrue(observation.diagnostics().stream().allMatch(item ->
+                item.kind() == DiagnosticKind.EVIDENCE_INCOMPLETE),
+                observation.diagnostics().toString());
+        assertTrue(observation.diagnostics().stream()
+                        .anyMatch(item -> item.message().contains("cannot find symbol")),
+                observation.diagnostics().toString());
+        assertFalse(observation.completeEvidence().contains(EvidenceKind.INHERITED_MEMBERS));
+        assertTrue(observation.completeEvidence().contains(EvidenceKind.DECLARATION_OWNERSHIP));
+        assertTrue(observation.completeEvidence().contains(EvidenceKind.HIERARCHY));
         assertEquals(1, observation.units().size());
         assertTrue(observation.classifiers().isEmpty());
     }

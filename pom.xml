@@ -13,7 +13,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>17</maven.compiler.release>
     <junit.version>5.11.4</junit.version>
-    <spoon.version>11.2.1</spoon.version>
+    <spoon.version>11.5.0</spoon.version>
     <emf.version>2.39.0</emf.version>
     <alloy.version>6.2.0</alloy.version>
   </properties>
