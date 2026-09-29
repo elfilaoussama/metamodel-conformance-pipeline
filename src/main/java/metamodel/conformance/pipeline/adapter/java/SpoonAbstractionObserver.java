@@ -9,6 +9,7 @@ import metamodel.conformance.pipeline.model.MemberScope;
 import metamodel.conformance.pipeline.model.MethodAbstraction;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
 import spoon.Launcher;
+import spoon.reflect.CtModel;
 import spoon.reflect.declaration.CtAnnotationType;
 import spoon.reflect.declaration.CtInterface;
 import spoon.reflect.declaration.CtMethod;
@@ -46,154 +47,205 @@ final class SpoonAbstractionObserver {
             List<ClassifierObservation> canonicalClassifiers,
             List<MemberObservation> canonicalMembers,
             JavaCompilationContext context) {
+        Map<TypeLocator, ClassifierObservation> classifiersByLocation = new HashMap<>();
+        for (ClassifierObservation classifier : canonicalClassifiers) {
+            TypeLocator locator = new TypeLocator(
+                    classifier.sourcePath(), classifier.startLine(), classifier.qualifiedName());
+            if (classifiersByLocation.put(locator, classifier) != null) {
+                return Result.incomplete(root, files, "duplicate canonical classifier source location");
+            }
+        }
+
+        Map<String, MemberObservation> membersByKey = new HashMap<>();
+        for (MemberObservation member : canonicalMembers) {
+            if (membersByKey.put(member.technicalKey(), member) != null) {
+                return Result.incomplete(root, files, "duplicate canonical member key");
+            }
+        }
+
+        Map<String, ClassifierAbstraction> classifierAbstraction = new HashMap<>();
+        Map<String, MethodAbstraction> methodAbstraction = new HashMap<>();
+        Map<String, MemberScope> methodScope = new HashMap<>();
+
+        ModelSet modelSet = buildModels(files, context);
+        if (modelSet.models().isEmpty()) {
+            return Result.incomplete(root, files,
+                    "Spoon abstraction observation failed: " + modelSet.failure());
+        }
         try {
-            Launcher launcher = new Launcher();
-            launcher.getEnvironment().setNoClasspath(true);
-            launcher.getEnvironment().setComplianceLevel(complianceLevel(context));
-            launcher.getEnvironment().setPreviewFeaturesEnabled(context.compilerSemantics().previewEnabled());
-            launcher.getEnvironment().setCommentEnabled(false);
-            files.forEach(file -> launcher.addInputResource(file.toString()));
-            var model = launcher.buildModel();
-
-            Map<TypeLocator, ClassifierObservation> classifiersByLocation = new HashMap<>();
-            for (ClassifierObservation classifier : canonicalClassifiers) {
-                TypeLocator locator = new TypeLocator(
-                        classifier.sourcePath(), classifier.startLine(), classifier.qualifiedName());
-                if (classifiersByLocation.put(locator, classifier) != null) {
-                    return Result.incomplete(root, files, "duplicate canonical classifier source location");
+            for (CtModel model : modelSet.models()) {
+                Result failure = mapModel(root, files, model, classifiersByLocation, membersByKey,
+                        classifierAbstraction, methodAbstraction, methodScope);
+                if (failure != null) {
+                    return failure;
                 }
             }
-
-            Map<String, MemberObservation> membersByKey = new HashMap<>();
-            for (MemberObservation member : canonicalMembers) {
-                if (membersByKey.put(member.technicalKey(), member) != null) {
-                    return Result.incomplete(root, files, "duplicate canonical member key");
-                }
-            }
-
-            Map<String, ClassifierAbstraction> classifierAbstraction = new HashMap<>();
-            Map<String, MethodAbstraction> methodAbstraction = new HashMap<>();
-            Map<String, MemberScope> methodScope = new HashMap<>();
-            for (CtType<?> type : SpoonSourceTypes.declarations(model).stream()
-                    .sorted(Comparator.comparing((CtType<?> item) -> item.getQualifiedName())
-                            .thenComparingInt(item -> item.getPosition().getLine()))
-                    .toList()) {
-                Path source = type.getPosition().getFile().toPath()
-                        .toRealPath(LinkOption.NOFOLLOW_LINKS);
-                if (!source.startsWith(root)) {
-                    return Result.incomplete(root, files,
-                            "Spoon reported classifier abstraction outside the source root");
-                }
-                String path = root.relativize(source).toString().replace('\\', '/');
-                ClassifierObservation classifier = classifiersByLocation.get(new TypeLocator(
-                        path, type.getPosition().getLine(), type.getQualifiedName()));
-                if (classifier == null) {
-                    return Result.incomplete(root, files,
-                            "source classifier abstraction could not be mapped to the canonical classifier");
-                }
-                boolean abstractClassifier = type.hasModifier(ModifierKind.ABSTRACT)
-                        || type instanceof CtInterface<?>
-                        || type instanceof CtAnnotationType<?>;
-                if (classifierAbstraction.put(
-                        classifier.id(),
-                        abstractClassifier ? ClassifierAbstraction.ABSTRACT : ClassifierAbstraction.CONCRETE) != null) {
-                    return Result.incomplete(root, files, "duplicate classifier abstraction observation");
-                }
-
-                List<MemberObservation> canonicalMethods = new ArrayList<>();
-                for (String memberKey : classifier.declaredMemberKeys()) {
-                    MemberObservation member = membersByKey.get(memberKey);
-                    if (member == null) {
-                        return Result.incomplete(root, files,
-                                "canonical classifier references an unavailable member");
-                    }
-                    if (member.kind() == MemberKind.METHOD) {
-                        canonicalMethods.add(member);
-                    }
-                }
-
-                // Use the same source-declaration domain as SpoonJavaObserver. CtType#getMethods()
-                // is a semantic convenience view and can differ from the locally declared type-member
-                // set; abstraction evidence must correspond exactly to canonical source declarations.
-                List<CtMethod<?>> declaredMethods = new ArrayList<>();
-                for (CtTypeMember typeMember : type.getTypeMembers()) {
-                    if (typeMember instanceof CtMethod<?> method && method.getPosition().isValidPosition()) {
-                        declaredMethods.add(method);
-                    }
-                }
-                declaredMethods.sort(Comparator.comparing((CtMethod<?> item) -> item.getSimpleName())
-                        .thenComparingInt(item -> item.getPosition().getLine()));
-                for (CtMethod<?> method : declaredMethods) {
-                    Path methodSource = method.getPosition().getFile().toPath()
-                            .toRealPath(LinkOption.NOFOLLOW_LINKS);
-                    if (!methodSource.startsWith(root)) {
-                        return Result.incomplete(root, files,
-                                "Spoon reported method abstraction outside the source root");
-                    }
-                    String methodPath = root.relativize(methodSource).toString().replace('\\', '/');
-                    MemberObservation canonicalMethod = locateCanonicalMethod(
-                            methodPath, method, canonicalMethods);
-                    if (canonicalMethod == null) {
-                        return Result.incomplete(root, files,
-                                "source method abstraction could not be mapped uniquely to the canonical declaration");
-                    }
-                    String memberKey = canonicalMethod.technicalKey();
-                    boolean abstractMethod = method.hasModifier(ModifierKind.ABSTRACT)
-                            || (type instanceof CtInterface<?>
-                                    && method.getBody() == null
-                                    && !method.hasModifier(ModifierKind.STATIC)
-                                    && !method.hasModifier(ModifierKind.PRIVATE));
-                    if (methodAbstraction.put(
-                            memberKey,
-                            abstractMethod ? MethodAbstraction.ABSTRACT : MethodAbstraction.CONCRETE) != null) {
-                        return Result.incomplete(root, files, "duplicate method abstraction observation");
-                    }
-                    if (methodScope.put(
-                            memberKey,
-                            method.hasModifier(ModifierKind.STATIC) ? MemberScope.STATIC : MemberScope.INSTANCE) != null) {
-                        return Result.incomplete(root, files, "duplicate method scope observation");
-                    }
-                }
-            }
-
-            long expectedMethods = canonicalMembers.stream()
-                    .filter(item -> item.kind() == MemberKind.METHOD).count();
-            boolean classifierComplete = classifierAbstraction.size() == canonicalClassifiers.size()
-                    && canonicalClassifiers.stream()
-                            .allMatch(item -> classifierAbstraction.containsKey(item.id()));
-            boolean methodAbstractionComplete = methodAbstraction.size() == expectedMethods
-                    && canonicalMembers.stream()
-                            .filter(item -> item.kind() == MemberKind.METHOD)
-                            .allMatch(item -> methodAbstraction.containsKey(item.technicalKey()));
-            boolean methodScopeComplete = methodScope.size() == expectedMethods
-                    && canonicalMembers.stream()
-                            .filter(item -> item.kind() == MemberKind.METHOD)
-                            .allMatch(item -> methodScope.containsKey(item.technicalKey()));
-            if (!classifierComplete || !methodAbstractionComplete || !methodScopeComplete) {
-                List<String> missing = new ArrayList<>();
-                if (!classifierComplete) missing.add("classifier abstraction");
-                if (!methodAbstractionComplete) missing.add("method abstraction");
-                if (!methodScopeComplete) missing.add("method scope");
-                return new Result(
-                        classifierComplete,
-                        methodAbstractionComplete,
-                        methodScopeComplete,
-                        classifierAbstraction,
-                        methodAbstraction,
-                        methodScope,
-                        List.of(new ObservationDiagnostic(
-                                DiagnosticKind.EVIDENCE_INCOMPLETE,
-                                sourcePath(root, files),
-                                0,
-                                "incomplete Spoon abstraction evidence: " + String.join(", ", missing))));
-            }
-            return new Result(
-                    true, true, true,
-                    classifierAbstraction, methodAbstraction, methodScope, List.of());
         } catch (IOException | RuntimeException failure) {
             return Result.incomplete(root, files,
                     "Spoon abstraction observation failed: " + failure.getClass().getSimpleName());
         }
+
+        long expectedMethods = canonicalMembers.stream()
+                .filter(item -> item.kind() == MemberKind.METHOD).count();
+        boolean classifierComplete = classifierAbstraction.size() == canonicalClassifiers.size()
+                && canonicalClassifiers.stream()
+                        .allMatch(item -> classifierAbstraction.containsKey(item.id()));
+        boolean methodAbstractionComplete = methodAbstraction.size() == expectedMethods
+                && canonicalMembers.stream()
+                        .filter(item -> item.kind() == MemberKind.METHOD)
+                        .allMatch(item -> methodAbstraction.containsKey(item.technicalKey()));
+        boolean methodScopeComplete = methodScope.size() == expectedMethods
+                && canonicalMembers.stream()
+                        .filter(item -> item.kind() == MemberKind.METHOD)
+                        .allMatch(item -> methodScope.containsKey(item.technicalKey()));
+        if (!classifierComplete || !methodAbstractionComplete || !methodScopeComplete) {
+            List<String> missing = new ArrayList<>();
+            if (!classifierComplete) missing.add("classifier abstraction");
+            if (!methodAbstractionComplete) missing.add("method abstraction");
+            if (!methodScopeComplete) missing.add("method scope");
+            return new Result(
+                    classifierComplete,
+                    methodAbstractionComplete,
+                    methodScopeComplete,
+                    classifierAbstraction,
+                    methodAbstraction,
+                    methodScope,
+                    List.of(new ObservationDiagnostic(
+                            DiagnosticKind.EVIDENCE_INCOMPLETE,
+                            sourcePath(root, files),
+                            0,
+                            "incomplete Spoon abstraction evidence: " + String.join(", ", missing))));
+        }
+        return new Result(
+                true, true, true,
+                classifierAbstraction, methodAbstraction, methodScope, List.of());
+    }
+
+    private record ModelSet(List<CtModel> models, String failure) {
+    }
+
+    private static ModelSet buildModels(List<Path> files, JavaCompilationContext context) {
+        try {
+            return new ModelSet(List.of(buildModel(files, context)), "");
+        } catch (RuntimeException batchFailure) {
+            // A batch model can fail for reasons unrelated to any single file
+            // (for example Spoon package ambiguity when a generated tree shares
+            // a package with the checkout). Recover per file, exactly as the
+            // type observer does; files that truly fail stay incomplete through
+            // the completeness check.
+            List<CtModel> models = new ArrayList<>();
+            for (Path file : files) {
+                try {
+                    models.add(buildModel(List.of(file), context));
+                } catch (RuntimeException ignored) {
+                    // Represented as incomplete evidence by the completeness check.
+                }
+            }
+            return new ModelSet(models, batchFailure.getClass().getSimpleName());
+        }
+    }
+
+    private static CtModel buildModel(List<Path> files, JavaCompilationContext context) {
+        Launcher launcher = new Launcher();
+        launcher.getEnvironment().setNoClasspath(true);
+        launcher.getEnvironment().setComplianceLevel(complianceLevel(context));
+        launcher.getEnvironment().setPreviewFeaturesEnabled(context.compilerSemantics().previewEnabled());
+        launcher.getEnvironment().setCommentEnabled(false);
+        files.forEach(file -> launcher.addInputResource(file.toString()));
+        return launcher.buildModel();
+    }
+
+    private static Result mapModel(
+            Path root,
+            List<Path> files,
+            CtModel model,
+            Map<TypeLocator, ClassifierObservation> classifiersByLocation,
+            Map<String, MemberObservation> membersByKey,
+            Map<String, ClassifierAbstraction> classifierAbstraction,
+            Map<String, MethodAbstraction> methodAbstraction,
+            Map<String, MemberScope> methodScope) throws IOException {
+        for (CtType<?> type : SpoonSourceTypes.declarations(model).stream()
+                .sorted(Comparator.comparing((CtType<?> item) -> item.getQualifiedName())
+                        .thenComparingInt(item -> item.getPosition().getLine()))
+                .toList()) {
+            Path source = type.getPosition().getFile().toPath()
+                    .toRealPath(LinkOption.NOFOLLOW_LINKS);
+            if (!source.startsWith(root)) {
+                return Result.incomplete(root, files,
+                        "Spoon reported classifier abstraction outside the source root");
+            }
+            String path = root.relativize(source).toString().replace('\\', '/');
+            ClassifierObservation classifier = classifiersByLocation.get(new TypeLocator(
+                    path, type.getPosition().getLine(), type.getQualifiedName()));
+            if (classifier == null) {
+                return Result.incomplete(root, files,
+                        "source classifier abstraction could not be mapped to the canonical classifier");
+            }
+            boolean abstractClassifier = type.hasModifier(ModifierKind.ABSTRACT)
+                    || type instanceof CtInterface<?>
+                    || type instanceof CtAnnotationType<?>;
+            if (classifierAbstraction.put(
+                    classifier.id(),
+                    abstractClassifier ? ClassifierAbstraction.ABSTRACT : ClassifierAbstraction.CONCRETE) != null) {
+                return Result.incomplete(root, files, "duplicate classifier abstraction observation");
+            }
+
+            List<MemberObservation> canonicalMethods = new ArrayList<>();
+            for (String memberKey : classifier.declaredMemberKeys()) {
+                MemberObservation member = membersByKey.get(memberKey);
+                if (member == null) {
+                    return Result.incomplete(root, files,
+                            "canonical classifier references an unavailable member");
+                }
+                if (member.kind() == MemberKind.METHOD) {
+                    canonicalMethods.add(member);
+                }
+            }
+
+            // Use the same source-declaration domain as SpoonJavaObserver. CtType#getMethods()
+            // is a semantic convenience view and can differ from the locally declared type-member
+            // set; abstraction evidence must correspond exactly to canonical source declarations.
+            List<CtMethod<?>> declaredMethods = new ArrayList<>();
+            for (CtTypeMember typeMember : type.getTypeMembers()) {
+                if (typeMember instanceof CtMethod<?> method && method.getPosition().isValidPosition()) {
+                    declaredMethods.add(method);
+                }
+            }
+            declaredMethods.sort(Comparator.comparing((CtMethod<?> item) -> item.getSimpleName())
+                    .thenComparingInt(item -> item.getPosition().getLine()));
+            for (CtMethod<?> method : declaredMethods) {
+                Path methodSource = method.getPosition().getFile().toPath()
+                        .toRealPath(LinkOption.NOFOLLOW_LINKS);
+                if (!methodSource.startsWith(root)) {
+                    return Result.incomplete(root, files,
+                            "Spoon reported method abstraction outside the source root");
+                }
+                String methodPath = root.relativize(methodSource).toString().replace('\\', '/');
+                MemberObservation canonicalMethod = locateCanonicalMethod(
+                        methodPath, method, canonicalMethods);
+                if (canonicalMethod == null) {
+                    return Result.incomplete(root, files,
+                            "source method abstraction could not be mapped uniquely to the canonical declaration");
+                }
+                String memberKey = canonicalMethod.technicalKey();
+                boolean abstractMethod = method.hasModifier(ModifierKind.ABSTRACT)
+                        || (type instanceof CtInterface<?>
+                                && method.getBody() == null
+                                && !method.hasModifier(ModifierKind.STATIC)
+                                && !method.hasModifier(ModifierKind.PRIVATE));
+                if (methodAbstraction.put(
+                        memberKey,
+                        abstractMethod ? MethodAbstraction.ABSTRACT : MethodAbstraction.CONCRETE) != null) {
+                    return Result.incomplete(root, files, "duplicate method abstraction observation");
+                }
+                if (methodScope.put(
+                        memberKey,
+                        method.hasModifier(ModifierKind.STATIC) ? MemberScope.STATIC : MemberScope.INSTANCE) != null) {
+                    return Result.incomplete(root, files, "duplicate method scope observation");
+                }
+            }
+        }
+        return null;
     }
 
     private static int complianceLevel(JavaCompilationContext context) {
