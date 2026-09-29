@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.13.0";
+    public static final String ADAPTER_VERSION = "0.14.0";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -456,7 +456,25 @@ public final class SpoonJavaObserver implements SourceObserver {
             Map<String, List<TypeDraft>> global,
             JavaDependencyInputs inputs) {
         List<TypeDraft> candidates = global.get(qualifiedName);
-        if (candidates == null || candidates.isEmpty() || inputs.contexts().isEmpty()) {
+        if (candidates == null || candidates.isEmpty()) {
+            // Cross-context references can arrive unqualified or in nested form
+            // (for example Outer$Base from a wildcard-imported enclosing type).
+            // Accept only a normalized unique suffix match; an ambiguous match
+            // stays unresolved and is never guessed.
+            String normalized = qualifiedName.replace('$', '.');
+            candidates = global.entrySet().stream()
+                    .filter(entry -> {
+                        String key = entry.getKey().replace('$', '.');
+                        return key.equals(normalized) || key.endsWith("." + normalized);
+                    })
+                    .flatMap(entry -> entry.getValue().stream())
+                    .distinct()
+                    .toList();
+            if (candidates.isEmpty()) {
+                return null;
+            }
+        }
+        if (inputs.contexts().isEmpty()) {
             return candidates;
         }
         Set<String> visible = new LinkedHashSet<>(owner.contextIds());

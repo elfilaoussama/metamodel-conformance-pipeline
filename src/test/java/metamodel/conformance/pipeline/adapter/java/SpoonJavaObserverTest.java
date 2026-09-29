@@ -140,6 +140,85 @@ class SpoonJavaObserverTest {
     }
 
     @Test
+    void resolvesUnqualifiedAndNestedParentReferencesToObservedClassifiers() throws Exception {
+        Files.writeString(temporary.resolve("Outer.java"), """
+                package example;
+                public class Outer {
+                    public interface Base {}
+                }
+                """);
+        Files.writeString(temporary.resolve("Child.java"), """
+                package example;
+                public class Child implements Outer.Base {}
+                """);
+        Files.writeString(temporary.resolve("Imported.java"), """
+                package other;
+                import example.*;
+                public class Imported implements Outer.Base {}
+                """);
+        Files.writeString(temporary.resolve("Anonymous.java"), """
+                package other;
+                import example.*;
+                public class Anonymous {
+                    public Object base() {
+                        return new Outer.Base() {};
+                    }
+                }
+                """);
+
+        Observation observation = observer.observe(temporary, Set.of());
+
+        assertTrue(observation.unresolvedParents().isEmpty(), observation.unresolvedParents().toString());
+        var base = observation.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("example.Outer$Base"))
+                .findFirst().orElseThrow();
+        var child = observation.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("example.Child"))
+                .findFirst().orElseThrow();
+        var imported = observation.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("other.Imported"))
+                .findFirst().orElseThrow();
+        assertTrue(child.parentIds().contains(base.id()), child.parentIds().toString());
+        assertTrue(imported.parentIds().contains(base.id()), imported.parentIds().toString());
+    }
+
+    @Test
+    void resolvesNestedParentDeclaredInUpstreamContext() throws Exception {
+        Path main = Files.createDirectories(temporary.resolve("code/main/example"));
+        Path test = Files.createDirectories(temporary.resolve("code/test/other"));
+        Files.writeString(main.resolve("Outer.java"), """
+                package example;
+                public class Outer {
+                    public interface Base {}
+                }
+                """);
+        Files.writeString(test.resolve("Imported.java"), """
+                package other;
+                import example.*;
+                public class Imported implements Outer.Base {}
+                """);
+        Path manifest = temporary.resolve("upstream-contexts.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\t",
+                "source\tmain\tcode/main",
+                "context\ttest\t.\t\t\t17\tfalse\t",
+                "source\ttest\tcode/test",
+                "upstream\ttest\tmain") + "\n");
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        Observation observation = new JavaDependencyAwareSourceObserver(inputs).observe(temporary, Set.of());
+
+        assertTrue(observation.unresolvedParents().isEmpty(), observation.unresolvedParents().toString());
+        var base = observation.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("example.Outer$Base"))
+                .findFirst().orElseThrow();
+        var imported = observation.classifiers().stream()
+                .filter(item -> item.qualifiedName().equals("other.Imported"))
+                .findFirst().orElseThrow();
+        assertTrue(imported.parentIds().contains(base.id()), imported.parentIds().toString());
+    }
+
+    @Test
     void observesMemberLocalAndAnonymousClassDeclarations() throws Exception {
         Files.writeString(temporary.resolve("Outer.java"), """
                 class Outer<T> {
