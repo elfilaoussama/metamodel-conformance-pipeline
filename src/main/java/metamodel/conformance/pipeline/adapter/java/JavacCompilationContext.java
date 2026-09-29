@@ -234,9 +234,38 @@ final class JavacCompilationContext implements AutoCloseable {
         }
         // Provider-declared compiler arguments (for example --add-exports for a
         // modular test context) are build facts, appended after the reconstructed
-        // options.
-        options.addAll(semantics.compilerArgs());
+        // options. Compiler plugins and annotation-processor arguments are not
+        // replayed: their processor path is not part of the observed dependency
+        // evidence (generated sources are a separate provider fact), and a
+        // missing plugin would otherwise abort the observation.
+        List<String> declared = semantics.compilerArgs();
+        for (int index = 0; index < declared.size(); index++) {
+            String argument = declared.get(index);
+            if (isProcessorArgument(argument)) {
+                if (consumesFollowingToken(argument) && index + 1 < declared.size()) {
+                    index++;
+                }
+                continue;
+            }
+            options.add(argument);
+        }
         return List.copyOf(options);
+    }
+
+    private static boolean isProcessorArgument(String argument) {
+        return argument.startsWith("-Xplugin")
+                || argument.startsWith("-processor")
+                || argument.startsWith("--processor-path")
+                || argument.startsWith("--processor-module-path")
+                || argument.startsWith("-Xep")
+                || argument.startsWith("-A");
+    }
+
+    private static boolean consumesFollowingToken(String argument) {
+        return argument.equals("-processor")
+                || argument.equals("-processorpath")
+                || argument.equals("--processor-path")
+                || argument.equals("--processor-module-path");
     }
 
     private static void appendPath(List<String> options, String option, List<Path> entries) {

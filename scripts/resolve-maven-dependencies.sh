@@ -118,6 +118,7 @@ def has_preview(*configs):
     return 'false'
 def compiler_arguments(*configs):
     values=[]
+    skip_next=False
     for cfg in configs:
         args=child(cfg,'compilerArgs')
         if args is None: continue
@@ -125,11 +126,27 @@ def compiler_arguments(*configs):
             if local(item.tag)!='arg': continue
             value=(item.text or '').strip()
             if not value: continue
+            if skip_next:
+                skip_next=False
+                continue
             # Options already reconstructed from the observed semantics are not
             # repeated here; provider-declared extras (for example --add-exports)
             # are preserved verbatim.
             if value in ('--release','-source','-target','--enable-preview',
-                         '-classpath','-cp','-d','-processorpath'):
+                         '-classpath','-cp','-d'):
+                continue
+            # Compiler plugins and annotation processors are not replayed: their
+            # processor path is not part of the observed dependency evidence, and
+            # a missing plugin would abort javac.
+            if value in ('-processor','-processorpath','--processor-path',
+                         '--processor-module-path'):
+                skip_next=True
+                continue
+            if value.startswith(('-Xplugin','-Xep','-A')):
+                continue
+            # A single Maven <arg> may carry embedded newlines (multi-flag plugin
+            # configuration); such a value cannot be represented as a manifest row.
+            if any(ch in value for ch in ('\t','\n','\r')):
                 continue
             values.append(value)
     return values

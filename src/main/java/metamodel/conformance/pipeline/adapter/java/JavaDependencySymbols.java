@@ -175,7 +175,7 @@ final class JavaDependencySymbols {
                         .map(item -> item.getMessage(Locale.ROOT))
                         .filter(item -> item != null && !item.isBlank())
                         .findFirst().orElse("javac rejected dependency bytecode context");
-                if (unsupportedRelease(message)) {
+                if (unsupportedCompilerConfiguration(message)) {
                     // The running compiler cannot support the context's release
                     // level: every requested root stays unresolved and the caller
                     // records fail-closed diagnostics instead of aborting the
@@ -202,7 +202,7 @@ final class JavaDependencySymbols {
         } catch (ObservationException exception) {
             throw exception;
         } catch (Exception exception) {
-            if (unsupportedRelease(exception.getMessage())) {
+            if (unsupportedCompilerConfiguration(exception.getMessage())) {
                 return new Result(List.of(), Set.copyOf(requested));
             }
             throw new ObservationException(
@@ -210,13 +210,16 @@ final class JavaDependencySymbols {
         }
     }
 
-    private static boolean unsupportedRelease(String message) {
+    private static boolean unsupportedCompilerConfiguration(String message) {
         if (message == null) {
             return false;
         }
         return (message.contains("release version") && message.contains("not supported"))
                 || message.contains("invalid source release")
-                || message.contains("invalid target release");
+                || message.contains("invalid target release")
+                || message.contains("plug-in not found")
+                || message.contains("plugin not found")
+                || message.contains("not found on the processor path");
     }
 
     private static MemberSymbol memberSymbol(TypeElement owner, Element element, Types types) {

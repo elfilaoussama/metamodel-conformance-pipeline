@@ -104,6 +104,37 @@ class JavacCompilationContextClasspathOrderTest {
         }
     }
 
+    @Test
+    void declaredProcessorArgumentsAreNotReplayed() throws Exception {
+        Path source = Files.createDirectories(temporary.resolve("code/main/app"));
+        Path file = Files.writeString(source.resolve("A.java"), "package app; public class A {}\n");
+        Path manifest = temporary.resolve("processor-args.tsv");
+        Files.writeString(manifest, String.join("\n",
+                "context\tmain\t.\t\t\t17\tfalse\tjdk-17",
+                "source\tmain\tcode/main",
+                "compiler-arg\tmain\t--add-exports",
+                "compiler-arg\tmain\ta/b=c",
+                "compiler-arg\tmain\t-parameters",
+                "compiler-arg\tmain\t-Xplugin:ErrorProne",
+                "compiler-arg\tmain\t-processor",
+                "compiler-arg\tmain\tcom.example.Processor") + "\n");
+        JavaDependencyInputs inputs = JavaDependencyInputs.fromManifest(manifest);
+
+        try (JavacCompilationContext context = JavacCompilationContext.prepare(
+                temporary, inputs.context("main"), Map.of("main", List.of(file)), inputs)) {
+            List<String> options = context.options();
+            // Replayable declared arguments survive.
+            assertTrue(options.contains("--add-exports"), options.toString());
+            assertTrue(options.contains("a/b=c"), options.toString());
+            assertTrue(options.contains("-parameters"), options.toString());
+            // Compiler plugins and processor arguments (including their following
+            // token) are not replayed because their processor path is not observed.
+            assertFalse(options.contains("-Xplugin:ErrorProne"), options.toString());
+            assertFalse(options.contains("-processor"), options.toString());
+            assertFalse(options.contains("com.example.Processor"), options.toString());
+        }
+    }
+
     private Path shadowBaseJar() throws Exception {
         Path source = Files.createDirectories(temporary.resolve("shadow-source/app"));
         Path classes = Files.createDirectories(temporary.resolve("shadow-classes"));
