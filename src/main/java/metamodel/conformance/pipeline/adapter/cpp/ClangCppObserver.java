@@ -10,7 +10,13 @@ import metamodel.conformance.pipeline.model.ClassifierKind;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.DiagnosticKind;
 import metamodel.conformance.pipeline.model.EvidenceKind;
+import metamodel.conformance.pipeline.model.Inheritability;
 import metamodel.conformance.pipeline.model.Language;
+import metamodel.conformance.pipeline.model.MemberKind;
+import metamodel.conformance.pipeline.model.MemberObservation;
+import metamodel.conformance.pipeline.model.MemberScope;
+import metamodel.conformance.pipeline.model.MemberVisibility;
+import metamodel.conformance.pipeline.model.MethodAbstraction;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
 import metamodel.conformance.pipeline.model.SourceUnit;
@@ -61,7 +67,7 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.2.0";
+    public static final String ADAPTER_VERSION = "0.3.0";
     private static final String PROFILE_ID = "cxx17-host-fingerprinted";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
@@ -148,6 +154,74 @@ public final class ClangCppObserver implements SourceObserver {
             }
 
             Set<String> allowed = externalParents == null ? Set.of() : Set.copyOf(externalParents);
+
+            List<MemberObservation> members = new ArrayList<>();
+            Map<String, List<String>> memberKeysByOwner = new HashMap<>();
+            Set<String> memberTechnicalKeys = new HashSet<>();
+            boolean declarationIncomplete = false;
+            boolean signaturesIncomplete = false;
+            boolean inheritabilityIncomplete = false;
+            boolean abstractionIncomplete = false;
+            boolean scopeIncomplete = false;
+            int methodCount = 0;
+            int unsupportedMethodCount = 0;
+            for (Draft draft : drafts) {
+                List<String> keys = new ArrayList<>();
+                for (MemberDraft source : draft.members()) {
+                    if (source.name().isBlank() || source.line() < 1 || source.endLine() < source.line()) {
+                        declarationIncomplete = true;
+                        diagnostics.add(new ObservationDiagnostic(
+                                DiagnosticKind.EVIDENCE_INCOMPLETE,
+                                draft.path(), Math.max(0, source.line()),
+                                "invalid C++ source-member declaration identity"));
+                        continue;
+                    }
+                    String technicalKey = "mem_" + Hashing.sha256(
+                            "cpp\\0member\\0" + draft.path() + "\\0" + source.definitionKey());
+                    if (!memberTechnicalKeys.add(technicalKey)) {
+                        declarationIncomplete = true;
+                        diagnostics.add(new ObservationDiagnostic(
+                                DiagnosticKind.EVIDENCE_INCOMPLETE,
+                                draft.path(), source.line(),
+                                "duplicate C++ source-member definition identity"));
+                        continue;
+                    }
+                    boolean method = "METHOD".equals(source.kind());
+                    if (method) {
+                        methodCount++;
+                        if (!source.signatureSupported()) {
+                            signaturesIncomplete = true;
+                            unsupportedMethodCount++;
+                        }
+                        if ("UNKNOWN".equals(source.abstraction())) {
+                            abstractionIncomplete = true;
+                        }
+                        if ("UNKNOWN".equals(source.scope())) {
+                            scopeIncomplete = true;
+                        }
+                    }
+                    if ("UNKNOWN".equals(source.inheritability())) {
+                        inheritabilityIncomplete = true;
+                    }
+                    members.add(new MemberObservation(
+                            technicalKey,
+                            null,
+                            MemberKind.valueOf(source.kind()),
+                            Inheritability.valueOf(source.inheritability()),
+                            MemberVisibility.valueOf(source.visibility()),
+                            source.name(),
+                            draft.path(),
+                            source.line(),
+                            source.endLine(),
+                            source.parameterTypes(),
+                            method ? MethodAbstraction.valueOf(source.abstraction())
+                                    : MethodAbstraction.UNKNOWN,
+                            method ? MemberScope.valueOf(source.scope()) : MemberScope.UNKNOWN));
+                    keys.add(technicalKey);
+                }
+                memberKeysByOwner.put(draft.id(), List.copyOf(keys));
+            }
+
             List<ClassifierObservation> classifiers = new ArrayList<>();
             List<UnresolvedParent> unresolved = new ArrayList<>();
             for (Draft draft : drafts) {
@@ -181,7 +255,7 @@ public final class ClangCppObserver implements SourceObserver {
                         draft.line(),
                         draft.endLine(),
                         List.copyOf(parentIds),
-                        List.of()));
+                        memberKeysByOwner.getOrDefault(draft.id(), List.of())));
             }
 
             if (!unresolved.isEmpty()) {
@@ -193,15 +267,54 @@ public final class ClangCppObserver implements SourceObserver {
                     DiagnosticKind.EVIDENCE_INCOMPLETE,
                     evidencePath,
                     0,
-                    "C++ adapter observes class/struct direct hierarchy under the declared " + PROFILE_ID
-                            + " profile with compiler/include fingerprints; declaration ownership, signatures, "
-                            + "visibility, inheritability, overrides, and inherited-member evidence remain incomplete."));
+                    "C++ adapter observes class/struct direct hierarchy and source-declared member ownership, "
+                            + "signatures, visibility, inheritability, abstraction and scope under the declared "
+                            + PROFILE_ID + " profile with compiler/include fingerprints; overrides and "
+                            + "inherited-member evidence remain incomplete."));
+            if (signaturesIncomplete) {
+                diagnostics.add(new ObservationDiagnostic(
+                        DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0,
+                        "C++ local signatures remain incomplete: " + unsupportedMethodCount + " of "
+                                + methodCount + " methods are outside the signature subset (templates, "
+                                + "variadic parameters or unresolvable parameter types)"));
+            }
+            if (declarationIncomplete) {
+                diagnostics.add(new ObservationDiagnostic(
+                        DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0,
+                        "C++ declaration ownership remains incomplete: at least one member declaration "
+                                + "identity is invalid or duplicated"));
+            }
+            if (inheritabilityIncomplete || abstractionIncomplete || scopeIncomplete) {
+                diagnostics.add(new ObservationDiagnostic(
+                        DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0,
+                        "C++ member inheritability, abstraction or scope evidence remains incomplete"));
+            }
 
             verifyPhysicalEvidenceUnchanged(physicalHashes);
 
             EnumSet<EvidenceKind> completeEvidence = EnumSet.noneOf(EvidenceKind.class);
             if (!hierarchyIncomplete && unresolved.isEmpty()) {
                 completeEvidence.add(EvidenceKind.HIERARCHY);
+            }
+            if (!hierarchyIncomplete) {
+                if (!declarationIncomplete) {
+                    completeEvidence.add(EvidenceKind.DECLARATION_OWNERSHIP);
+                }
+                if (!signaturesIncomplete) {
+                    completeEvidence.add(EvidenceKind.LOCAL_SIGNATURES);
+                }
+                if (!inheritabilityIncomplete) {
+                    completeEvidence.add(EvidenceKind.INHERITABILITY);
+                }
+                if (!abstractionIncomplete) {
+                    completeEvidence.add(EvidenceKind.METHOD_ABSTRACTION);
+                }
+                if (!scopeIncomplete) {
+                    completeEvidence.add(EvidenceKind.METHOD_SCOPE);
+                }
             }
 
             String adapterVersion = ADAPTER_VERSION
@@ -216,7 +329,7 @@ public final class ClangCppObserver implements SourceObserver {
                     completeEvidence,
                     new ArrayList<>(unitsByPath.values()),
                     classifiers,
-                    List.of(),
+                    members,
                     unresolved,
                     diagnostics);
         } catch (ObservationException exception) {
@@ -774,6 +887,8 @@ public final class ClangCppObserver implements SourceObserver {
         private final Map<Path, byte[]> bytes = new HashMap<>();
         private String lastLocationFile;
         private boolean incomplete;
+        private MemberSink activeSink;
+        private MemberBuilder pendingMember;
 
         private AstCollector(Path root, List<ObservationDiagnostic> diagnostics) {
             this.root = root;
@@ -792,11 +907,16 @@ public final class ClangCppObserver implements SourceObserver {
             String kind = "";
             String name = "";
             String tag = "";
+            String storageClass = "";
+            String access = "";
+            boolean pure = false;
+            boolean variadic = false;
             boolean completeDefinition = false;
             boolean implicit = false;
             JsonNode location = null;
             JsonNode range = null;
             JsonNode bases = null;
+            JsonNode type = null;
             boolean processed = false;
             String file = inheritedFile;
             List<String> childScope = scope;
@@ -812,6 +932,10 @@ public final class ClangCppObserver implements SourceObserver {
                     case "kind" -> kind = parser.getValueAsString("");
                     case "name" -> name = parser.getValueAsString("");
                     case "tagUsed" -> tag = parser.getValueAsString("");
+                    case "storageClass" -> storageClass = parser.getValueAsString("");
+                    case "access" -> access = parser.getValueAsString("");
+                    case "pure" -> pure = parser.getValueAsBoolean(false);
+                    case "variadic" -> variadic = parser.getValueAsBoolean(false);
                     case "completeDefinition" -> completeDefinition = parser.getValueAsBoolean(false);
                     case "isImplicit" -> implicit = parser.getValueAsBoolean(false);
                     case "loc" -> {
@@ -819,6 +943,13 @@ public final class ClangCppObserver implements SourceObserver {
                         file = sourceFile(location, inheritedFile);
                     }
                     case "range" -> range = JSON.readTree(parser);
+                    case "type" -> {
+                        if ("ParmVarDecl".equals(kind) || isMethodKind(kind)) {
+                            type = JSON.readTree(parser);
+                        } else {
+                            parser.skipChildren();
+                        }
+                    }
                     case "bases" -> {
                         if (file == null && inheritedFile == null) {
                             parser.skipChildren();
@@ -828,14 +959,23 @@ public final class ClangCppObserver implements SourceObserver {
                     }
                     case "inner" -> {
                         NodeResult node = processNode(
-                                kind, name, tag, completeDefinition, implicit,
-                                location, range, bases, scope, file, templateContext);
+                                kind, name, tag, storageClass, access, pure, variadic,
+                                completeDefinition, implicit,
+                                location, range, bases, type, scope, file, templateContext);
                         processed = true;
                         childScope = node.childScope();
                         childTemplateContext = node.templateContext();
 
                         if (valueToken == JsonToken.START_ARRAY
                                 && shouldTraverseChildren(kind, file)) {
+                            MemberSink previousSink = activeSink;
+                            MemberBuilder previousPending = pendingMember;
+                            if (node.recordDraft() != null) {
+                                activeSink = new MemberSink(node.recordDraft(), childScope, node.defaultAccess());
+                                pendingMember = null;
+                            } else if (node.pendingMember() != null) {
+                                pendingMember = node.pendingMember();
+                            }
                             while (parser.nextToken() != JsonToken.END_ARRAY) {
                                 if (parser.currentToken() == JsonToken.START_OBJECT) {
                                     walk(parser, childScope, file, childTemplateContext);
@@ -843,8 +983,13 @@ public final class ClangCppObserver implements SourceObserver {
                                     parser.skipChildren();
                                 }
                             }
+                            activeSink = previousSink;
+                            pendingMember = previousPending;
                         } else {
                             parser.skipChildren();
+                        }
+                        if (node.pendingMember() != null) {
+                            node.pendingMember().finish();
                         }
                     }
                     default -> parser.skipChildren();
@@ -852,9 +997,13 @@ public final class ClangCppObserver implements SourceObserver {
             }
 
             if (!processed) {
-                processNode(
-                        kind, name, tag, completeDefinition, implicit,
-                        location, range, bases, scope, file, templateContext);
+                NodeResult node = processNode(
+                        kind, name, tag, storageClass, access, pure, variadic,
+                        completeDefinition, implicit,
+                        location, range, bases, type, scope, file, templateContext);
+                if (node.pendingMember() != null) {
+                    node.pendingMember().finish();
+                }
             }
         }
 
@@ -862,11 +1011,16 @@ public final class ClangCppObserver implements SourceObserver {
                 String kind,
                 String name,
                 String tag,
+                String storageClass,
+                String access,
+                boolean pure,
+                boolean variadic,
                 boolean completeDefinition,
                 boolean implicit,
                 JsonNode location,
                 JsonNode range,
                 JsonNode basesNode,
+                JsonNode typeNode,
                 List<String> scope,
                 String file,
                 boolean templateContext) throws IOException {
@@ -874,6 +1028,23 @@ public final class ClangCppObserver implements SourceObserver {
             boolean childTemplateContext = templateContext
                     || "ClassTemplateDecl".equals(kind)
                     || "FunctionTemplateDecl".equals(kind);
+            Draft recordDraft = null;
+            String defaultAccess = null;
+            MemberBuilder memberBuilder = null;
+
+            if (file != null && "ParmVarDecl".equals(kind)
+                    && pendingMember != null && pendingMember.parameterScope().equals(scope)) {
+                pendingMember.addParameter(parameterToken(typeNode));
+            }
+            if (file != null && pendingMember != null
+                    && pendingMember.parameterScope().equals(scope)
+                    && "CompoundStmt".equals(kind)) {
+                pendingMember.closeParameters();
+            }
+            if (file != null && "AccessSpecDecl".equals(kind)
+                    && activeSink != null && activeSink.scope().equals(scope) && !access.isBlank()) {
+                activeSink.access(access);
+            }
 
             if (file != null && "NamespaceDecl".equals(kind) && !name.isBlank()) {
                 childScope = append(scope, name);
@@ -893,6 +1064,7 @@ public final class ClangCppObserver implements SourceObserver {
                             file,
                             Math.max(0, line),
                             "unnamed C++ class/struct definition is outside the current canonical identity boundary"));
+                    childScope = append(scope, "<unnamed@" + Math.max(1, line) + ">");
                 } else if (line < 1) {
                     incomplete = true;
                     diagnostics.add(new ObservationDiagnostic(
@@ -900,6 +1072,7 @@ public final class ClangCppObserver implements SourceObserver {
                             file,
                             0,
                             "Clang declaration lacks a stable source line: " + name));
+                    childScope = append(scope, "<" + name + "@1>");
                 } else {
                     String qualified = qualify(scope, name);
                     int endLine = sourceLine(range == null ? null : range.path("end"), file);
@@ -908,7 +1081,7 @@ public final class ClangCppObserver implements SourceObserver {
                     }
                     List<BaseDraft> bases = bases(basesNode, file, line, templateContext);
                     String definitionKey = file + "\\0" + line + "\\0" + qualified;
-                    drafts.add(new Draft(
+                    recordDraft = new Draft(
                             definitionKey,
                             stableId(file, line, qualified),
                             qualified,
@@ -916,11 +1089,69 @@ public final class ClangCppObserver implements SourceObserver {
                             file,
                             line,
                             endLine,
-                            bases));
+                            bases,
+                            new ArrayList<>());
+                    drafts.add(recordDraft);
                     childScope = append(scope, name);
+                    defaultAccess = "struct".equals(tag) ? "public" : "private";
+                }
+            } else if (file != null && "CXXRecordDecl".equals(kind)) {
+                // A record outside the current identity boundary (union, incomplete,
+                // implicit, template or lambda record) must not leak its member
+                // declarations into the enclosing record.
+                int line = sourceLine(location, file);
+                childScope = append(scope, "<undrafted@" + Math.max(1, line) + ">");
+            }
+
+            if (file != null && activeSink != null && activeSink.scope().equals(scope)
+                    && isMemberKind(kind) && !implicit
+                    && (!"VarDecl".equals(kind) || "static".equals(storageClass))) {
+                int line = sourceLine(location, file);
+                if (line < 1) {
+                    incomplete = true;
+                    diagnostics.add(new ObservationDiagnostic(
+                            DiagnosticKind.EVIDENCE_INCOMPLETE,
+                            file,
+                            0,
+                            "Clang member declaration lacks a stable source line: " + name));
+                } else {
+                    int endLine = sourceLine(range == null ? null : range.path("end"), file);
+                    if (endLine < line) {
+                        endLine = line;
+                    }
+                    boolean method = isMethodKind(kind);
+                    String visibility = "public".equals(activeSink.access()) ? "PUBLIC"
+                            : "protected".equals(activeSink.access()) ? "PROTECTED" : "PRIVATE";
+                    String inheritability = "PRIVATE".equals(visibility)
+                            ? "NOT_INHERITABLE" : "INHERITABLE";
+                    String memberScope = method
+                            ? ("static".equals(storageClass) ? "STATIC" : "INSTANCE")
+                            : "UNKNOWN";
+                    String abstraction = method ? (pure ? "ABSTRACT" : "CONCRETE") : "UNKNOWN";
+                    String definitionKey = file + "\\0" + line + "\\0" + qualify(scope, name)
+                            + "\\0" + kind + "\\0" + name;
+                    memberBuilder = new MemberBuilder(
+                            activeSink.draft(), definitionKey, method ? "METHOD" : "ATTRIBUTE",
+                            name, line, endLine, visibility, memberScope, abstraction, inheritability,
+                            childScope);
+                    if (!method) {
+                        memberBuilder.closeParameters();
+                    } else {
+                        if (variadic || "FunctionTemplateDecl".equals(kind)) {
+                            memberBuilder.markUnsupportedSignature();
+                        }
+                        List<String> qualifiers = methodQualifierTokens(typeNode);
+                        if (qualifiers == null) {
+                            memberBuilder.markUnsupportedSignature();
+                        } else {
+                            for (String qualifier : qualifiers) {
+                                memberBuilder.addQualifier(qualifier);
+                            }
+                        }
+                    }
                 }
             }
-            return new NodeResult(childScope, childTemplateContext);
+            return new NodeResult(childScope, childTemplateContext, recordDraft, defaultAccess, memberBuilder);
         }
 
         private List<BaseDraft> bases(
@@ -1074,7 +1305,99 @@ public final class ClangCppObserver implements SourceObserver {
                     || "FunctionTemplateDecl".equals(kind)
                     || "CXXMethodDecl".equals(kind)
                     || "CXXConstructorDecl".equals(kind)
+                    || "CXXDestructorDecl".equals(kind)
                     || "CXXConversionDecl".equals(kind);
+        }
+
+        private static boolean isMemberKind(String kind) {
+            return "FieldDecl".equals(kind)
+                    || "VarDecl".equals(kind)
+                    || isMethodKind(kind);
+        }
+
+        private static boolean isMethodKind(String kind) {
+            return "CXXMethodDecl".equals(kind)
+                    || "CXXConstructorDecl".equals(kind)
+                    || "CXXDestructorDecl".equals(kind)
+                    || "CXXConversionDecl".equals(kind)
+                    || "FunctionTemplateDecl".equals(kind);
+        }
+
+        private static String parameterToken(JsonNode typeNode) {
+            if (typeNode == null || !typeNode.isObject()) {
+                return "";
+            }
+            String token = typeNode.path("desugaredQualType").asText("");
+            if (token.isBlank()) {
+                token = typeNode.path("qualType").asText("");
+            }
+            return token.strip();
+        }
+
+        /**
+         * Trailing member-function qualifiers (cv-qualifiers, ref-qualifiers and
+         * noexcept groups) from the method's printed type, for example
+         * {@code "int () const"} or {@code "void () & noexcept(false)"}. They are
+         * canonical signature tokens: {@code f(int)} and {@code f(int) const}
+         * are distinct C++ declarations and must not collapse onto one key.
+         * Returns null when the printed type cannot be split unambiguously, in
+         * which case the method stays outside the signature subset.
+         */
+        private static List<String> methodQualifierTokens(JsonNode typeNode) {
+            if (typeNode == null || !typeNode.isObject()) {
+                return null;
+            }
+            String text = typeNode.path("qualType").asText("");
+            if (text.isBlank()) {
+                text = typeNode.path("desugaredQualType").asText("");
+            }
+            if (text.isBlank()) {
+                return null;
+            }
+            List<String> tokens = new ArrayList<>();
+            String remaining = text.stripTrailing();
+            while (true) {
+                remaining = remaining.stripTrailing();
+                if (remaining.endsWith(")")) {
+                    int close = remaining.length() - 1;
+                    int depth = 0;
+                    int open = -1;
+                    for (int index = close; index >= 0; index--) {
+                        char character = remaining.charAt(index);
+                        if (character == ')') {
+                            depth++;
+                        } else if (character == '(') {
+                            depth--;
+                            if (depth == 0) {
+                                open = index;
+                                break;
+                            }
+                        }
+                    }
+                    if (open < 0) {
+                        return null;
+                    }
+                    String group = remaining.substring(open, close + 1);
+                    if (group.startsWith("noexcept")) {
+                        tokens.add(0, group);
+                        remaining = remaining.substring(0, open);
+                        continue;
+                    }
+                    return remaining.substring(close + 1).isBlank() ? tokens : null;
+                }
+                int space = remaining.lastIndexOf(' ');
+                if (space < 0) {
+                    return null;
+                }
+                String token = remaining.substring(space + 1);
+                if (!token.equals("const") && !token.equals("volatile")
+                        && !token.equals("&") && !token.equals("&&")
+                        && !token.equals("noexcept")) {
+                    return null;
+                }
+                tokens.add(0, token);
+                remaining = remaining.substring(0, space);
+            }
         }
 
         private static List<String> append(List<String> scope, String value) {
@@ -1108,10 +1431,138 @@ public final class ClangCppObserver implements SourceObserver {
     private record Directive(String kind, String arguments, int start, int end, int line) {
     }
 
-    private record NodeResult(List<String> childScope, boolean templateContext) {
+    private record NodeResult(
+            List<String> childScope,
+            boolean templateContext,
+            Draft recordDraft,
+            String defaultAccess,
+            MemberBuilder pendingMember) {
     }
 
     private record BaseDraft(String targetName, int line, boolean templateContext) {
+    }
+
+    private record MemberDraft(
+            String definitionKey,
+            String kind,
+            String name,
+            int line,
+            int endLine,
+            String visibility,
+            String scope,
+            String abstraction,
+            String inheritability,
+            List<String> parameterTypes,
+            boolean signatureSupported) {
+    }
+
+    private static final class MemberSink {
+        private final Draft draft;
+        private final List<String> scope;
+        private String access;
+
+        private MemberSink(Draft draft, List<String> scope, String defaultAccess) {
+            this.draft = draft;
+            this.scope = scope;
+            this.access = defaultAccess == null || defaultAccess.isBlank() ? "private" : defaultAccess;
+        }
+
+        Draft draft() {
+            return draft;
+        }
+
+        List<String> scope() {
+            return scope;
+        }
+
+        String access() {
+            return access;
+        }
+
+        void access(String value) {
+            this.access = value;
+        }
+    }
+
+    private static final class MemberBuilder {
+        private final Draft owner;
+        private final String definitionKey;
+        private final String kind;
+        private final String name;
+        private final int line;
+        private final int endLine;
+        private final String visibility;
+        private final String scope;
+        private final String abstraction;
+        private final String inheritability;
+        private final List<String> parameterScope;
+        private final List<String> parameterTypes = new ArrayList<>();
+        private final List<String> qualifiers = new ArrayList<>();
+        private boolean signatureSupported = true;
+        private boolean parametersClosed;
+        private boolean finalized;
+
+        private MemberBuilder(
+                Draft owner, String definitionKey, String kind, String name,
+                int line, int endLine, String visibility, String scope,
+                String abstraction, String inheritability, List<String> parameterScope) {
+            this.owner = owner;
+            this.definitionKey = definitionKey;
+            this.kind = kind;
+            this.name = name;
+            this.line = line;
+            this.endLine = endLine;
+            this.visibility = visibility;
+            this.scope = scope;
+            this.abstraction = abstraction;
+            this.inheritability = inheritability;
+            this.parameterScope = List.copyOf(parameterScope);
+        }
+
+        List<String> parameterScope() {
+            return parameterScope;
+        }
+
+        void addParameter(String token) {
+            if (parametersClosed || !signatureSupported) {
+                return;
+            }
+            if (token == null || token.isBlank()
+                    || token.contains("<") || token.contains("decltype") || token.contains("auto")) {
+                markUnsupportedSignature();
+                return;
+            }
+            parameterTypes.add(token);
+        }
+
+        void addQualifier(String token) {
+            if (!parametersClosed && signatureSupported) {
+                qualifiers.add(token);
+            }
+        }
+
+        void closeParameters() {
+            parametersClosed = true;
+        }
+
+        void markUnsupportedSignature() {
+            signatureSupported = false;
+            parameterTypes.clear();
+            qualifiers.clear();
+        }
+
+        void finish() {
+            if (finalized) {
+                return;
+            }
+            finalized = true;
+            if (signatureSupported) {
+                parameterTypes.addAll(qualifiers);
+            }
+            owner.members().add(new MemberDraft(
+                    definitionKey, kind, name, line, endLine, visibility, scope,
+                    abstraction, inheritability, List.copyOf(parameterTypes), signatureSupported));
+        }
     }
 
     private record Draft(
@@ -1122,14 +1573,16 @@ public final class ClangCppObserver implements SourceObserver {
             String path,
             int line,
             int endLine,
-            List<BaseDraft> bases) {
+            List<BaseDraft> bases,
+            List<MemberDraft> members) {
         boolean sameSemanticShape(Draft other) {
             return qualifiedName.equals(other.qualifiedName)
                     && namespaceName.equals(other.namespaceName)
                     && path.equals(other.path)
                     && line == other.line
                     && endLine == other.endLine
-                    && bases.equals(other.bases);
+                    && bases.equals(other.bases)
+                    && members.equals(other.members);
         }
     }
 
