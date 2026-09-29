@@ -162,6 +162,36 @@ class JavaDependencySymbolsTest {
     }
 
     @Test
+    void resolvesModulePathDependencyRoots() throws Exception {
+        Path source = Files.createDirectories(temporary.resolve("source/dep"));
+        Path classes = Files.createDirectories(temporary.resolve("classes"));
+        Files.writeString(source.resolve("Base.java"),
+                "package dep; public class Base { public int value; }\n");
+        int compiled = ToolProvider.getSystemJavaCompiler().run(
+                null, null, null, "-d", classes.toString(),
+                source.resolve("Base.java").toString());
+        assertEquals(0, compiled);
+        Path archive = temporary.resolve("module-dependency.jar");
+        try (JarOutputStream output = new JarOutputStream(Files.newOutputStream(archive))) {
+            JarEntry entry = new JarEntry("dep/Base.class");
+            entry.setTime(0L);
+            output.putNextEntry(entry);
+            output.write(Files.readAllBytes(classes.resolve("dep/Base.class")));
+            output.closeEntry();
+        }
+        JavaDependencyClasspath.Result classpath = JavaDependencyClasspath.resolve(List.of(archive));
+
+        // A dependency type reachable only through the module path must still be
+        // materialized: the metadata task resolves every module on the path.
+        JavaDependencySymbols.Result result = JavaDependencySymbols.resolve(
+                classpath, Set.of("dep.Base"), null, List.of("--module-path", archive.toString()));
+
+        assertTrue(result.unresolvedRootTypes().isEmpty(), result.unresolvedRootTypes().toString());
+        var base = result.requireType("dep.Base");
+        assertTrue(base.members().stream().anyMatch(member -> member.name().equals("value")));
+    }
+
+    @Test
     void unsupportedCompilerReleaseFailsClosedAsUnresolvedRoots() throws Exception {
         Path archive = temporary.resolve("empty.jar");
         try (JarOutputStream ignored = new JarOutputStream(Files.newOutputStream(archive))) {
@@ -175,5 +205,13 @@ class JavaDependencySymbolsTest {
 
         assertEquals(Set.of("missing.Type"), result.unresolvedRootTypes());
         assertTrue(result.types().isEmpty());
+
+        // -source forms report "invalid source release" instead of
+        // "release version ... not supported" and must fail closed as well.
+        JavaDependencySymbols.Result sourceResult = JavaDependencySymbols.resolve(
+                classpath, Set.of("missing.Type"), null, List.of("-source", "99"));
+
+        assertEquals(Set.of("missing.Type"), sourceResult.unresolvedRootTypes());
+        assertTrue(sourceResult.types().isEmpty());
     }
 }

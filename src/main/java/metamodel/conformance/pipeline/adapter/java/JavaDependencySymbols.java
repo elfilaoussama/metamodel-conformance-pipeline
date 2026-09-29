@@ -90,6 +90,12 @@ final class JavaDependencySymbols {
                         .collect(java.util.stream.Collectors.joining(File.pathSeparator));
                 options.addAll(List.of("-proc:none", "-implicit:none", "-Xlint:none", "-classpath", classpathValue));
             }
+            if (options.contains("--module-path") && !options.contains("--add-modules")) {
+                // Module-path dependency types are readable only when their modules
+                // are resolved. This task reads metadata without compiling sources,
+                // so every module on the path is made readable.
+                options.addAll(List.of("--add-modules", "ALL-MODULE-PATH"));
+            }
             JavacTask task = (JavacTask) compiler.getTask(
                     null,
                     fileManager,
@@ -205,8 +211,12 @@ final class JavaDependencySymbols {
     }
 
     private static boolean unsupportedRelease(String message) {
-        return message != null && message.contains("release version")
-                && message.contains("not supported");
+        if (message == null) {
+            return false;
+        }
+        return (message.contains("release version") && message.contains("not supported"))
+                || message.contains("invalid source release")
+                || message.contains("invalid target release");
     }
 
     private static MemberSymbol memberSymbol(TypeElement owner, Element element, Types types) {
