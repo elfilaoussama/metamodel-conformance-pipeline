@@ -164,6 +164,14 @@ final class JavaDependencySymbols {
                         .map(item -> item.getMessage(Locale.ROOT))
                         .filter(item -> item != null && !item.isBlank())
                         .findFirst().orElse("javac rejected dependency bytecode context");
+                if (unsupportedRelease(message)) {
+                    // The running compiler cannot support the context's release
+                    // level: every requested root stays unresolved and the caller
+                    // records fail-closed diagnostics instead of aborting the
+                    // observation. This mirrors the parser-level boundary, which
+                    // reports an unsupported source level as incomplete evidence.
+                    return new Result(List.of(), Set.copyOf(requested));
+                }
                 throw new ObservationException("dependency bytecode observation failed: " + message);
             }
 
@@ -183,9 +191,17 @@ final class JavaDependencySymbols {
         } catch (ObservationException exception) {
             throw exception;
         } catch (Exception exception) {
+            if (unsupportedRelease(exception.getMessage())) {
+                return new Result(List.of(), Set.copyOf(requested));
+            }
             throw new ObservationException(
                     "dependency bytecode observation failed: " + exception.getMessage(), exception);
         }
+    }
+
+    private static boolean unsupportedRelease(String message) {
+        return message != null && message.contains("release version")
+                && message.contains("not supported");
     }
 
     private static MemberSymbol memberSymbol(TypeElement owner, Element element, Types types) {

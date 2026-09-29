@@ -117,4 +117,20 @@ class JavaDependencySymbolsTest {
         assertEquals(Set.of("missing.Type", "java.lang.String"), result.unresolvedRootTypes());
         assertTrue(result.types().isEmpty());
     }
+
+    @Test
+    void unsupportedCompilerReleaseFailsClosedAsUnresolvedRoots() throws Exception {
+        Path archive = temporary.resolve("empty.jar");
+        try (JarOutputStream ignored = new JarOutputStream(Files.newOutputStream(archive))) {
+        }
+        JavaDependencyClasspath.Result classpath = JavaDependencyClasspath.resolve(List.of(archive));
+
+        // A release level the running compiler cannot support must stay a
+        // fail-closed observation (roots unresolved), never a pipeline abort.
+        JavaDependencySymbols.Result result = JavaDependencySymbols.resolve(
+                classpath, Set.of("missing.Type"), null, List.of("--release", "99"));
+
+        assertEquals(Set.of("missing.Type"), result.unresolvedRootTypes());
+        assertTrue(result.types().isEmpty());
+    }
 }
