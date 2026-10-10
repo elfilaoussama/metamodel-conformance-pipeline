@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "1",
+  "invariants": [
+    {
+      "id": "exclusive-declaration-ownership",
+      "title": "Exclusive declaration ownership",
+      "specificationTrace": "O-02",
+      "witnessFunction": "ExclusiveDeclarationOwnershipViolations",
+      "witnessArity": 1,
+      "requiredEvidence": ["DECLARATION_OWNERSHIP"],
+      "partitionRelations": ["DECLARED_MEMBERS"],
+      "partitionRoots": ["MEMBER"],
+      "conformanceMessage": "Every observed member has exactly one declaring classifier.",
+      "violationMessage": "At least one observed member has zero or multiple declaring classifiers."
+    },
+    {
+      "id": "acyclic-generalization",
+      "title": "Acyclic generalization",
+      "specificationTrace": "O-03",
+      "witnessFunction": "AcyclicGeneralizationViolations",
+      "witnessArity": 1,
+      "requiredEvidence": ["HIERARCHY"],
+      "partitionRelations": ["PARENTS"],
+      "partitionRoots": ["CLASSIFIER"],
+      "conformanceMessage": "No inheritance cycle exists in the exact observed graph.",
+      "violationMessage": "An inheritance cycle exists in the exact observed graph."
+    },
+    {
+      "id": "inherited-view-consistency",
+      "title": "Inherited view derivation",
+      "specificationTrace": "O-04",
+      "witnessFunction": "InheritedViewConsistencyViolations",
+      "witnessArity": 2,
+      "requiredEvidence": ["HIERARCHY", "DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES", "INHERITABILITY", "INHERITED_MEMBERS"],
+      "partitionRelations": ["PARENTS", "DECLARED_MEMBERS", "OBSERVED_INHERITED_MEMBERS"],
+      "partitionRoots": ["CLASSIFIER"],
+      "conformanceMessage": "The frontend-observed inherited view equals the Alloy-derived view.",
+      "violationMessage": "At least one frontend-observed inherited membership differs from the Alloy-derived view."
+    },
+    {
+      "id": "local-inherited-separation",
+      "title": "Local and inherited separation",
+      "specificationTrace": "O-05",
+      "witnessFunction": "LocalInheritedSeparationViolations",
+      "witnessArity": 2,
+      "requiredEvidence": ["DECLARATION_OWNERSHIP", "INHERITED_MEMBERS"],
+      "partitionRelations": ["DECLARED_MEMBERS", "OBSERVED_INHERITED_MEMBERS"],
+      "partitionRoots": ["CLASSIFIER"],
+      "conformanceMessage": "Local and frontend-observed inherited memberships are atom-disjoint.",
+      "violationMessage": "At least one member atom is both local and inherited in the same classifier."
+    },
+    {
+      "id": "implementation-binding-consistency",
+      "title": "Implementation binding consistency",
+      "specificationTrace": "O-06",
+      "witnessFunction": "ImplementationBindingViolations",
+      "witnessArity": 1,
+      "requiredEvidence": ["HIERARCHY", "DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES", "INHERITABILITY", "METHOD_BODIES", "METHOD_ABSTRACTION", "IMPLEMENTATION_BINDINGS"],
+      "partitionRelations": ["PARENTS", "DECLARED_MEMBERS", "IMPLEMENTATION_BINDINGS"],
+      "partitionRoots": ["CLASSIFIER", "MEMBER", "BODY"],
+      "conformanceMessage": "Each implementation body is bound by one explicit implementer-target-body relationship and local abstract/concrete methods obey the selected binding policy.",
+      "violationMessage": "At least one implementation binding has an unavailable target, duplicate class-method binding, orphan/shared body, or invalid abstract/concrete local disposition."
+    },
+    {
+      "id": "abstraction-implementation-consistency",
+      "title": "Abstraction and unresolved implementation consistency",
+      "specificationTrace": "O-07",
+      "witnessFunction": "AbstractionImplementationViolations",
+      "witnessArity": 1,
+      "requiredEvidence": ["HIERARCHY", "DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES", "INHERITABILITY", "METHOD_BODIES", "METHOD_ABSTRACTION", "IMPLEMENTATION_BINDINGS", "CLASSIFIER_ABSTRACTION"],
+      "partitionRelations": ["PARENTS", "DECLARED_MEMBERS", "IMPLEMENTATION_BINDINGS"],
+      "partitionRoots": ["CLASSIFIER", "MEMBER", "BODY"],
+      "conformanceMessage": "Every classifier with an unresolved visible method is explicitly abstract.",
+      "violationMessage": "At least one classifier has unresolved visible implementation obligations without being explicitly abstract, or lacks abstraction evidence."
+    },
+    {
+      "id": "static-abstract-method-separation",
+      "title": "Static and abstract method separation",
+      "specificationTrace": "O-07",
+      "witnessFunction": "StaticAbstractMethodViolations",
+      "witnessArity": 1,
+      "requiredEvidence": ["DECLARATION_OWNERSHIP", "METHOD_ABSTRACTION", "METHOD_SCOPE"],
+      "partitionRelations": ["DECLARED_MEMBERS"],
+      "partitionRoots": ["MEMBER"],
+      "conformanceMessage": "No source method is simultaneously static and abstract.",
+      "violationMessage": "At least one source method is simultaneously static and abstract, or lacks required abstraction/scope evidence."
+    },
+    {
+      "id": "local-namespace-uniqueness",
+      "title": "Local namespace uniqueness",
+      "specificationTrace": "O-08-local",
+      "witnessFunction": "LocalNamespaceUniquenessViolations",
+      "witnessArity": 1,
+      "requiredEvidence": ["DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES"],
+      "partitionRelations": ["DECLARED_MEMBERS"],
+      "partitionRoots": ["CLASSIFIER"],
+      "conformanceMessage": "Local method keys and attribute names are unique within each classifier.",
+      "violationMessage": "At least one classifier contains a duplicate method key or attribute name."
+    },
+    {
+      "id": "inherited-namespace-uniqueness",
+      "title": "Inherited namespace uniqueness",
+      "specificationTrace": "O-08-inherited",
+      "witnessFunction": "InheritedNamespaceUniquenessViolations",
+      "witnessArity": 2,
+      "requiredEvidence": ["HIERARCHY", "DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES", "INHERITABILITY", "INHERITED_MEMBERS"],
+      "partitionRelations": ["PARENTS", "DECLARED_MEMBERS", "OBSERVED_INHERITED_MEMBERS"],
+      "partitionRoots": ["CLASSIFIER"],
+      "conformanceMessage": "Inherited method keys and attribute names are unique within each classifier.",
+      "violationMessage": "At least one classifier inherits distinct declarations with the same member key."
+    },
+    {
+      "id": "override-relation-consistency",
+      "title": "Override relation consistency",
+      "specificationTrace": "O-09 bridge",
+      "witnessFunction": "OverrideRelationConsistencyViolations",
+      "witnessArity": 2,
+      "requiredEvidence": ["HIERARCHY", "DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES", "INHERITABILITY", "METHOD_SCOPE", "OVERRIDE_RELATIONS"],
+      "partitionRelations": ["PARENTS", "DECLARED_MEMBERS", "OVERRIDE_RELATIONS"],
+      "partitionRoots": ["CLASSIFIER", "MEMBER"],
+      "conformanceMessage": "The independently frontend-resolved override relation agrees with the formal ancestor/signature/scope relation over the configured source boundary.",
+      "violationMessage": "At least one independently resolved override pair disagrees with the formal ancestor/signature/scope relation; this is a bridge or policy-correspondence finding, not a return-type finding."
+    },
+    {
+      "id": "override-discipline",
+      "title": "Override discipline",
+      "specificationTrace": "O-09",
+      "witnessFunction": "OverrideDisciplineViolations",
+      "witnessArity": 2,
+      "requiredEvidence": ["HIERARCHY", "DECLARATION_OWNERSHIP", "LOCAL_SIGNATURES", "INHERITABILITY", "METHOD_BODIES", "METHOD_ABSTRACTION", "METHOD_SCOPE", "IMPLEMENTATION_BINDINGS", "METHOD_RETURN_TYPES", "OVERRIDE_RELATIONS"],
+      "partitionRelations": ["PARENTS", "DECLARED_MEMBERS", "IMPLEMENTATION_BINDINGS"],
+      "partitionRoots": ["CLASSIFIER", "MEMBER", "BODY"],
+      "conformanceMessage": "Every formal override pair satisfies the manuscript's strict equal-return and abstract-or-implemented policy when independent override evidence is available.",
+      "violationMessage": "At least one formal override pair violates the strict equal-return or abstract-or-implemented policy."
+    }
+  ]
+}
