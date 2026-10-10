@@ -63,7 +63,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.10.0";
+    public static final String ADAPTER_VERSION = "0.11.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -120,9 +120,13 @@ public final class PythonAstObserver implements SourceObserver {
             }
 
             BridgeResult bridge = runBridge(snapshot.root(), paths);
+            if (bridge.runtimeExecutable() == null) {
+                throw new ObservationException("Python AST bridge omitted its runtime executable receipt");
+            }
+            bridge.runtimeExecutable().verify();
             dependencyInputs.requireInterpreterVersion(bridge.pythonVersion());
             String configuration = JSON.writeValueAsString(new MeasurementContextIdentity(
-                    "1", Hashing.sha256(BRIDGE_SCRIPT), bridge.pythonVersion(), dependencyInputs.contextIdentity(),
+                    "2", Hashing.sha256(BRIDGE_SCRIPT), bridge.pythonVersion(), bridge.runtimeExecutable(), dependencyInputs.contextIdentity(),
                     externalParents == null ? List.of() : externalParents.stream().sorted().toList()));
             String contextHash = Hashing.sha256(configuration);
             String contextId = "python-ast-domain-" + contextHash;
@@ -358,10 +362,11 @@ public final class PythonAstObserver implements SourceObserver {
             }
 
             snapshot.verifyOriginalsUnchanged(discoverPythonFiles(root));
+            bridge.runtimeExecutable().verify();
             var domain = new NativeEvidence.Domain(contextId, Language.PYTHON,
                     NativeEvidence.MeasurementMode.SOURCE_ONLY, NativeEvidence.View.SOURCE_DECLARATIONS,
                     Hashing.sha256(contextHash + "\0" + Hashing.sourceSetDigest(units)),
-                    "Captured source-only AST declarations; normalized declared lock metadata; interpreter/runtime/input/role closure unverified",
+                    "Captured source-only AST declarations; normalized declared lock metadata; actual executable bytes checked before/after extraction; stdlib/runtime/environment/input/role closure unverified",
                     classifiers.stream().map(ClassifierObservation::id).toList(),
                     members.stream().map(MemberObservation::technicalKey).toList());
             return new Observation(
@@ -559,7 +564,8 @@ public final class PythonAstObserver implements SourceObserver {
     }
 
     private record MeasurementContextIdentity(String schemaVersion, String bridgeScriptSha256,
-            String reportedInterpreterVersion, PythonDependencyInputs.ContextIdentity declaredEnvironment,
+            String reportedInterpreterVersion, PythonRuntimeExecutable runtimeExecutable,
+            PythonDependencyInputs.ContextIdentity declaredEnvironment,
             List<String> boundaryHints) { }
 
     private record TypeDraft(
@@ -576,6 +582,7 @@ public final class PythonAstObserver implements SourceObserver {
 
     private record BridgeResult(
             String pythonVersion,
+            PythonRuntimeExecutable runtimeExecutable,
             boolean hierarchyIncomplete,
             List<BridgeClass> classes,
             List<BridgeDiagnostic> diagnostics) {

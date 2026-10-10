@@ -6,16 +6,21 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.26.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.27.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
 
-Producer rc.26 was validated locally with 390 passing regression tests and four
-small paired native/observation/XMI/full-reference/capsule-replay controls.
+Producer rc.27 has 393 source-bound regression cases reconciled across a full
+run and a four-test correction of one obsolete version assertion. Two paired
+semantic families preserve all 17 relations and 11 decision/witness sets, with
+native controls and four full analyses/replays. A three-observation same-path
+control distinguishes changed executable bytes and preserves unchanged repeats.
 The frozen validated JAR SHA-256 is
-`5b11146c768647b1e28b4a1feda049beb4fa0b73fb65917c7e3c896c474a13e8`.
-The C++ guard repair preserved fixed P0, schema 14 and the invariant registry.
+`e76df8f33eb2d13c3fc1164ba7d5dfd8e8ece6b43b94ce9165802732a0d9627a`.
+The C++ guard repair and Python executable identity repair preserve fixed P0,
+schema 14 and the invariant registry. Python standard-library and complete
+runtime/environment closure remain explicitly unverified.
 No new evidence completeness capabilities were enabled. Unknown or unsupported
 semantics remain explicit; capsule replay verifies recorded observations, not
 the fidelity of arbitrary source code.

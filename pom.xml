@@ -6,7 +6,7 @@
 
   <groupId>metamodel.conformance</groupId>
   <artifactId>metamodel-conformance-pipeline-next</artifactId>
-  <version>0.15.0-rc.26</version>
+  <version>0.15.0-rc.27</version>
   <name>Metamodel Conformance Pipeline Next</name>
 
   <properties>

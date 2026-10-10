@@ -1,11 +1,29 @@
 import ast
 import builtins
+import hashlib
 import json
 import pathlib
 import sys
 import tokenize
 from dataclasses import dataclass, replace
 
+
+def runtime_executable_snapshot():
+    # Linux proc identifies the running image, including when a launcher execs it.
+    # Other platforms use Python's documented executable path; unavailable paths
+    # reject rather than silently falling back to a version-only identity.
+    executable = pathlib.Path("/proc/self/exe") if sys.platform.startswith("linux") else pathlib.Path(sys.executable or "")
+    executable = executable.resolve(strict=True)
+    if not executable.is_file():
+        raise RuntimeError("Python runtime executable is unavailable")
+    digest = hashlib.sha256()
+    with executable.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return {"path": str(executable), "sha256": digest.hexdigest()}
+
+
+runtime_executable_before = runtime_executable_snapshot()
 request = json.load(sys.stdin)
 root = pathlib.Path(request["root"])
 paths = sorted(request["paths"])
@@ -937,9 +955,13 @@ for current_rel in paths:
     current_escaping_writes = escaping_writes(tree)
     process_body(tree.body, module, {}, module, is_package, "module")
 
+if runtime_executable_snapshot() != runtime_executable_before:
+    raise RuntimeError("Python runtime executable changed during AST extraction")
+
 json.dump(
     {
         "pythonVersion": ".".join(map(str, sys.version_info[:3])),
+        "runtimeExecutable": runtime_executable_before,
         "hierarchyIncomplete": hierarchy_incomplete,
         "classes": classes,
         "diagnostics": diagnostics,
