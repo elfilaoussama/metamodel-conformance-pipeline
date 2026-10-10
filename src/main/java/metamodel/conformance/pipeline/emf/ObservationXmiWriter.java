@@ -31,8 +31,11 @@ import java.util.Map;
 
 public final class ObservationXmiWriter {
     public void write(Observation observation, Path target) throws IOException {
-        if (!ObservationSchema.VERSION.equals(observation.schemaVersion())) {
+        if (!ObservationSchema.VERSION.equals(observation.schemaVersion()) && !"14".equals(observation.schemaVersion())) {
             throw new IllegalArgumentException("unsupported observation schema: " + observation.schemaVersion());
+        }
+        if ("14".equals(observation.schemaVersion()) && !observation.nativeEvidence().reportedInputs().isEmpty()) {
+            throw new IllegalArgumentException("schema14 cannot retain reported-input inventories");
         }
         Path normalizedTarget = target.toAbsolutePath().normalize();
         Files.createDirectories(normalizedTarget.getParent());
@@ -48,7 +51,7 @@ public final class ObservationXmiWriter {
 
     @SuppressWarnings("unchecked")
     private void save(Observation observation, Path target) throws IOException {
-        ObservationSchema schema = ObservationSchema.load();
+        ObservationSchema schema = ObservationSchema.load(observation.schemaVersion());
         EPackage ePackage = schema.ePackage();
         EObject root = ePackage.getEFactoryInstance().create(schema.classifier("ObservationSet"));
         set(root, "schemaVersion", observation.schemaVersion());
@@ -191,7 +194,7 @@ public final class ObservationXmiWriter {
         }
 
         ResourceSetImpl resourceSet = new ResourceSetImpl();
-        resourceSet.getPackageRegistry().put(ObservationSchema.NS_URI, ePackage);
+        resourceSet.getPackageRegistry().put(ePackage.getNsURI(), ePackage);
         resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("xmi", new XMIResourceFactoryImpl());
         Resource resource = resourceSet.createResource(URI.createFileURI(target.toString()));
         resource.getContents().add(root);

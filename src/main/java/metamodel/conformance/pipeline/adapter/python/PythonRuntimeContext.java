@@ -9,9 +9,29 @@ import java.util.Set;
 import java.util.TreeMap;
 import metamodel.conformance.pipeline.adapter.ObservationException;
 import metamodel.conformance.pipeline.util.Hashing;
+import metamodel.conformance.pipeline.model.NativeEvidence;
 
 /** Reported module backing files/configuration, not proof of consumed bytecode. */
 record PythonRuntimeContext(Configuration configuration, List<Module> modules) {
+    NativeEvidence.ReportedInputs reportedInputs(String contextId) {
+        var items = modules.stream().map(module -> new NativeEvidence.ReportedItem(
+                module.name(), module.origin(), module.files().isEmpty()
+                    ? NativeEvidence.Evidence.<NativeEvidence.Input>unavailable(NativeEvidence.Knowledge.UNKNOWN,
+                        "No file-backed locations reported: " + module.backingStatus())
+                    : NativeEvidence.Evidence.known(module.files().stream().map(file -> new NativeEvidence.Input(
+                        file.path(), file.sha256(), NativeEvidence.Evidence.<Long>unavailable(
+                            NativeEvidence.Knowledge.UNKNOWN, "modification time not captured"))).toList()),
+                "Python import metadata; backing status=" + module.backingStatus())).toList();
+        var entries = List.of(
+                new NativeEvidence.ConfigurationEntry("searchPath", NativeEvidence.Evidence.known(configuration.searchPath())),
+                new NativeEvidence.ConfigurationEntry("prefix", NativeEvidence.Evidence.known(List.of(configuration.prefix()))),
+                new NativeEvidence.ConfigurationEntry("basePrefix", NativeEvidence.Evidence.known(List.of(configuration.basePrefix()))),
+                new NativeEvidence.ConfigurationEntry("flags", NativeEvidence.Evidence.known(List.of(configuration.flags()))),
+                new NativeEvidence.ConfigurationEntry("workingDirectory", NativeEvidence.Evidence.known(List.of(configuration.workingDirectory()))));
+        return new NativeEvidence.ReportedInputs(contextId, "PYTHON_IMPORT_METADATA", "Reported interpreter module backing files and configuration",
+                items, entries, "Consumed bytecode/shared images/transient loaders/environment/input roles unverified");
+    }
+
     PythonRuntimeContext {
         if (configuration == null || modules == null || modules.isEmpty()) {
             throw new IllegalArgumentException("missing Python runtime context receipt");

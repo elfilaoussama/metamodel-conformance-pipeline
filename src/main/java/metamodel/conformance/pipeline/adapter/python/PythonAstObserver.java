@@ -63,7 +63,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.12.0";
+    public static final String ADAPTER_VERSION = "0.13.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -372,7 +372,7 @@ public final class PythonAstObserver implements SourceObserver {
                     classifiers.stream().map(ClassifierObservation::id).toList(),
                     members.stream().map(MemberObservation::technicalKey).toList());
             return new Observation(
-                    "14",
+                    "15",
                     ADAPTER_ID,
                     ADAPTER_VERSION + "/python-" + bridge.pythonVersion(),
                     List.copyOf(allowed),
@@ -386,7 +386,7 @@ public final class PythonAstObserver implements SourceObserver {
                     diagnostics,
                     List.of(),
                     new NativeEvidence.Bundle(List.of(domain), List.of(), List.of(), nativeBases,
-                            nativeSignatures, List.of(), List.of()));
+                            nativeSignatures, List.of(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId))));
             }
         } catch (ObservationException exception) {
             throw exception;

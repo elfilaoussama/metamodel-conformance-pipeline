@@ -56,6 +56,7 @@ final class JavaContextualObservation {
         var signatures = new ArrayList<NativeEvidence.Signature>();
         var lookups = new ArrayList<NativeEvidence.Lookup>();
         var bodyBindings = new ArrayList<NativeEvidence.BodyBinding>();
+        var reportedInputs = new ArrayList<NativeEvidence.ReportedInputs>();
         for (int frameIndex = 0; frameIndex < qualified.size(); frameIndex++) {
             Observation frame = qualified.get(frameIndex);
             String contextId = entries.get(frameIndex).getKey();
@@ -66,6 +67,7 @@ final class JavaContextualObservation {
             signatures.addAll(frame.nativeEvidence().signatures());
             lookups.addAll(frame.nativeEvidence().lookups());
             bodyBindings.addAll(frame.nativeEvidence().bodyBindings());
+            reportedInputs.addAll(frame.nativeEvidence().reportedInputs());
             if (!identities.isEmpty()) {
                 DomainIdentity identity = identities.get(contextId);
                 domains.add(new NativeEvidence.Domain(contextId, Language.JAVA,
@@ -98,7 +100,7 @@ final class JavaContextualObservation {
                 first.externalParents(), evidence, List.copyOf(units.values()), classifiers, members,
                 bodies, bindings, unresolved, diagnostics.stream().distinct().toList(),
                 platform.stream().distinct().toList(),
-                new NativeEvidence.Bundle(domains, roles, invocations, bases, signatures, lookups, bodyBindings));
+                new NativeEvidence.Bundle(domains, roles, invocations, bases, signatures, lookups, bodyBindings, reportedInputs));
     }
 
     static Observation qualify(String contextId, Observation frame) {

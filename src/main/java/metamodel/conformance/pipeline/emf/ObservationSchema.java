@@ -11,8 +11,8 @@ import org.eclipse.emf.ecore.xmi.impl.EcoreResourceFactoryImpl;
 import java.net.URL;
 
 final class ObservationSchema {
-    static final String VERSION = "14";
-    static final String NS_URI = "urn:metamodel-conformance:observation:14";
+    static final String VERSION = "15";
+    static final String NS_URI = "urn:metamodel-conformance:observation:15";
 
     private final EPackage ePackage;
 
@@ -21,8 +21,16 @@ final class ObservationSchema {
     }
 
     static ObservationSchema load() {
+        return load(VERSION);
+    }
+
+    static ObservationSchema load(String version) {
+        if (!version.equals("14") && !version.equals(VERSION)) {
+            throw new IllegalArgumentException("unsupported observation schema: " + version);
+        }
         EcorePackage.eINSTANCE.eClass();
-        URL resourceUrl = ObservationSchema.class.getResource("/model/observation.ecore");
+        URL resourceUrl = ObservationSchema.class.getResource(version.equals("14")
+                ? "/model/observation.ecore" : "/model/observation-v15.ecore");
         if (resourceUrl == null) {
             throw new IllegalStateException("bundled observation.ecore is missing");
         }
@@ -37,6 +45,10 @@ final class ObservationSchema {
 
     EPackage ePackage() {
         return ePackage;
+    }
+
+    String version() {
+        return ePackage.getNsURI().substring(ePackage.getNsURI().lastIndexOf(':') + 1);
     }
 
     EClass classifier(String name) {

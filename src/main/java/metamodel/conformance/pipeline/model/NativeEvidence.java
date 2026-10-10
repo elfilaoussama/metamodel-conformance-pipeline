@@ -113,6 +113,64 @@ public final class NativeEvidence {
         }
     }
 
+    /** Metadata-reported backing locations; this record never asserts execution. */
+    public record ReportedItem(String name, String origin, Evidence<Input> backingFiles,
+                               String provenance) {
+        public ReportedItem {
+            name = text(name, "reported item name");
+            origin = text(origin, "reported origin");
+            backingFiles = Objects.requireNonNull(backingFiles, "reported backing files");
+            provenance = text(provenance, "reported item provenance");
+            Set<String> paths = new HashSet<>();
+            for (Input input : backingFiles.values()) {
+                unique(paths, input.path(), "duplicate reported backing path");
+            }
+        }
+    }
+
+    /** Ordered configuration values retain search order and duplicate entries. */
+    public record ConfigurationEntry(String name, Evidence<String> values) {
+        public ConfigurationEntry {
+            name = text(name, "configuration name");
+            values = Objects.requireNonNull(values, "configuration values");
+            for (String value : values.values()) {
+                Objects.requireNonNull(value, "configuration value");
+                if (value.indexOf('\0') >= 0) throw new IllegalArgumentException("NUL in configuration value");
+            }
+        }
+    }
+
+    /** Partial reported inventory, distinct from complete consumed-input evidence.
+     * Required limitations identify what the measurement does not certify.
+     * Domain admission and interchange population are performed by the bundle. */
+    public record ReportedInputs(String contextId, String mechanism, String scope,
+                                 List<ReportedItem> items, List<ConfigurationEntry> configuration,
+                                 String limitations) {
+        public ReportedInputs {
+            contextId = text(contextId, "reported contextId");
+            mechanism = text(mechanism, "reporting mechanism");
+            scope = text(scope, "reported inventory scope");
+            items = List.copyOf(Objects.requireNonNull(items, "reported items"));
+            configuration = List.copyOf(Objects.requireNonNull(configuration, "reported configuration"));
+            limitations = text(limitations, "reported inventory limitations");
+            Set<String> names = new HashSet<>();
+            Map<String, String> bytesByPath = new HashMap<>();
+            for (ReportedItem item : items) {
+                unique(names, item.name(), "duplicate reported item");
+                for (Input input : item.backingFiles().values()) {
+                    String previous = bytesByPath.putIfAbsent(input.path(), input.sha256());
+                    if (previous != null && !previous.equals(input.sha256())) {
+                        throw new IllegalArgumentException("conflicting reported backing bytes");
+                    }
+                }
+            }
+            names.clear();
+            for (ConfigurationEntry entry : configuration) {
+                unique(names, entry.name(), "duplicate configuration name");
+            }
+        }
+    }
+
     /** Semantic compiler argv retains order, duplicates and original spelling.
      * Adapter-owned output transport routes are excluded, not compiler inputs.
      * The adapter separately verifies the full executed transport argv.
@@ -227,7 +285,15 @@ public final class NativeEvidence {
     /** A validated native bundle; no ability to certify a projected EvidenceKind. */
     public record Bundle(List<Domain> domains, List<RoleReceipt> roles, List<Invocation> invocations,
                          List<Bases> bases, List<Signature> signatures, List<Lookup> lookups,
-                         List<BodyBinding> bodyBindings) {
+                         List<BodyBinding> bodyBindings,
+                         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+                         List<ReportedInputs> reportedInputs) {
+        public Bundle(List<Domain> domains, List<RoleReceipt> roles, List<Invocation> invocations,
+                      List<Bases> bases, List<Signature> signatures, List<Lookup> lookups,
+                      List<BodyBinding> bodyBindings) {
+            this(domains, roles, invocations, bases, signatures, lookups, bodyBindings, List.of());
+        }
+
         public Bundle {
             domains = List.copyOf(domains);
             roles = List.copyOf(roles);
@@ -236,6 +302,8 @@ public final class NativeEvidence {
             signatures = List.copyOf(signatures);
             lookups = List.copyOf(lookups);
             bodyBindings = List.copyOf(bodyBindings);
+            // Missing legacy JSON fields mean unreported inventory, never known-empty inputs.
+            reportedInputs = reportedInputs == null ? List.of() : List.copyOf(reportedInputs);
             Map<String, DomainIndex> byContext = new HashMap<>();
             Set<String> contextualIds = new HashSet<>();
             for (Domain domain : domains) {
@@ -247,6 +315,18 @@ public final class NativeEvidence {
                 for (String id : domain.memberKeys()) unique(contextualIds, id, "member identity reused across contexts");
             }
             Set<List<String>> occurrences = new HashSet<>();
+            Map<List<String>, String> reportedBytes = new HashMap<>();
+            for (ReportedInputs inventory : reportedInputs) {
+                domain(byContext, inventory.contextId());
+                unique(occurrences, List.of("reported", inventory.contextId(), inventory.mechanism()),
+                        "duplicate reported inventory mechanism");
+                for (ReportedItem item : inventory.items()) for (Input input : item.backingFiles().values()) {
+                    String previous = reportedBytes.putIfAbsent(List.of(inventory.contextId(), input.path()), input.sha256());
+                    if (previous != null && !previous.equals(input.sha256())) {
+                        throw new IllegalArgumentException("conflicting reported bytes across inventories");
+                    }
+                }
+            }
             for (RoleReceipt role : roles) {
                 domain(byContext, role.contextId());
                 unique(occurrences, List.of("role", role.contextId(), role.path()), "duplicate role receipt");

@@ -59,6 +59,9 @@ public record Observation(
                 units, classifiers, members, methodBodies, implementationBindings,
                 unresolvedParents, diagnostics);
         nativeEvidence = nativeEvidence == null ? NativeEvidence.Bundle.empty() : nativeEvidence;
+        if (!nativeEvidence.reportedInputs().isEmpty() && !schemaVersion.equals("15")) {
+            throw new IllegalArgumentException("reported inventories require schema15");
+        }
         if (!nativeEvidence.domains().isEmpty()) validateNativePopulation(nativeEvidence, units, classifiers, members);
         if (!unresolvedParents.isEmpty() && completeEvidence.contains(EvidenceKind.HIERARCHY)) {
             throw new IllegalArgumentException("hierarchy evidence cannot be complete with unresolved parents");

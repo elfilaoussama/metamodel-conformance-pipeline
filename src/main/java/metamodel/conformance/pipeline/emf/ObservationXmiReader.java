@@ -52,19 +52,22 @@ public final class ObservationXmiReader {
         }
 
         ObservationSchema schema = ObservationSchema.load();
+        ObservationSchema legacySchema = ObservationSchema.load("14");
         EPackage ePackage = schema.ePackage();
         ResourceSetImpl resourceSet = new ResourceSetImpl();
         resourceSet.getPackageRegistry().put(ObservationSchema.NS_URI, ePackage);
+        resourceSet.getPackageRegistry().put(legacySchema.ePackage().getNsURI(), legacySchema.ePackage());
         resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("xmi", new XMIResourceFactoryImpl());
         Resource resource = resourceSet.getResource(URI.createFileURI(input.toString()), true);
         if (resource.getContents().size() != 1) {
             throw new IOException("observation must contain exactly one root object");
         }
         EObject root = resource.getContents().get(0);
+        if (root.eClass().getEPackage() == legacySchema.ePackage()) schema = legacySchema;
         if (!"ObservationSet".equals(root.eClass().getName())) {
             throw new IOException("unexpected observation root: " + root.eClass().getName());
         }
-        if (!ObservationSchema.VERSION.equals(string(root, "schemaVersion"))) {
+        if (!schema.version().equals(string(root, "schemaVersion"))) {
             throw new IOException("unsupported observation schema");
         }
         if (!NativeEvidenceXmiCodec.PROJECTION_ID.equals(string(root, "projectionId"))) {

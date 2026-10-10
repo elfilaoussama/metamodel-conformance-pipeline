@@ -37,6 +37,13 @@ final class NativeEvidenceXmiCodec {
         Class<?> raw = recordClass(type);
         EObject object = schema.ePackage().getEFactoryInstance().create(schema.classifier(name(type)));
         for (RecordComponent component : raw.getRecordComponents()) {
+            if (raw == NativeEvidence.Bundle.class && component.getName().equals("reportedInputs")
+                    && schema.version().equals("14")) {
+                if (!((NativeEvidence.Bundle) record).reportedInputs().isEmpty()) {
+                    throw new IOException("schema14 cannot retain reported inventories");
+                }
+                continue;
+            }
             Type fieldType = resolve(component.getGenericType(), type);
             EStructuralFeature feature = feature(object, component.getName());
             Object value;
@@ -78,6 +85,12 @@ final class NativeEvidenceXmiCodec {
         for (int i = 0; i < components.length; i++) {
             RecordComponent component = components[i];
             Type fieldType = resolve(component.getGenericType(), type);
+            if (raw == NativeEvidence.Bundle.class && component.getName().equals("reportedInputs")
+                    && schema.version().equals("14")) {
+                constructorTypes[i] = component.getType();
+                values[i] = List.of();
+                continue;
+            }
             EStructuralFeature feature = feature(object, component.getName());
             constructorTypes[i] = component.getType();
             if (isList(fieldType)) {
