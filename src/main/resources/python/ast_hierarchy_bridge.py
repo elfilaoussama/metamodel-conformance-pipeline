@@ -2,6 +2,7 @@ import ast
 import builtins
 import hashlib
 import json
+import os
 import pathlib
 import sys
 import tokenize
@@ -24,6 +25,52 @@ def runtime_executable_snapshot():
 
 
 runtime_executable_before = runtime_executable_snapshot()
+
+
+def runtime_configuration_snapshot():
+    if not all(isinstance(entry, str) for entry in sys.path):
+        raise RuntimeError("unsupported non-string Python module search path")
+    return {"searchPath": list(sys.path), "prefix": sys.prefix,
+            "basePrefix": sys.base_prefix, "flags": str(sys.flags),
+            "workingDirectory": os.getcwd()}
+
+
+def runtime_module_snapshot():
+    result = {}
+    captured_files = {}
+    for name, module in sorted(sys.modules.copy().items()):
+        spec = getattr(module, "__spec__", None)
+        origin = getattr(spec, "origin", None)
+        origin = origin if isinstance(origin, str) else "<unknown>"
+        files = {}
+        # Both are reported backing locations; neither alone proves execution.
+        for value in (getattr(module, "__file__", None), getattr(spec, "cached", None)):
+            if not isinstance(value, str) or not value:
+                continue
+            location = pathlib.Path(value).absolute()
+            if not location.is_file():
+                continue
+            # Retain logical and physical paths, including alias-retarget coverage.
+            for path in dict.fromkeys((location, location.resolve(strict=True))):
+                key = str(path)
+                if key not in captured_files:
+                    digest = hashlib.sha256()
+                    with path.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                            digest.update(chunk)
+                    captured_files[key] = digest.hexdigest()
+                files[key] = captured_files[key]
+        status = ("FILES_REPORTED" if files else "BUILTIN_OR_FROZEN"
+                  if origin in ("built-in", "frozen") else "BRIDGE_MAIN"
+                  if name == "__main__" else "UNAVAILABLE")
+        result[name] = {"name": name, "origin": origin, "backingStatus": status,
+                        "files": [{"path": path, "sha256": digest}
+                                  for path, digest in sorted(files.items())]}
+    return result
+
+
+runtime_configuration_before = runtime_configuration_snapshot()
+runtime_modules_before = runtime_module_snapshot()
 request = json.load(sys.stdin)
 root = pathlib.Path(request["root"])
 paths = sorted(request["paths"])
@@ -957,11 +1004,19 @@ for current_rel in paths:
 
 if runtime_executable_snapshot() != runtime_executable_before:
     raise RuntimeError("Python runtime executable changed during AST extraction")
+if runtime_configuration_snapshot() != runtime_configuration_before:
+    raise RuntimeError("Python runtime configuration changed during AST extraction")
+runtime_modules_after = runtime_module_snapshot()
+for runtime_module_name, snapshot in runtime_modules_before.items():
+    if runtime_modules_after.get(runtime_module_name) != snapshot:
+        raise RuntimeError("Python module backing metadata/bytes changed during AST extraction: " + runtime_module_name)
 
 json.dump(
     {
         "pythonVersion": ".".join(map(str, sys.version_info[:3])),
         "runtimeExecutable": runtime_executable_before,
+        "runtimeContext": {"configuration": runtime_configuration_before,
+                           "modules": list(runtime_modules_after.values())},
         "hierarchyIncomplete": hierarchy_incomplete,
         "classes": classes,
         "diagnostics": diagnostics,

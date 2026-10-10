@@ -6,21 +6,22 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.27.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.28.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
 
-Producer rc.27 has 393 source-bound regression cases reconciled across a full
-run and a four-test correction of one obsolete version assertion. Two paired
-semantic families preserve all 17 relations and 11 decision/witness sets, with
-native controls and four full analyses/replays. A three-observation same-path
-control distinguishes changed executable bytes and preserves unchanged repeats.
+Producer rc.28 passed 397 regression tests in a fresh local normal build.
+Two paired semantic families preserve all 17 relations and 11 complete
+decision/witness sets, with native controls and four full analyses/replays.
+Five actual-observer controls distinguish changed parser bytes and search paths
+while preserving unchanged repeats; cache/opaque-origin receipt controls pass.
 The frozen validated JAR SHA-256 is
-`e76df8f33eb2d13c3fc1164ba7d5dfd8e8ece6b43b94ce9165802732a0d9627a`.
-The C++ guard repair and Python executable identity repair preserve fixed P0,
-schema 14 and the invariant registry. Python standard-library and complete
-runtime/environment closure remain explicitly unverified.
+`f8e3726bdfec11d0eec57afd472e522d14ff856804acb579a4673ca2f0e8b4b6`.
+Fixed P0, schema 14 and the invariant registry remain unchanged. Python reported
+module backing files and configuration are fingerprinted; consumed bytecode,
+shared images, transient loaders and complete environment/input-role closure
+remain explicitly unverified.
 No new evidence completeness capabilities were enabled. Unknown or unsupported
 semantics remain explicit; capsule replay verifies recorded observations, not
 the fidelity of arbitrary source code.
