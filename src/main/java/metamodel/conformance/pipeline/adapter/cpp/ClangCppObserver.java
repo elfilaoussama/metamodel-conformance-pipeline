@@ -69,8 +69,8 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.13.0";
-    private static final String PROFILE_ID = "contextual-native-projection-v7";
+    public static final String ADAPTER_VERSION = "0.14.0";
+    private static final String PROFILE_ID = "contextual-native-projection-v8";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -149,6 +149,7 @@ public final class ClangCppObserver implements SourceObserver {
             Map<String, NativeEvidence.Invocation> invocationByContext = new HashMap<>();
             Map<String, NativeEvidence.Input> tracedInputs = new java.util.TreeMap<>();
             List<NativeEvidence.Lookup> nativeLookups = new ArrayList<>();
+            Map<String,CppNativeLookupReceipt.Result> lookupCensuses = new HashMap<>();
             Map<String,List<NativeEvidence.DirectBase>> compilerBases = new HashMap<>();
             Set<Path> coveredProjectFiles = new HashSet<>();
             if (nativeHelper != null) recordPhysicalHash(nativeHelper, physicalHashes);
@@ -168,7 +169,7 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(file);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
-                retainLookups(result, contextId, nativeLookups);
+                retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainBaseIdentities(result, compilerBases);
                 observationIncomplete |= incorporateResult(
                         root, file, result, byDefinitionKey, diagnostics,
@@ -189,7 +190,7 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(header);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
-                retainLookups(result, contextId, nativeLookups);
+                retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainBaseIdentities(result, compilerBases);
                 observationIncomplete |= incorporateResult(
                         root, header, result, byDefinitionKey, diagnostics,
@@ -371,7 +372,7 @@ public final class ClangCppObserver implements SourceObserver {
                     "C++ adapter observes class/struct direct hierarchy and source-declared member ownership, "
                             + "signatures, visibility, inheritability, abstraction and scope under the declared "
                             + PROFILE_ID + " profile with compiler/include fingerprints; overrides and "
-                            + "inherited-member evidence remain incomplete."));
+                            + "implementation and return-type evidence remain incomplete."));
             if (signaturesIncomplete) {
                 diagnostics.add(new ObservationDiagnostic(
                         DiagnosticKind.EVIDENCE_INCOMPLETE,
@@ -419,6 +420,30 @@ public final class ClangCppObserver implements SourceObserver {
                 if (!scopeIncomplete) {
                     completeEvidence.add(EvidenceKind.METHOD_SCOPE);
                 }
+            }
+
+            boolean inheritedComplete = !localEvidenceIncomplete && !hierarchyIncomplete && !declarationIncomplete;
+            Map<String,List<String>> inheritedByOwner = new HashMap<>();
+            for (String contextId : sourceByContext.keySet()) {
+                Set<String> contextIds = byContext.getOrDefault(contextId, List.of()).stream()
+                        .map(Draft::id).collect(java.util.stream.Collectors.toSet());
+                var projected = CppInheritedProjection.project(classifiers.stream()
+                        .filter(c -> contextIds.contains(c.id())).toList(),
+                        lookupCensuses.getOrDefault(contextId, new CppNativeLookupReceipt.Result(
+                                false, Set.of(), Set.of(), List.of())));
+                inheritedComplete &= projected.isPresent();
+                projected.ifPresent(inheritedByOwner::putAll);
+            }
+            if (inheritedComplete) {
+                classifiers = classifiers.stream().map(c -> new ClassifierObservation(c.id(),
+                        c.qualifiedName(), c.packageName(), c.kind(), c.sourcePath(), c.startLine(),
+                        c.endLine(), c.parentIds(), c.declaredMemberKeys(),
+                        inheritedByOwner.getOrDefault(c.id(), List.of()), c.abstraction())).toList();
+                completeEvidence.add(EvidenceKind.INHERITED_MEMBERS);
+            } else {
+                diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0, "C++ inherited lookup projection not admitted: compiler census, "
+                        + "supported scopes, declaration population or hierarchy is incomplete"));
             }
 
             String adapterVersion = ADAPTER_VERSION
@@ -478,11 +503,15 @@ public final class ClangCppObserver implements SourceObserver {
     }
 
     private static void retainLookups(AnalysisResult result, String contextId,
-                                      List<NativeEvidence.Lookup> output) throws ObservationException {
-        if (result.trace() != null && result.astFailure() == null && result.exitCode() == 0) {
-            output.addAll(CppNativeLookupReceipt.observe(contextId, result.trace().memberLookup(),
-                    result.collector().nativeDeclarationKeys));
-        }
+            List<NativeEvidence.Lookup> output, Map<String,CppNativeLookupReceipt.Result> censuses)
+            throws ObservationException {
+        var census = result.trace() != null && result.astFailure() == null && result.exitCode() == 0
+                ? CppNativeLookupReceipt.census(contextId, result.trace().memberLookup(),
+                    result.collector().nativeDeclarationKeys)
+                : new CppNativeLookupReceipt.Result(false, Set.of(), Set.of(), List.of());
+        if (censuses.putIfAbsent(contextId, census) != null)
+            throw new ObservationException("duplicate C++ invocation lookup census");
+        output.addAll(census.lookups());
     }
 
     private static void retainBaseIdentities(AnalysisResult result,
@@ -1394,8 +1423,8 @@ public final class ClangCppObserver implements SourceObserver {
                     boolean method = isMethodKind(kind);
                     String visibility = "public".equals(activeSink.access()) ? "PUBLIC"
                             : "protected".equals(activeSink.access()) ? "PROTECTED" : "PRIVATE";
-                    String inheritability = "PRIVATE".equals(visibility)
-                            ? "NOT_INHERITABLE" : "INHERITABLE";
+                    // C++ private members participate in inheritance; access is a separate fact.
+                    String inheritability = "INHERITABLE";
                     String memberScope = method
                             ? ("static".equals(storageClass) ? "STATIC" : "INSTANCE")
                             : "UNKNOWN";

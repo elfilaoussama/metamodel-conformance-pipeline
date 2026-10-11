@@ -18,17 +18,31 @@ class CppMemberLookup : public clang::RecursiveASTVisitor<CppMemberLookup> {
         return value==clang::AS_public ? "PUBLIC" : value==clang::AS_protected ? "PROTECTED"
             : value==clang::AS_private ? "PRIVATE" : "UNKNOWN";
     }
-    void names(clang::CXXRecordDecl *record,std::set<std::string> &out,
+    bool names(clang::CXXRecordDecl *record,std::set<std::string> &out,
                std::set<clang::CXXRecordDecl*> &seen) {
         record=record->getDefinition();
-        if (!record || !seen.insert(record).second) return;
-        for (auto *decl:record->decls())
-            if (auto *named=llvm::dyn_cast<clang::NamedDecl>(decl))
+        if (!record || record->isDependentContext()) return false;
+        if (!seen.insert(record).second) return true;
+        bool complete=true;
+        for (auto *decl:record->decls()) {
+            if (decl->isImplicit()) continue;
+            if (llvm::isa<clang::FunctionTemplateDecl>(decl)) complete=false;
+            if (auto *named=llvm::dyn_cast<clang::NamedDecl>(decl)) {
                 if (llvm::isa<clang::CXXMethodDecl>(named) || llvm::isa<clang::FieldDecl>(named)
-                    || llvm::isa<clang::VarDecl>(named))
-                    if (named->getIdentifier() && !named->isImplicit()) out.insert(named->getNameAsString());
-        for (const auto &base:record->bases())
-            if (auto *parent=base.getType()->getAsCXXRecordDecl()) names(parent,out,seen);
+                    || llvm::isa<clang::VarDecl>(named)) {
+                    if (llvm::isa<clang::CXXConstructorDecl>(named)
+                        || llvm::isa<clang::CXXDestructorDecl>(named)
+                        || !named->getIdentifier()) complete=false;
+                    else out.insert(named->getNameAsString());
+                }
+            }
+        }
+        for (const auto &base:record->bases()) {
+            auto *parent=base.getType()->getAsCXXRecordDecl();
+            if (!parent) complete=false;
+            else complete=names(parent,out,seen) && complete;
+        }
+        return complete;
     }
     llvm::json::Array paths(clang::CXXRecordDecl *owner,clang::CXXRecordDecl *target) {
         llvm::json::Array result;
@@ -75,9 +89,10 @@ public:
                 {"virtual",base.isVirtual()}});
         }
         llvm::json::Array lookups;
+        bool scopeComplete=false;
         if (!record->isDependentContext()) {
             std::set<std::string> all; std::set<clang::CXXRecordDecl*> seen;
-            names(record,all,seen);
+            scopeComplete=names(record,all,seen);
             for (const auto &name:all) {
                 clang::DeclarationNameInfo info(&sema.Context.Idents.get(name),record->getLocation());
                 clang::LookupResult result(sema,info,clang::Sema::LookupMemberName);
@@ -96,7 +111,8 @@ public:
             }
         }
         rows.push_back(llvm::json::Object{{"ownerAstId",id(record)},
-            {"dependent",record->isDependentContext()},{"bases",std::move(bases)},
+            {"dependent",record->isDependentContext()},{"lookupScopeComplete",scopeComplete},
+            {"bases",std::move(bases)},
             {"lookups",std::move(lookups)}});
         return true;
     }

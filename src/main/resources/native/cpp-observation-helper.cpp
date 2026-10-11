@@ -145,6 +145,7 @@ protected:
             {"physicalImagesComplete", imagesComplete},
             {"builtinInputEvents", std::move(events)}, {"builtinLiteralTokens", std::move(literals)},
             {"memberLookup",llvm::json::Object{{"format","cpp-member-lookup-v1"},
+                {"populationComplete",true},
                 {"classes",std::move(lookup.rows)}}}}) << "\n";
         sink.flush(); written = !sink.has_error() && imagesComplete;
     }

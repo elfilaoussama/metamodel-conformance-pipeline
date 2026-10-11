@@ -9,6 +9,44 @@ import java.util.*;
 final class CppNativeLookupReceipt {
     private CppNativeLookupReceipt() { }
 
+    record Result(boolean populationObserved, Set<String> classifierIds,
+                  Set<String> completeClassifierIds, List<NativeEvidence.Lookup> lookups) {
+        Result {
+            classifierIds=Set.copyOf(classifierIds);
+            completeClassifierIds=Set.copyOf(completeClassifierIds);
+            lookups=List.copyOf(lookups);
+        }
+    }
+
+    static Result census(String context, JsonNode receipt,
+                         Map<String,String> declarations) throws ObservationException {
+        List<NativeEvidence.Lookup> lookups=observe(context,receipt,declarations);
+        if (receipt==null) return new Result(false,Set.of(),Set.of(),lookups);
+        try {
+            if (receipt.has("populationComplete") && !receipt.get("populationComplete").isBoolean())
+                throw new IllegalArgumentException("invalid population completeness");
+            boolean population=receipt.path("populationComplete").asBoolean(false);
+            var owners=new HashSet<String>();
+            var complete=new HashSet<String>();
+            for (JsonNode cls:array(receipt,"classes")) {
+                String owner=declarations.get(text(cls,"ownerAstId"));
+                if (owner==null) continue;
+                if (!owners.add(owner)) throw new IllegalArgumentException("duplicate classifier census");
+                if (cls.has("lookupScopeComplete") && !cls.get("lookupScopeComplete").isBoolean())
+                    throw new IllegalArgumentException("invalid lookup scope completeness");
+                if (population && !cls.get("dependent").asBoolean()
+                        && cls.path("lookupScopeComplete").asBoolean(false)) complete.add(owner);
+            }
+            for (var row:lookups) {
+                if (row.targets().knowledge()!=NativeEvidence.Knowledge.KNOWN)
+                    complete.remove(row.ownerClassifierId());
+            }
+            return new Result(population,owners,complete,lookups);
+        } catch (IllegalArgumentException invalid) {
+            throw new ObservationException("invalid C++ native lookup census: "+invalid.getMessage(),invalid);
+        }
+    }
+
     static List<NativeEvidence.Lookup> observe(String context, JsonNode receipt,
                                               Map<String,String> declarations) throws ObservationException {
         // Historical input-only helpers have no native lookup evidence.

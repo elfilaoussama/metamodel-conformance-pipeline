@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.39.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.40.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -69,7 +69,8 @@ projection. Dynamic namespace, metaclass and unsupported synthesized/execution
 cases remain unevaluated. Implicit plain-function __new__ staticness is preserved.
 All 433 integration tests pass; full research readiness remains open.
 
-rc39 adds same-pass Clang member lookup/subobject and direct-base identity
-receipts. Dependent or unavailable base identities remain unknown. C++ inherited
-completeness is not yet admitted. All 445 integration tests and eleven recorded
-small provider/evaluator/replay controls pass; full research readiness remains open.
+rc40 admits compiler-selected C++ inherited membership for explicitly complete
+contextual lookup populations. Ambiguous, dependent and unsupported scopes stay
+unevaluated. Fixed P0 remains unchanged; language/policy disagreements remain
+findings. Validated with 457 integration tests, seventeen small native/provider/
+formal/replay controls and a seeded overlap. Full research readiness remains open.
