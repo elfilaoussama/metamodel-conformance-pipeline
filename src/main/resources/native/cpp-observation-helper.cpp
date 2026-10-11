@@ -23,6 +23,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include "cpp-member-lookup.h"
 
 static std::string digest(llvm::StringRef bytes) {
     auto value = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
@@ -115,6 +116,8 @@ protected:
     }
     void EndSourceFileAction() override {
         auto &compiler = getCompilerInstance();
+        CppMemberLookup lookup(compiler.getSema());
+        lookup.TraverseDecl(compiler.getASTContext().getTranslationUnitDecl());
         llvm::json::Array consumed, images, argv;
         for (auto &file : files) consumed.push_back(std::move(file.second));
         std::set<std::string> names;
@@ -140,7 +143,9 @@ protected:
             {"target", compiler.getTarget().getTriple().str()}, {"arguments", std::move(argv)},
             {"consumedFiles", std::move(consumed)}, {"physicalImages", std::move(images)},
             {"physicalImagesComplete", imagesComplete},
-            {"builtinInputEvents", std::move(events)}, {"builtinLiteralTokens", std::move(literals)}}) << "\n";
+            {"builtinInputEvents", std::move(events)}, {"builtinLiteralTokens", std::move(literals)},
+            {"memberLookup",llvm::json::Object{{"format","cpp-member-lookup-v1"},
+                {"classes",std::move(lookup.rows)}}}}) << "\n";
         sink.flush(); written = !sink.has_error() && imagesComplete;
     }
 };

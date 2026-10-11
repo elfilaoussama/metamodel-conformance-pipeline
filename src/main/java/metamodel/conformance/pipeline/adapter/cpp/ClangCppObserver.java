@@ -69,8 +69,8 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.11.0";
-    private static final String PROFILE_ID = "contextual-native-projection-v6";
+    public static final String ADAPTER_VERSION = "0.13.0";
+    private static final String PROFILE_ID = "contextual-native-projection-v7";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -148,6 +148,8 @@ public final class ClangCppObserver implements SourceObserver {
             List<NativeEvidence.Invocation> nativeInvocations = new ArrayList<>();
             Map<String, NativeEvidence.Invocation> invocationByContext = new HashMap<>();
             Map<String, NativeEvidence.Input> tracedInputs = new java.util.TreeMap<>();
+            List<NativeEvidence.Lookup> nativeLookups = new ArrayList<>();
+            Map<String,List<NativeEvidence.DirectBase>> compilerBases = new HashMap<>();
             Set<Path> coveredProjectFiles = new HashSet<>();
             if (nativeHelper != null) recordPhysicalHash(nativeHelper, physicalHashes);
 
@@ -166,6 +168,8 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(file);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
+                retainLookups(result, contextId, nativeLookups);
+                retainBaseIdentities(result, compilerBases);
                 observationIncomplete |= incorporateResult(
                         root, file, result, byDefinitionKey, diagnostics,
                         unitsByPath, physicalHashes, coveredProjectFiles);
@@ -185,6 +189,8 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(header);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
+                retainLookups(result, contextId, nativeLookups);
+                retainBaseIdentities(result, compilerBases);
                 observationIncomplete |= incorporateResult(
                         root, header, result, byDefinitionKey, diagnostics,
                         unitsByPath, physicalHashes, coveredProjectFiles);
@@ -292,8 +298,28 @@ public final class ClangCppObserver implements SourceObserver {
             for (Draft draft : drafts) {
                 LinkedHashSet<String> parentIds = new LinkedHashSet<>();
                 List<NativeEvidence.DirectBase> directBases = new ArrayList<>();
+                List<NativeEvidence.DirectBase> observedBases = compilerBases.get(draft.id());
+                if (observedBases != null && observedBases.size() != draft.bases().size()) {
+                    throw new ObservationException("C++ compiler/source direct-base population mismatch");
+                }
+                int baseIndex = 0;
                 for (BaseDraft base : draft.bases()) {
-                    List<Draft> internal = internalBaseCandidates(draft, base.targetName(), byQualifiedName);
+                    if (observedBases != null) {
+                        NativeEvidence.DirectBase observedBase = observedBases.get(baseIndex++);
+                        directBases.add(observedBase);
+                        if (observedBase.targetClassifierId().knowledge() == NativeEvidence.Knowledge.KNOWN) {
+                            parentIds.addAll(observedBase.targetClassifierId().values());
+                        } else {
+                            unresolved.add(new UnresolvedParent(draft.id(), base.targetName(),
+                                    draft.path(), positiveLine(base.line(), draft.line())));
+                        }
+                        continue;
+                    }
+                    // A template parameter can shadow a same-named source classifier.
+                    // Spelling-based matching cannot prove base identity in this scope;
+                    // keep it unavailable until compiler-resolved identity is observed.
+                    List<Draft> internal = base.templateContext() ? List.of()
+                            : internalBaseCandidates(draft, base.targetName(), byQualifiedName);
                     NativeEvidence.Evidence<String> target = internal.size() == 1
                             ? NativeEvidence.Evidence.known(List.of(internal.get(0).id()))
                             : NativeEvidence.Evidence.unavailable(internal.size() > 1
@@ -443,11 +469,32 @@ public final class ClangCppObserver implements SourceObserver {
                     diagnostics,
                     List.of(),
                     new NativeEvidence.Bundle(domains, inputRoles, nativeInvocations, nativeBases,
-                            nativeSignatures, List.of(), List.of()));
+                            nativeSignatures, nativeLookups, List.of()));
         } catch (ObservationException exception) {
             throw exception;
         } catch (IOException | RuntimeException failure) {
             throw new ObservationException("C++ observation failed: " + failure.getMessage(), failure);
+        }
+    }
+
+    private static void retainLookups(AnalysisResult result, String contextId,
+                                      List<NativeEvidence.Lookup> output) throws ObservationException {
+        if (result.trace() != null && result.astFailure() == null && result.exitCode() == 0) {
+            output.addAll(CppNativeLookupReceipt.observe(contextId, result.trace().memberLookup(),
+                    result.collector().nativeDeclarationKeys));
+        }
+    }
+
+    private static void retainBaseIdentities(AnalysisResult result,
+            Map<String,List<NativeEvidence.DirectBase>> output) throws ObservationException {
+        if (result.trace() != null && result.astFailure() == null && result.exitCode() == 0) {
+            for (var entry : CppNativeBaseReceipt.observe(result.trace().memberLookup(),
+                    result.collector().nativeDeclarationKeys).entrySet()) {
+                var previous = output.putIfAbsent(entry.getKey(), entry.getValue());
+                if (previous != null && !previous.equals(entry.getValue())) {
+                    throw new ObservationException("conflicting C++ compiler base observations");
+                }
+            }
         }
     }
 
@@ -1095,6 +1142,9 @@ public final class ClangCppObserver implements SourceObserver {
         private boolean incomplete;
         private MemberSink activeSink;
         private MemberBuilder pendingMember;
+        // Pointer IDs only join records within the same compiler invocation.
+        // They never become canonical identifiers or provenance hashes.
+        private final Map<String,String> nativeDeclarationKeys = new HashMap<>();
 
         private AstCollector(Path root, Path workingDirectory, String contextId, List<ObservationDiagnostic> diagnostics) {
             this.root = root;
@@ -1113,6 +1163,7 @@ public final class ClangCppObserver implements SourceObserver {
             }
 
             String kind = "";
+            String nativeId = "";
             String name = "";
             String tag = "";
             String storageClass = "";
@@ -1137,6 +1188,7 @@ public final class ClangCppObserver implements SourceObserver {
                 String field = parser.currentName();
                 JsonToken valueToken = parser.nextToken();
                 switch (field) {
+                    case "id" -> nativeId = parser.getValueAsString("");
                     case "kind" -> kind = parser.getValueAsString("");
                     case "name" -> name = parser.getValueAsString("");
                     case "tagUsed" -> tag = parser.getValueAsString("");
@@ -1170,6 +1222,7 @@ public final class ClangCppObserver implements SourceObserver {
                                 kind, name, tag, storageClass, access, pure, variadic,
                                 completeDefinition, implicit,
                                 location, range, bases, type, scope, file, templateContext);
+                        registerNativeDeclaration(nativeId,node);
                         processed = true;
                         childScope = node.childScope();
                         childTemplateContext = node.templateContext();
@@ -1209,10 +1262,19 @@ public final class ClangCppObserver implements SourceObserver {
                         kind, name, tag, storageClass, access, pure, variadic,
                         completeDefinition, implicit,
                         location, range, bases, type, scope, file, templateContext);
+                registerNativeDeclaration(nativeId,node);
                 if (node.pendingMember() != null) {
                     node.pendingMember().finish();
                 }
             }
+        }
+
+        private void registerNativeDeclaration(String nativeId, NodeResult node) {
+            if (nativeId.isEmpty()) return;
+            if (node.recordDraft() != null) nativeDeclarationKeys.put(nativeId,node.recordDraft().id());
+            if (node.pendingMember() != null) nativeDeclarationKeys.put(nativeId,
+                    "mem_" + Hashing.sha256("cpp\\0member\\0" + contextId + "\\0"
+                            + node.pendingMember().definitionKey));
         }
 
         private NodeResult processNode(

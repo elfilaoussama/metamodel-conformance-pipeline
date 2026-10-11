@@ -25,7 +25,8 @@ final class CppNativeInputReceipt {
             .enable(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS);
     private static final Pattern VERSION = Pattern.compile("(?:clang version|version)\\s+([0-9]+(?:\\.[0-9]+){0,2})");
 
-    record Result(NativeEvidence.Invocation invocation, List<NativeEvidence.Input> physicalInputs) { }
+    record Result(NativeEvidence.Invocation invocation, List<NativeEvidence.Input> physicalInputs,
+                  JsonNode memberLookup) { }
     record Context(String contextId, String compilerExecutable, String compilerVersion, String target,
                    Path helper, Path workingDirectory, Path mainSource, List<String> actualCompilerArgv,
                    List<String> semanticCompilerArguments, String compilerSha256) {
@@ -111,7 +112,8 @@ final class CppNativeInputReceipt {
                     "helperImages", images, "frontendVersion", text(root, "compilerVersion"), "target", target)));
             return new Result(new NativeEvidence.Invocation(contextId, compilerExecutable,
                     workingDirectory.toString(), semanticCompilerArguments, toolIdentity,
-                    NativeEvidence.Evidence.known(physical), NativeEvidence.Evidence.known(macros)), physical);
+                    NativeEvidence.Evidence.known(physical), NativeEvidence.Evidence.known(macros)), physical,
+                    root.get("memberLookup"));
         } catch (IllegalArgumentException invalid) {
             throw new ObservationException("invalid C++ same-pass input receipt: " + invalid.getMessage(), invalid);
         }
