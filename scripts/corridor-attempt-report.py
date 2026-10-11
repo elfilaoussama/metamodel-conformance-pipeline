@@ -10,6 +10,8 @@ def main():
     output, repository, commit, provider, domain, clone, resolution, analysis, replay = sys.argv[1:10]
     language = sys.argv[10] if len(sys.argv) == 11 else "cpp"
     if language not in ("cpp", "python"): raise ValueError("unsupported corridor language")
+    if language == "python" and domain == "SELECTED_BUILD":
+        raise ValueError("Python AST observation is source-only; resolved lock metadata is not a selected-build measurement")
     root = Path(output)
     clone, resolution, analysis, replay = map(int, (clone, resolution, analysis, replay))
     capsule = root / "result/verification-capsule.json"

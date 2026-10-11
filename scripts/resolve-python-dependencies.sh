@@ -20,6 +20,7 @@ fi
 source_root="$(cd "$source_root" && pwd -P)"
 mkdir -p "$(dirname "$output_file")"
 : > "$output_file"
+rm -f -- "${output_file}.provenance.json"
 
 resolver_image="${PYTHON_PROVIDER_IMAGE:-ghcr.io/astral-sh/uv:python3.12-bookworm-slim}"
 [[ "$resolver_image" =~ ^[0-9A-Za-z._/:@-]+$ ]] || { echo "invalid PYTHON_PROVIDER_IMAGE" >&2; exit 64; }
@@ -29,6 +30,14 @@ command -v docker >/dev/null 2>&1 || { echo "Docker is required to isolate Pytho
 # deterministic dependency evidence to resolve.
 [[ -f "$source_root/uv.lock" ]] \
   || { echo "no uv.lock at the Python source root; no declared dependency evidence" >&2; exit 70; }
+lock_digest="$(python3 -c 'import hashlib,sys;print(hashlib.sha256(open(sys.argv[1],"rb").read()).hexdigest())' "$source_root/uv.lock")"
+
+# Resolve once: installation and inventory must use the same physical image.
+if ! image_id="$(docker image inspect --format '{{.Id}}' "$resolver_image" 2>/dev/null)"; then
+  docker pull "$resolver_image" >/dev/null
+  image_id="$(docker image inspect --format '{{.Id}}' "$resolver_image")"
+fi
+[[ "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "invalid Python provider image identity" >&2; exit 70; }
 
 resolution_root="${output_file}.cache"
 rm -rf -- "$resolution_root"
@@ -63,7 +72,7 @@ docker run --rm --cap-drop=ALL --security-opt=no-new-privileges \
   -e UV_PROJECT_ENVIRONMENT="$container_out/env" \
   -e UV_CACHE_DIR="$container_out/uv-cache" \
   -e UV_PYTHON_DOWNLOADS=automatic \
-  -w "$container_worktree" "$resolver_image" \
+  -w "$container_worktree" "$image_id" \
   uv sync --frozen --no-install-workspace --no-progress
 
 environment="$resolution_root/env"
@@ -75,6 +84,7 @@ environment="$resolution_root/env"
 cat > "$resolution_root/inventory.py" <<'PYINVENTORY'
 import hashlib
 import importlib.metadata
+import json
 import pathlib
 import sys
 import sysconfig
@@ -90,6 +100,10 @@ def file_digest(path):
 
 site_packages = pathlib.Path(sysconfig.get_paths()["purelib"])
 print("python\t" + ".".join(str(part) for part in sys.version_info[:3]))
+runtime = pathlib.Path(sys.executable).resolve(strict=True)
+print("runtime\t" + json.dumps(dict(executable=str(runtime), sha256=file_digest(runtime),
+    version=".".join(str(part) for part in sys.version_info[:3]),
+    implementation=sys.implementation.name), sort_keys=True, separators=(",", ":")))
 
 distributions = sorted(
     importlib.metadata.distributions(path=[str(site_packages)]),
@@ -146,17 +160,21 @@ docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
   --user "$(id -u):$(id -g)" \
   --mount "type=bind,src=$resolution_root,dst=$container_out" \
   -e TMPDIR="$container_tmp" \
-  "$resolver_image" \
+  "$image_id" \
   "$container_out/env/bin/python" "$container_out/inventory.py" > "$resolution_root/inventory.tsv"
 
-python3 - "$resolution_root/inventory.tsv" "$output_file" <<'PYHOST'
+python3 - "$resolution_root/inventory.tsv" "$output_file" "$image_id" "$resolver_image" "$source_root" "$lock_digest" <<'PYHOST'
+import hashlib
+import json
+import pathlib
 import sys
 
-inventory, output = sys.argv[1:]
+inventory, output, image_id, requested_image, source_root, lock_digest = sys.argv[1:]
 
 python_version = None
 distributions = []
 modules = []
+runtime = None
 with open(inventory, encoding="utf-8") as source:
     for number, line in enumerate(source, 1):
         fields = line.rstrip("\n").split("\t")
@@ -167,6 +185,10 @@ with open(inventory, encoding="utf-8") as source:
             if python_version is not None and python_version != fields[1]:
                 raise SystemExit("conflicting python versions in inventory")
             python_version = fields[1]
+        elif kind == "runtime":
+            if len(fields) != 2 or runtime is not None:
+                raise SystemExit(f"invalid or duplicate runtime row {number}")
+            runtime = json.loads(fields[1])
         elif kind == "distribution":
             if len(fields) != 4 or not all(fields[1:]):
                 raise SystemExit(f"invalid distribution row {number}")
@@ -180,6 +202,12 @@ with open(inventory, encoding="utf-8") as source:
 
 if python_version is None:
     raise SystemExit("inventory has no python version")
+if not isinstance(runtime, dict) or runtime.get("version") != python_version:
+    raise SystemExit("inventory runtime/version receipt is absent or inconsistent")
+if not pathlib.PurePosixPath(runtime.get("executable", "")).is_absolute() or not isinstance(runtime.get("sha256"), str) or len(runtime["sha256"]) != 64 or any(c not in "0123456789abcdef" for c in runtime["sha256"]):
+    raise SystemExit("invalid runtime executable receipt")
+if hashlib.sha256((pathlib.Path(source_root) / "uv.lock").read_bytes()).hexdigest() != lock_digest:
+    raise SystemExit("source lockfile changed during resolution")
 
 context_id = "python|environment"
 with open(output, "w", encoding="utf-8") as sink:
@@ -188,6 +216,13 @@ with open(output, "w", encoding="utf-8") as sink:
         sink.write("\t".join(("distribution", context_id, name, version, digest)) + "\n")
     for module, name in sorted(modules):
         sink.write("\t".join(("module", context_id, module, name)) + "\n")
+manifest_hash = hashlib.sha256(pathlib.Path(output).read_bytes()).hexdigest()
+pathlib.Path(output + ".provenance.json").write_text(json.dumps(dict(
+    format="python-declared-environment-v1", manifestSha256=manifest_hash,
+    requestedImage=requested_image, imageId=image_id, originalSourceRoot=source_root,
+    lockSha256=lock_digest, runtimeIdentity=runtime,
+    evidenceKind="INSTALLED_DISTRIBUTION_INVENTORY", consumptionCertified=False,
+    inventoryScope="Distribution-recorded physical files excluding bytecode caches"), indent=2) + "\n")
 PYHOST
 
 echo "PYTHON_RESOLVE_OK"

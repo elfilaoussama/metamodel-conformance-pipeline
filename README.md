@@ -40,3 +40,13 @@ helpers fail without fallback. Generated Java output repeat checks now bind
 relative file paths and bytes through a shared digest. Four tiny real-provider
 generator fixtures pass. These script gates do not certify whole environment
 closure or scientific study readiness.
+
+Python resolved-environment corridors require PYTHON_OBSERVER_JAVA_HOME as an
+existing compatible Linux Java home. Provider installation/inventory use one
+immutable image; lock, manifest and runtime receipts are retained. The runner
+checks the actual interpreter before observation and reconciles observer bytes
+before replay. These measurements remain SOURCE_ONLY; dependency metadata does
+not certify imported type graphs. No-lock fallback remains diagnostic. C++ and
+Python now share bounded container execution and forced deadline cleanup.
+Small actual locked-corridor and missing-runtime controls pass; full research
+readiness remains open.

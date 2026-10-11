@@ -10,10 +10,12 @@ import json
 import os
 from pathlib import Path
 import re
-import signal
-import subprocess
+import importlib.util
 import time
-import uuid
+executor_path=Path(__file__).with_name('provider-execution.py')
+executor_spec=importlib.util.spec_from_file_location('provider_execution',executor_path)
+executor=importlib.util.module_from_spec(executor_spec);executor_spec.loader.exec_module(executor)
+run_stage=executor.run_stage
 
 
 def sha(path):
@@ -56,7 +58,7 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
         base+=['--mount','type=bind,src='+str(host)+',dst='+target+(',readonly' if readonly else '')]
     identity=dict(recipe=recipe,manifestSha256=sha(manifest),
         producerJarSha256=sha(jar),javaExecutableSha256=sha(java_home/'bin/java'),
-        configuredJavaHome=str(java_home),controllerSha256=sha(Path(__file__)))
+        configuredJavaHome=str(java_home),controllerSha256=sha(Path(__file__)),executorSha256=sha(executor_path))
     identity['nativeInputProfile']='UNTRACED' if native_helper is None else 'SAME_PASS_INPUTS_V1'
     if native_helper is not None:
         identity['nativeHelper']=dict(configuredPath=str(native_helper),containerPath='/pipeline-native-helper',sha256=sha(native_helper))
@@ -70,26 +72,6 @@ def analysis_java_arguments(identity):
     return arguments+['-jar','/pipeline.jar','analyze',
         '--source','/workspace/worktree','--language','cpp','--dependency-manifest','/pipeline-contexts.tsv',
         '--output','/pipeline-output/result']
-
-
-def run_stage(base,image,arguments,log,seconds):
-    name='conformance-cpp-'+uuid.uuid4().hex
-    command=base+['--name',name,image]+arguments
-    before=time.monotonic()
-    with log.open('x') as stream:
-        process=subprocess.Popen(command,stdout=stream,stderr=subprocess.STDOUT,start_new_session=True)
-        try:code=process.wait(timeout=seconds)
-        except subprocess.TimeoutExpired:
-            # Terminating a Docker client alone does not terminate its container.
-            try:
-                subprocess.run(['docker','rm','--force',name],stdout=stream,stderr=subprocess.STDOUT,timeout=15,check=True)
-            finally:
-                if process.poll() is None:
-                    try:os.killpg(process.pid,signal.SIGKILL)
-                    except ProcessLookupError:pass
-                process.wait()
-            code=124
-    return dict(command=command,exit=code,seconds=round(time.monotonic()-before,3))
 
 
 def main():
