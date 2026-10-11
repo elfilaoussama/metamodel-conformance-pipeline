@@ -63,7 +63,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.13.0";
+    public static final String ADAPTER_VERSION = "0.15.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -101,7 +101,8 @@ public final class PythonAstObserver implements SourceObserver {
             }
 
             try (SourceInputSnapshot snapshot = SourceInputSnapshot.capture(root, files)) {
-            List<SourceUnit> units = new ArrayList<>(snapshot.units(Language.PYTHON));
+            List<SourceUnit> sourceUnits = snapshot.units(Language.PYTHON);
+            List<SourceUnit> units = new ArrayList<>(sourceUnits);
             List<String> paths = new ArrayList<>();
             for (Path file : files) {
                 String relative = relativePath(root, file);
@@ -119,7 +120,8 @@ public final class PythonAstObserver implements SourceObserver {
                         distribution.digest()));
             }
 
-            BridgeResult bridge = runBridge(snapshot.root(), paths);
+            BridgeExecution execution = runBridge(snapshot.root(), paths);
+            BridgeResult bridge = execution.result();
             if (bridge.runtimeExecutable() == null || bridge.runtimeContext() == null) {
                 throw new ObservationException("Python AST bridge omitted its runtime receipts");
             }
@@ -127,7 +129,7 @@ public final class PythonAstObserver implements SourceObserver {
             bridge.runtimeContext().verify();
             dependencyInputs.requireInterpreterVersion(bridge.pythonVersion());
             String configuration = JSON.writeValueAsString(new MeasurementContextIdentity(
-                    "3", Hashing.sha256(BRIDGE_SCRIPT), bridge.pythonVersion(), bridge.runtimeExecutable(), bridge.runtimeContext(), dependencyInputs.contextIdentity(),
+                    "5", Hashing.sha256(BRIDGE_SCRIPT), execution.command().get(0), bridge.pythonVersion(), bridge.runtimeExecutable(), bridge.runtimeContext(), dependencyInputs.contextIdentity(),
                     externalParents == null ? List.of() : externalParents.stream().sorted().toList()));
             String contextHash = Hashing.sha256(configuration);
             String contextId = "python-ast-domain-" + contextHash;
@@ -385,8 +387,10 @@ public final class PythonAstObserver implements SourceObserver {
                     unresolved,
                     diagnostics,
                     List.of(),
-                    new NativeEvidence.Bundle(List.of(domain), List.of(), List.of(), nativeBases,
-                            nativeSignatures, List.of(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId))));
+                    new NativeEvidence.Bundle(List.of(domain), PythonObservationInputs.roles(contextId, sourceUnits), List.of(), nativeBases,
+                            nativeSignatures, List.of(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId),
+                                    PythonObservationInputs.launch(contextId, execution.command(), bridge.runtimeExecutable()),
+                                    PythonObservationInputs.sources(contextId, sourceUnits))));
             }
         } catch (ObservationException exception) {
             throw exception;
@@ -395,10 +399,13 @@ public final class PythonAstObserver implements SourceObserver {
         }
     }
 
-    private BridgeResult runBridge(Path root, List<String> relativePaths) throws ObservationException, IOException {
+    private BridgeExecution runBridge(Path root, List<String> relativePaths) throws ObservationException, IOException {
         Path stderr = Files.createTempFile("metamodel-python-observer-", ".stderr");
         try {
-            ProcessBuilder builder = new ProcessBuilder(pythonExecutable, "-c", BRIDGE_SCRIPT);
+            // The parser is a tool, not a target-program interpreter. Exclude the
+            // working directory/PYTHONPATH and site startup before any imports.
+            ProcessBuilder builder = new ProcessBuilder(pythonExecutable, "-I", "-S", "-c", BRIDGE_SCRIPT);
+            List<String> command = List.copyOf(builder.command());
             builder.redirectError(stderr.toFile());
             Process process;
             try {
@@ -444,7 +451,7 @@ public final class PythonAstObserver implements SourceObserver {
                         "Python AST bridge exited " + exit + (error.isBlank() ? "" : ": " + error.strip()));
             }
             try {
-                return JSON.readValue(output, BridgeResult.class);
+                return new BridgeExecution(JSON.readValue(output, BridgeResult.class), command);
             } catch (IOException malformed) {
                 throw new ObservationException("Python AST bridge returned invalid JSON", malformed);
             }
@@ -565,7 +572,9 @@ public final class PythonAstObserver implements SourceObserver {
         }
     }
 
-    private record MeasurementContextIdentity(String schemaVersion, String bridgeScriptSha256,
+    private record BridgeExecution(BridgeResult result, List<String> command) { }
+
+    private record MeasurementContextIdentity(String schemaVersion, String bridgeScriptSha256, String configuredExecutable,
             String reportedInterpreterVersion, PythonRuntimeExecutable runtimeExecutable,
             PythonRuntimeContext runtimeContext,
             PythonDependencyInputs.ContextIdentity declaredEnvironment,

@@ -6,23 +6,19 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.30.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.32.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
 
-Producer rc.30 passed 405 regression tests in a fresh local normal build.
-Two paired semantic families preserve all 17 relations and 11 complete
-decision/witness sets with native controls and four analyses/replays.
-Python metadata-reported module files and ordered configuration now survive
-schema15 JSON/XMI/capsule transport. Schema14 remains supported; a reproduced
-empty-field JSON compatibility defect is repaired and validated with the
-frozen previous consumer. Nonempty contextual inventory transport also passes.
-The frozen validated JAR SHA-256 is
-`2cde9cb9d6cd53bd47a91c0e839a73ffe709429a9e1f8fa2760c9bddd9172052`.
-Fixed P0, the schema14 definition and the invariant registry remain unchanged.
-Reported module locations are not consumed-input receipts: bytecode, shared
-images, transient loaders, full environment and input-role closure remain open.
+Producer rc.32 passed 408 tests in a fresh local build. Four benign startup
+controls confirm that isolated/no-site source parsing does not execute project
+ast.py or PYTHONPATH/site startup hooks. Two paired tiny semantic families retain
+all 17 formal relations, 11 complete decision/witness sets and capsule replay.
+Configured launch and captured-source receipts are distinct from complete
+execution provenance. Fixed P0 and schemas remain unchanged. The frozen JAR SHA256
+is `7e5155377dae53ad408808b58ccf208f758984eb0cebf1819feb45517b547b66`.
+This milestone does not certify complete language semantics or research readiness.
 No new evidence completeness capabilities were enabled. Unknown or unsupported
 semantics remain explicit; capsule replay verifies recorded observations, not
 the fidelity of arbitrary source code.
