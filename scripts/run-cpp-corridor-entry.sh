@@ -44,8 +44,12 @@ if [[ $clone_exit -eq 0 ]]; then
       echo 'selected C++ execution requires CPP_OBSERVER_JAVA_HOME compatible with the provider image; host relocation is not supported' >"$output_root/analysis.log"
       analysis_exit=69
     else
+      helper_args=()
+      if [[ -n "${CPP_OBSERVER_NATIVE_HELPER:-}" ]]; then
+        helper_args=(--native-helper "$CPP_OBSERVER_NATIVE_HELPER")
+      fi
       python3 "$(dirname "$0")/run-cpp-selected-build.py" --source "$source_root" --manifest "$manifest" \
-        --jar "$pipeline_jar" --java-home "$CPP_OBSERVER_JAVA_HOME" --output "$output_root" >"$output_root/execution-launch.log" 2>&1
+        --jar "$pipeline_jar" --java-home "$CPP_OBSERVER_JAVA_HOME" --output "$output_root" "${helper_args[@]}" >"$output_root/execution-launch.log" 2>&1
       execution_exit=$?
       if [[ -f "$output_root/selected-build-execution.json" ]]; then
         read -r analysis_exit replay_exit < <(python3 - "$output_root/selected-build-execution.json" <<'PYOUTCOME'

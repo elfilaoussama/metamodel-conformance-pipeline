@@ -15,11 +15,10 @@ source_root="$(cd "$source_root" && pwd -P)"
 mkdir -p "$(dirname "$output_file")"
 : > "$output_file"
 
-# Order- and path-independent content digest of a materialized generated output.
+# Relocation-independent digest retaining relative paths and file contents.
 # Two compilation runs must agree on it before any generated evidence is kept.
 generated_hash() {
-  find "$1" -type f -print0 2>/dev/null | sort -z | xargs -0 -r sha256sum 2>/dev/null \
-    | awk '{print $1}' | sort | sha256sum | awk '{print $1}'
+  python3 "$script_dir/generated-input-digest.py" "$1"
 }
 
 mapfile -d '' settings_files < <(find "$source_root" -type f \( -name settings.gradle -o -name settings.gradle.kts \) \

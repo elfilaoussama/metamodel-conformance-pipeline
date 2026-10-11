@@ -23,7 +23,7 @@ def sha(path):
     return digest.hexdigest()
 
 
-def execution_plan(source,manifest,jar,java_home,output):
+def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
     source,manifest,jar,java_home,output=[p.resolve(strict=True) for p in (source,manifest,jar,java_home,output)]
     provenance=Path(str(manifest)+'.provenance.json')
     data=json.loads(provenance.read_text())
@@ -39,19 +39,37 @@ def execution_plan(source,manifest,jar,java_home,output):
         raise ValueError('unsupported provider mount layout')
     configured=cache/'worktree'
     if not configured.is_dir() or not (java_home/'bin/java').is_file():raise ValueError('configured tree or Java runtime is unavailable')
-    for path in (source,manifest,jar,java_home,output,cache):
+    if native_helper is not None:
+        native_helper=native_helper.resolve(strict=True)
+        if not native_helper.is_file() or not os.access(native_helper,os.X_OK):
+            raise ValueError('configured native helper must be an executable file')
+    for path in (source,manifest,jar,java_home,output,cache)+((native_helper,) if native_helper is not None else ()):
         if ',' in str(path) or '\n' in str(path):raise ValueError('unsupported Docker mount path')
     mounts=[(source,'/workspace/source',True),(configured,'/workspace/worktree',True),
         (cache,'/workspace/out',True),(java_home,'/pipeline-java',True),
         (jar,'/pipeline.jar',True),(manifest,'/pipeline-contexts.tsv',True),(output,'/pipeline-output',False)]
+    if native_helper is not None:mounts.append((native_helper,'/pipeline-native-helper',True))
     base=['docker','run','--rm','--read-only','--network=none','--cap-drop=ALL',
         '--security-opt=no-new-privileges','--tmpfs','/tmp:rw,nosuid,nodev',
         '--memory','1536m','--user',str(os.getuid())+':'+str(os.getgid())]
     for host,target,readonly in mounts:
         base+=['--mount','type=bind,src='+str(host)+',dst='+target+(',readonly' if readonly else '')]
-    return base,recipe['imageId'],dict(recipe=recipe,manifestSha256=sha(manifest),
+    identity=dict(recipe=recipe,manifestSha256=sha(manifest),
         producerJarSha256=sha(jar),javaExecutableSha256=sha(java_home/'bin/java'),
         configuredJavaHome=str(java_home),controllerSha256=sha(Path(__file__)))
+    identity['nativeInputProfile']='UNTRACED' if native_helper is None else 'SAME_PASS_INPUTS_V1'
+    if native_helper is not None:
+        identity['nativeHelper']=dict(configuredPath=str(native_helper),containerPath='/pipeline-native-helper',sha256=sha(native_helper))
+    return base,recipe['imageId'],identity
+
+
+def analysis_java_arguments(identity):
+    arguments=['/pipeline-java/bin/java','-Xmx1g']
+    if identity['nativeInputProfile']=='SAME_PASS_INPUTS_V1':
+        arguments.append('-Dmetamodel.conformance.cpp.nativeHelper=/pipeline-native-helper')
+    return arguments+['-jar','/pipeline.jar','analyze',
+        '--source','/workspace/worktree','--language','cpp','--dependency-manifest','/pipeline-contexts.tsv',
+        '--output','/pipeline-output/result']
 
 
 def run_stage(base,image,arguments,log,seconds):
@@ -77,6 +95,7 @@ def run_stage(base,image,arguments,log,seconds):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ['source','manifest','jar','java-home','output']:parser.add_argument('--'+name,type=Path,required=True)
+    parser.add_argument('--native-helper',type=Path,help='optional executable built for the recorded provider image; no fallback on failure')
     parser.add_argument('--analysis-seconds',type=int,default=30)
     parser.add_argument('--replay-seconds',type=int,default=20)
     a=parser.parse_args()
@@ -86,11 +105,9 @@ def main():
         if (a.output/name).exists():parser.error('execution output must be fresh: '+name)
     started=time.monotonic();receipt=dict(state='FAILED',analysisExit=69,verificationExit=99,measurementCompleteness='NOT_CERTIFIED')
     try:
-        base,image,identity=execution_plan(a.source,a.manifest,a.jar,a.java_home,a.output)
+        base,image,identity=execution_plan(a.source,a.manifest,a.jar,a.java_home,a.output,a.native_helper)
         receipt.update(identity)
-        receipt['analysis']=run_stage(base,image,['/pipeline-java/bin/java','-Xmx1g','-jar','/pipeline.jar','analyze',
-            '--source','/workspace/worktree','--language','cpp','--dependency-manifest','/pipeline-contexts.tsv',
-            '--output','/pipeline-output/result'],a.output/'analysis.log',a.analysis_seconds)
+        receipt['analysis']=run_stage(base,image,analysis_java_arguments(identity),a.output/'analysis.log',a.analysis_seconds)
         receipt['analysisExit']=receipt['analysis']['exit']
         capsule=a.output/'result/verification-capsule.json'
         if receipt['analysisExit'] in (0,2,3) and capsule.is_file():

@@ -33,3 +33,10 @@ The optional C++ same-pass helper source is
 Clang/LLVM 14 development libraries and a separately built native executable;
 enable it with `-Dmetamodel.conformance.cpp.nativeHelper=/absolute/helper/path`
 before `-jar`. The ordinary backend does not provide that tracing evidence.
+
+Provider script follow-up: optional CPP_OBSERVER_NATIVE_HELPER forwards a
+compatible same-pass helper into the C++ provider image; invalid configured
+helpers fail without fallback. Generated Java output repeat checks now bind
+relative file paths and bytes through a shared digest. Four tiny real-provider
+generator fixtures pass. These script gates do not certify whole environment
+closure or scientific study readiness.
