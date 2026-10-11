@@ -248,6 +248,12 @@ final class JavacImplementationObserver {
                 }
                 List<MethodBodyObservation> bodyCandidates = bodiesByLocation.get(
                         new BodyLocator(range.path(), range.startLine()));
+                if (bodyCandidates != null) {
+                    String exactKey = SpoonMethodBodyObserver.bodyTechnicalKey(
+                            range.path(), range.startOffset(), range.inclusiveEndOffset());
+                    bodyCandidates = bodyCandidates.stream()
+                            .filter(body -> body.technicalKey().equals(exactKey)).toList();
+                }
                 if (bodyCandidates == null || bodyCandidates.size() != 1) {
                     return Result.incomplete(
                             methodLocation.path(), methodLocation.line(),
@@ -333,7 +339,7 @@ final class JavacImplementationObserver {
         return new SourceRange(
                 relativePath(root, source),
                 Math.toIntExact(unit.getLineMap().getLineNumber(start)),
-                Math.toIntExact(unit.getLineMap().getLineNumber(Math.max(start, end - 1))));
+                Math.toIntExact(unit.getLineMap().getLineNumber(Math.max(start, end - 1))), start, end - 1);
     }
 
     private static MemberObservation uniqueDeclaration(
@@ -469,6 +475,6 @@ final class JavacImplementationObserver {
     private record SourcePoint(String path, int line) {
     }
 
-    private record SourceRange(String path, int startLine, int endLine) {
+    private record SourceRange(String path, int startLine, int endLine, long startOffset, long inclusiveEndOffset) {
     }
 }

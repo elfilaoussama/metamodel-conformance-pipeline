@@ -93,14 +93,17 @@ final class SpoonMethodBodyObserver {
                     continue;
                 }
                 String relative = root.relativize(source).toString().replace('\\', '/');
-                String technicalKey = "body_" + Hashing.sha256(
-                        "java-body\0" + relative + "\0" + position.getSourceStart()
-                                + "\0" + position.getSourceEnd());
+                String technicalKey = bodyTechnicalKey(relative,
+                        position.getSourceStart(), position.getSourceEnd());
                 bodies.add(new MethodBodyObservation(
                         technicalKey, relative, position.getLine(), position.getEndLine()));
             }
         }
         return new Collected(bodies, complete);
+    }
+
+    static String bodyTechnicalKey(String path, long start, long inclusiveEnd) {
+        return "body_" + Hashing.sha256("java-body\0" + path + "\0" + start + "\0" + inclusiveEnd);
     }
 
     private static int complianceLevel(JavaCompilationContext context) {

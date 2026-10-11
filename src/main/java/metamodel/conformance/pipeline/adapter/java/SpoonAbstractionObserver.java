@@ -291,6 +291,14 @@ final class SpoonAbstractionObserver {
             candidates = sameEndLine;
         }
 
+        List<String> parameterTypes = method.getParameters().stream()
+                .map(parameter -> parameter.getType().getQualifiedName())
+                .toList();
+        List<MemberObservation> exactSignature = candidates.stream()
+                .filter(item -> item.parameterTypes().equals(parameterTypes)).toList();
+        if (exactSignature.size() == 1) return exactSignature.get(0);
+        if (!exactSignature.isEmpty()) candidates = exactSignature;
+
         int parameterCount = method.getParameters().size();
         List<MemberObservation> sameArity = candidates.stream()
                 .filter(item -> item.parameterTypes().size() == parameterCount)
