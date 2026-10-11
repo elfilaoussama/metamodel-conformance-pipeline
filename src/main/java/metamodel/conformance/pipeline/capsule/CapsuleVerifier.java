@@ -36,7 +36,7 @@ public final class CapsuleVerifier {
             if (capsule.alloyExecution() == null || !capsule.alloyExecution().supported()) {
                 return invalid("unsupported or missing Alloy execution configuration");
             }
-            Path root = capsuleFile.getParent().toRealPath(LinkOption.NOFOLLOW_LINKS);
+            Path root = capsuleFile.getParent().toRealPath();
             Path observationPath = resolveArtifact(root, capsule.observationPath());
             Path alloyPath = resolveArtifact(root, capsule.alloyPath());
             ArtifactLimits.requireFileWithin(
@@ -87,12 +87,16 @@ public final class CapsuleVerifier {
         if (relativePath.isAbsolute() || relativePath.normalize().startsWith("..")) {
             throw new IOException("artifact path escapes capsule directory: " + relative);
         }
-        Path candidate = root.resolve(relativePath).normalize();
-        if (Files.isSymbolicLink(candidate)) {
-            throw new IOException("symbolic-link artifacts are forbidden: " + relative);
+        Path realRoot = root.toRealPath();
+        Path candidate = realRoot;
+        for (Path component : relativePath.normalize()) {
+            candidate = candidate.resolve(component);
+            if (Files.isSymbolicLink(candidate)) {
+                throw new IOException("symbolic-link artifact components are forbidden: " + relative);
+            }
         }
-        Path real = candidate.toRealPath(LinkOption.NOFOLLOW_LINKS);
-        if (!real.startsWith(root) || !Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {
+        Path real = candidate.toRealPath();
+        if (!real.startsWith(realRoot) || !Files.isRegularFile(real, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("artifact is outside capsule directory or is not a file: " + relative);
         }
         return real;
