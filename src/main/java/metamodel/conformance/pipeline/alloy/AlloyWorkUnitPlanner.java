@@ -79,10 +79,11 @@ final class AlloyWorkUnitPlanner {
             Observation observation,
             InvariantDefinition definition) {
         Set<String> sourcePaths = sourcePaths(observation);
+        ClosureIndex index = closureIndex(observation, definition.partitionRelations());
         List<Set<String>> closures = new ArrayList<>(observation.classifiers().stream()
                 .filter(classifier -> sourcePaths.contains(classifier.sourcePath()))
                 .map(classifier -> upwardClosure(
-                        classifier, observation, definition.partitionRelations(), sourcePaths))
+                        classifierNode(classifier.id()), index, definition.partitionRelations(), sourcePaths))
                 .toList());
         if (definition.partitionRelations().contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)
                 && definition.partitionRoots().contains(ProjectionRoot.BODY)) {
@@ -90,7 +91,7 @@ final class AlloyWorkUnitPlanner {
             closures.forEach(covered::addAll);
             for (MethodBodyObservation body : observation.methodBodies()) {
                 if (!covered.contains(bodyNode(body.technicalKey()))) {
-                    closures.add(upwardClosure(bodyNode(body.technicalKey()), observation,
+                    closures.add(upwardClosure(bodyNode(body.technicalKey()), index,
                             definition.partitionRelations(), sourcePaths));
                 }
             }
@@ -110,25 +111,31 @@ final class AlloyWorkUnitPlanner {
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
-    private static Set<String> upwardClosure(
-            ClassifierObservation root,
-            Observation observation,
-            Set<ProjectionRelation> relations,
-            Set<String> sourcePaths) {
-        return upwardClosure(classifierNode(root.id()), observation, relations, sourcePaths);
-    }
+    private record ClosureIndex(
+            Map<String, ClassifierObservation> classifiers,
+            Map<String, MemberObservation> members,
+            Map<String, Set<String>> declaringClassifiers,
+            Map<String, ImplementationBindingObservation> bindings,
+            Map<String, Set<String>> bindingsByImplementer,
+            Map<String, Set<String>> bindingsByBody) { }
 
-    private static Set<String> upwardClosure(
-            String root,
-            Observation observation,
-            Set<ProjectionRelation> relations,
-            Set<String> sourcePaths) {
+    private static ClosureIndex closureIndex(
+            Observation observation, Set<ProjectionRelation> relations) {
         Map<String, ClassifierObservation> classifiers = new TreeMap<>();
         for (ClassifierObservation classifier : observation.classifiers()) {
             classifiers.put(classifier.id(), classifier);
         }
         Map<String, MemberObservation> members = new TreeMap<>();
         for (MemberObservation member : observation.members()) members.put(member.technicalKey(), member);
+        Map<String, Set<String>> declaringClassifiers = new TreeMap<>();
+        if (relations.contains(ProjectionRelation.DECLARED_MEMBERS)) {
+            for (ClassifierObservation classifier : observation.classifiers()) {
+                for (String member : classifier.declaredMemberKeys()) {
+                    declaringClassifiers.computeIfAbsent(member, ignored -> new TreeSet<>())
+                            .add(classifier.id());
+                }
+            }
+        }
         Map<String, ImplementationBindingObservation> bindings = new TreeMap<>();
         Map<String, Set<String>> bindingsByImplementer = new TreeMap<>();
         Map<String, Set<String>> bindingsByBody = new TreeMap<>();
@@ -141,6 +148,15 @@ final class AlloyWorkUnitPlanner {
                         ignored -> new TreeSet<>()).add(binding.technicalKey());
             }
         }
+        return new ClosureIndex(classifiers, members, declaringClassifiers, bindings,
+                bindingsByImplementer, bindingsByBody);
+    }
+
+    private static Set<String> upwardClosure(
+            String root,
+            ClosureIndex index,
+            Set<ProjectionRelation> relations,
+            Set<String> sourcePaths) {
         Set<String> result = new TreeSet<>();
         ArrayDeque<String> pending = new ArrayDeque<>();
         pending.add(root);
@@ -148,7 +164,7 @@ final class AlloyWorkUnitPlanner {
             String node = pending.removeFirst();
             if (!result.add(node)) continue;
             if (node.startsWith(CLASSIFIER_PREFIX)) {
-                ClassifierObservation classifier = classifiers.get(node.substring(CLASSIFIER_PREFIX.length()));
+                ClassifierObservation classifier = index.classifiers().get(node.substring(CLASSIFIER_PREFIX.length()));
                 if (relations.contains(ProjectionRelation.PARENTS)) {
                     classifier.parentIds().forEach(id -> pending.addLast(classifierNode(id)));
                 }
@@ -160,21 +176,27 @@ final class AlloyWorkUnitPlanner {
                     classifier.inheritedMemberKeys().forEach(key -> pending.addLast(memberNode(key)));
                 }
                 if (relations.contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)) {
-                    bindingsByImplementer.getOrDefault(classifier.id(), Set.of())
+                    index.bindingsByImplementer().getOrDefault(classifier.id(), Set.of())
                             .forEach(key -> pending.addLast(bindingNode(key)));
                 }
-            } else if (node.startsWith(MEMBER_PREFIX)
-                    && relations.contains(ProjectionRelation.OVERRIDE_RELATIONS)) {
-                members.get(node.substring(MEMBER_PREFIX.length())).overriddenMemberKeys()
-                        .forEach(key -> pending.addLast(memberNode(key)));
+            } else if (node.startsWith(MEMBER_PREFIX)) {
+                String member = node.substring(MEMBER_PREFIX.length());
+                // A reached target/observed member still needs its declaration
+                // relation: otherwise source-member predicates silently change.
+                index.declaringClassifiers().getOrDefault(member, Set.of())
+                        .forEach(owner -> pending.addLast(classifierNode(owner)));
+                if (relations.contains(ProjectionRelation.OVERRIDE_RELATIONS)) {
+                    index.members().get(member).overriddenMemberKeys()
+                            .forEach(key -> pending.addLast(memberNode(key)));
+                }
             } else if (node.startsWith(BINDING_PREFIX)) {
-                ImplementationBindingObservation binding = bindings.get(
+                ImplementationBindingObservation binding = index.bindings().get(
                         node.substring(BINDING_PREFIX.length()));
                 pending.addLast(classifierNode(binding.implementerClassifierId()));
                 pending.addLast(memberNode(binding.targetMemberKey()));
                 pending.addLast(bodyNode(binding.bodyKey()));
             } else if (node.startsWith(BODY_PREFIX)) {
-                bindingsByBody.getOrDefault(node.substring(BODY_PREFIX.length()), Set.of())
+                index.bindingsByBody().getOrDefault(node.substring(BODY_PREFIX.length()), Set.of())
                         .forEach(key -> pending.addLast(bindingNode(key)));
             }
         }

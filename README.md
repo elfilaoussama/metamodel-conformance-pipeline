@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.34.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.35.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -55,3 +55,7 @@ rc34 rejects intermediate as well as final artifact symlinks and checks actual
 capsule-directory containment. The producer passes 413 regression tests. This
 fix does not certify safety against concurrent hostile filesystem replacement
 or independent source provenance; full research readiness remains open.
+
+rc35 preserves declaration owners of reached binding target members during
+projection, repairing a reproduced false-conformance case. All 422 regression
+tests pass. Source fidelity and full research readiness remain separate gates.
