@@ -69,7 +69,7 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.10.1";
+    public static final String ADAPTER_VERSION = "0.11.0";
     private static final String PROFILE_ID = "contextual-native-projection-v6";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
@@ -144,6 +144,7 @@ public final class ClangCppObserver implements SourceObserver {
             boolean observationIncomplete = false;
             Map<String, Draft> byDefinitionKey = new HashMap<>();
             Map<String, String> sourceByContext = new java.util.TreeMap<>();
+            Map<String, Set<Path>> associatedInputs = new java.util.TreeMap<>();
             List<NativeEvidence.Invocation> nativeInvocations = new ArrayList<>();
             Map<String, NativeEvidence.Invocation> invocationByContext = new HashMap<>();
             Map<String, NativeEvidence.Input> tracedInputs = new java.util.TreeMap<>();
@@ -161,6 +162,9 @@ public final class ClangCppObserver implements SourceObserver {
                 String contextId = recordCompilationContext(root, file, unitsByPath, clangHash);
                 sourceByContext.put(contextId, relativePath(root, file));
                 AnalysisResult result = analyzeUnit(root, file, contextId, clang, clangHash);
+                Set<Path> associated = new HashSet<>(result.dependencies());
+                associated.add(file);
+                associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
                 observationIncomplete |= incorporateResult(
                         root, file, result, byDefinitionKey, diagnostics,
@@ -177,6 +181,9 @@ public final class ClangCppObserver implements SourceObserver {
                 String contextId = recordCompilationContext(root, header, unitsByPath, clangHash);
                 sourceByContext.put(contextId, relativePath(root, header));
                 AnalysisResult result = analyzeUnit(root, header, contextId, clang, clangHash);
+                Set<Path> associated = new HashSet<>(result.dependencies());
+                associated.add(header);
+                associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
                 observationIncomplete |= incorporateResult(
                         root, header, result, byDefinitionKey, diagnostics,
@@ -396,6 +403,11 @@ public final class ClangCppObserver implements SourceObserver {
             // native runtime, filesystem metadata, clock or negative-probe inputs.
             String recordedInputs = JSON.writeValueAsString(unitsByPath.values().stream()
                     .sorted(Comparator.comparing(SourceUnit::path)).toList());
+            List<NativeEvidence.RoleReceipt> inputRoles = CppInputRoles.retain(
+                    root, physicalHashes, unitsByPath, sourceByContext, associatedInputs, dependencyInputs);
+            Map<String, List<NativeEvidence.RoleReceipt>> rolesByContext = inputRoles.stream()
+                    .collect(java.util.stream.Collectors.groupingBy(NativeEvidence.RoleReceipt::contextId));
+            String recordedInputsDigest = Hashing.sha256(recordedInputs);
             List<NativeEvidence.Domain> domains = new ArrayList<>();
             for (var context : sourceByContext.entrySet()) {
                 List<Draft> contextual = byContext.getOrDefault(context.getKey(), List.of());
@@ -403,7 +415,8 @@ public final class ClangCppObserver implements SourceObserver {
                         dependencyInputs.contextForSourcePath(context.getValue()) == null
                                 ? NativeEvidence.MeasurementMode.SOURCE_ONLY : NativeEvidence.MeasurementMode.SELECTED_BUILD,
                         NativeEvidence.View.SOURCE_DECLARATIONS,
-                        Hashing.sha256(context.getKey() + "\0" + recordedInputs
+                        Hashing.sha256(context.getKey() + "\0physical-input-roles-v1\0" + recordedInputsDigest
+                                + "\0" + JSON.writeValueAsString(rolesByContext.getOrDefault(context.getKey(), List.of()))
                                 + (invocationByContext.containsKey(context.getKey()) ? "\0" + JSON.writer()
                                     .with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
                                     .writeValueAsString(invocationByContext.get(context.getKey())) : "")),
@@ -429,7 +442,7 @@ public final class ClangCppObserver implements SourceObserver {
                     unresolved,
                     diagnostics,
                     List.of(),
-                    new NativeEvidence.Bundle(domains, List.of(), nativeInvocations, nativeBases,
+                    new NativeEvidence.Bundle(domains, inputRoles, nativeInvocations, nativeBases,
                             nativeSignatures, List.of(), List.of()));
         } catch (ObservationException exception) {
             throw exception;

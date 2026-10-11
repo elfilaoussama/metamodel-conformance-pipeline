@@ -87,4 +87,21 @@ docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-
 python3 "$(dirname "$0")/cpp-context-manifest.py" "$compile_commands" "$output_file" "$worktree_root" \
   "$resolution_root/compiler-identity.json" "$container_worktree"
 
+# Preserve the actual provider image as an execution recipe, separate from the
+# compiler byte receipt and semantic context. Never infer an image from a tag
+# later when launching the observer.
+python3 - "$output_file" "$resolver_image_id" "$source_root" "$resolution_root" <<'PYEXECUTION'
+import json
+from pathlib import Path
+import sys
+manifest, image, source, cache = sys.argv[1:]
+path = Path(manifest + '.provenance.json')
+data = json.loads(path.read_text())
+data['providerExecution'] = dict(recipeVersion=1, imageId=image,
+    originalSourceRoot=str(Path(source).resolve()), cacheRoot=str(Path(cache).resolve()),
+    configuredSourceRoot='/workspace/worktree', originalSourceMount='/workspace/source',
+    cacheMount='/workspace/out')
+path.write_text(json.dumps(data, indent=2) + '\n')
+PYEXECUTION
+
 echo "CPP_RESOLVE_OK"

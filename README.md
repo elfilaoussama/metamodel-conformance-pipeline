@@ -6,19 +6,24 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.32.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.33.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
 
-Producer rc.32 passed 408 tests in a fresh local build. Four benign startup
-controls confirm that isolated/no-site source parsing does not execute project
-ast.py or PYTHONPATH/site startup hooks. Two paired tiny semantic families retain
-all 17 formal relations, 11 complete decision/witness sets and capsule replay.
-Configured launch and captured-source receipts are distinct from complete
-execution provenance. Fixed P0 and schemas remain unchanged. The frozen JAR SHA256
-is `7e5155377dae53ad408808b58ccf208f758984eb0cebf1819feb45517b547b66`.
-This milestone does not certify complete language semantics or research readiness.
+Producer rc.33 passed 411 tests in a fresh local build. Three tiny paired
+C++ families retain all 17 formal relations and all 11 complete decision/witness
+sets with native controls and replay. Context-qualified physical input roles
+are retained without guessing header ownership or generation. Source-only roles
+remain unknown; TARGET records only the explicitly declared context operand.
+Build-backed C++ corridors now use the recorded immutable provider image and
+configured filesystem layout. Supply CPP_OBSERVER_JAVA_HOME as an existing Linux
+Java installation compatible with the provider image. Missing runtime/legacy
+recipe cases fail explicitly. Local provider/corridor and deadline controls pass.
+The frozen JAR SHA256 is
+`d186c777a55681a830c7dcc35418e87a58cfb7533a49f2448cb7c31a9bce61f6`.
+Python remains isolated/no-site. P0, schemas, registry and unrelated packaged
+payloads are unchanged. Full input provenance and research readiness remain open.
 No new evidence completeness capabilities were enabled. Unknown or unsupported
 semantics remain explicit; capsule replay verifies recorded observations, not
 the fidelity of arbitrary source code.
