@@ -328,6 +328,13 @@ def method_descriptor(node, bindings, star_imported):
             # Unknown transformations, properties and unsupported stacking are
             # not evidence of either concrete/instance or abstract/static status.
             return "UNKNOWN", "UNKNOWN"
+    # type.__new__ wraps these plain functions even without a decorator.
+    # Opaque transformations already returned UNKNOWN above.
+    if descriptor == "INSTANCE":
+        if node.name == "__new__":
+            descriptor = "STATIC"
+        elif node.name in {"__init_subclass__", "__class_getitem__"}:
+            descriptor = "CLASS"
     return descriptor, abstraction
 
 
@@ -977,6 +984,61 @@ def process_body(body, prefix, bindings, module, is_package, scope_kind, star_im
     return star_imported
 
 
+def static_lookup_reason(tree):
+    """Admission boundary for source-derived vanilla-class C3, not execution."""
+    primitive_types = {"int", "str", "bool", "float", "bytes", "object"}
+    metadata_names = {name for base in type.__mro__ for name, value in vars(base).items()
+                      if hasattr(type(value), "__set__") or hasattr(type(value), "__delete__")}
+    reserved = primitive_types | {"staticmethod", "classmethod", "type"}
+    def literal(expr):
+        return isinstance(expr, ast.Constant) or isinstance(expr, (ast.Tuple, ast.List)) and all(literal(e) for e in expr.elts)
+    def annotation(expr):
+        return expr is None or isinstance(expr, ast.Constant) or isinstance(expr, ast.Name) and expr.id in primitive_types
+    def inert(statement):
+        return isinstance(statement, ast.Pass) or isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant) and isinstance(statement.value.value, str)
+    names = set()
+    for cls in tree.body:
+        if inert(cls):
+            continue
+        if not isinstance(cls, ast.ClassDef):
+            return "module execution/imports outside the static C3 fragment"
+        if cls.name in names or cls.name in reserved:
+            return "redefined or builtin-shadowing class name"
+        names.add(cls.name)
+        if cls.keywords or cls.decorator_list:
+            return "class decorators or metaclass keywords"
+        if any(not isinstance(base, ast.Name) for base in cls.bases):
+            return "non-name class base expression"
+        members = set()
+        for item in cls.body:
+            if inert(item):
+                continue
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                name = item.name
+                if any(isinstance(n, ast.ClassDef) for n in ast.walk(item)):
+                    return "method-local class execution outside the static C3 fragment"
+                if name in {"__init_subclass__", "__class_getitem__", "__getattribute__", "__getattr__", "__setattr__", "__get__", "__set__", "__delete__"}:
+                    return "custom class/attribute/descriptor hook"
+                if any(not isinstance(d, ast.Name) or d.id not in {"staticmethod", "classmethod"} for d in item.decorator_list):
+                    return "unsupported method descriptor transformation"
+                defaults = item.args.defaults + [d for d in item.args.kw_defaults if d is not None]
+                args = item.args.posonlyargs + item.args.args + item.args.kwonlyargs
+                args += [a for a in (item.args.vararg, item.args.kwarg) if a is not None]
+                if any(not literal(d) for d in defaults) or any(not annotation(a.annotation) for a in args) or not annotation(item.returns):
+                    return "executable default or annotation expression"
+            elif isinstance(item, ast.Assign) and len(item.targets) == 1 and isinstance(item.targets[0], ast.Name) and literal(item.value):
+                name = item.targets[0].id
+            else:
+                return "class namespace statement outside the static C3 fragment"
+            if name in members or name in reserved or name in metadata_names or name in {"__slots__", "__metaclass__", "__bases__", "__classcell__"}:
+                return "redefined or class-layout-changing member"
+            members.add(name)
+        if "__eq__" in members and "__hash__" not in members:
+            return "implicit hash suppression requires a synthesized namespace fact"
+    return ""
+
+
+lookup_reason = ""
 source_modules = {module_name(path) for path in paths}
 for current_rel in paths:
     module = module_name(current_rel)
@@ -987,6 +1049,7 @@ for current_rel in paths:
             text = source.read()
         tree = ast.parse(text, filename=current_rel, type_comments=True)
     except (SyntaxError, UnicodeError) as failure:
+        lookup_reason = lookup_reason or "parse error prevents static lookup"
         hierarchy_incomplete = True
         line = getattr(failure, "lineno", 0) or 0
         diagnostics.append(
@@ -999,6 +1062,7 @@ for current_rel in paths:
         )
         continue
 
+    lookup_reason = lookup_reason or static_lookup_reason(tree)
     current_escaping_writes = escaping_writes(tree)
     process_body(tree.body, module, {}, module, is_package, "module")
 
@@ -1018,6 +1082,7 @@ json.dump(
         "runtimeContext": {"configuration": runtime_configuration_before,
                            "modules": list(runtime_modules_after.values())},
         "hierarchyIncomplete": hierarchy_incomplete,
+        "lookupReason": lookup_reason,
         "classes": classes,
         "diagnostics": diagnostics,
     },

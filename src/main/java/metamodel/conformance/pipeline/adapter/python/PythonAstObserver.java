@@ -63,7 +63,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.15.0";
+    public static final String ADAPTER_VERSION = "0.16.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -320,14 +320,9 @@ public final class PythonAstObserver implements SourceObserver {
                         "Unobserved external Python base types/ancestry: " + opaqueExternalBases
                                 + "; boundary attribution does not establish complete hierarchy evidence."));
             }
-            diagnostics.add(new ObservationDiagnostic(
-                    DiagnosticKind.EVIDENCE_INCOMPLETE,
-                    evidencePath, 0,
-                    "Python adapter observes classifier hierarchy, source-declared method/attribute "
-                            + "ownership, annotation-based method signatures, and supported decorator-derived "
-                            + "method abstraction/scope; language-specific "
-                            + "visibility, attribute inheritability, and inherited-member "
-                            + "evidence remain incomplete."));
+            diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                    evidencePath, 0, "Python implementation, return-type and native override evidence remain incomplete; "
+                            + "inherited lookup is admitted only for the documented guarded source-only fragment."));
             if (signaturesIncomplete) {
                 diagnostics.add(new ObservationDiagnostic(
                         DiagnosticKind.EVIDENCE_INCOMPLETE,
@@ -364,6 +359,38 @@ public final class PythonAstObserver implements SourceObserver {
                 completeEvidence.add(EvidenceKind.HIERARCHY);
             }
 
+            PythonStaticLookup.Result lookup = PythonStaticLookup.observe(
+                    contextId, classifiers, members, nativeBases, bridge.lookupReason());
+            if (!parseError && !declarationIncomplete && !hierarchyIncomplete
+                    && unresolved.isEmpty() && lookup.complete()) {
+                // Python has no access-control restriction on the canonical, already
+                // name-mangled declarations in this admitted source-only fragment.
+                // PUBLIC is a common-profile projection, not Java visibility syntax.
+                members = members.stream().map(m -> new MemberObservation(
+                        m.technicalKey(), m.observedIdentifier(), m.kind(), Inheritability.INHERITABLE,
+                        MemberVisibility.PUBLIC, m.memberName(), m.sourcePath(), m.startLine(), m.endLine(),
+                        m.parameterTypes(), m.abstraction(), m.scope(), m.returnType(),
+                        m.overriddenMemberKeys())).toList();
+                Map<String, List<String>> inherited = new HashMap<>();
+                for (NativeEvidence.Lookup row : lookup.rows()) {
+                    for (NativeEvidence.LookupTarget target : row.targets().values()) {
+                        if (target.classifierPath().size() > 1) {
+                            inherited.computeIfAbsent(row.ownerClassifierId(), ignored -> new ArrayList<>())
+                                    .add(target.declarationKey());
+                        }
+                    }
+                }
+                classifiers = classifiers.stream().map(c -> new ClassifierObservation(
+                        c.id(), c.qualifiedName(), c.packageName(), c.kind(), c.sourcePath(),
+                        c.startLine(), c.endLine(), c.parentIds(), c.declaredMemberKeys(),
+                        inherited.getOrDefault(c.id(), List.of()), c.abstraction())).toList();
+                completeEvidence.add(EvidenceKind.INHERITABILITY);
+                completeEvidence.add(EvidenceKind.INHERITED_MEMBERS);
+            } else {
+                diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0, "Python static C3 lookup not admitted: "
+                                + (lookup.complete() ? "source declaration/hierarchy evidence incomplete" : lookup.reason())));
+            }
             snapshot.verifyOriginalsUnchanged(discoverPythonFiles(root));
             bridge.runtimeExecutable().verify();
             bridge.runtimeContext().verify();
@@ -388,7 +415,7 @@ public final class PythonAstObserver implements SourceObserver {
                     diagnostics,
                     List.of(),
                     new NativeEvidence.Bundle(List.of(domain), PythonObservationInputs.roles(contextId, sourceUnits), List.of(), nativeBases,
-                            nativeSignatures, List.of(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId),
+                            nativeSignatures, lookup.rows(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId),
                                     PythonObservationInputs.launch(contextId, execution.command(), bridge.runtimeExecutable()),
                                     PythonObservationInputs.sources(contextId, sourceUnits))));
             }
@@ -597,6 +624,7 @@ public final class PythonAstObserver implements SourceObserver {
             PythonRuntimeExecutable runtimeExecutable,
             PythonRuntimeContext runtimeContext,
             boolean hierarchyIncomplete,
+            String lookupReason,
             List<BridgeClass> classes,
             List<BridgeDiagnostic> diagnostics) {
     }
