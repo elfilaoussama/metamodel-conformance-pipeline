@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.42.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.43.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -89,3 +89,10 @@ Validated with 477 current regression cases across a focused package and bounded
 twelve small native/source/reference/replay cases (including a repeat) and two model-fault controls.
 Controls use serialized analysis with identity-bound JVM class metadata sharing; native compiler, reference and replay remain separate.
 Cold-process startup exceeded its limit on one case; general runtime and three-language F3/F4 research readiness remain open.
+
+rc43 retains Python class-method source suites independently of runtime binding.
+Guarded vanilla classes admit explicit implementation bindings and concrete-class evidence.
+Compiler scope errors retain positive spans while withholding completeness; target code is not executed by extraction.
+Validated with 486 current regression cases and twelve small native/full-reference/replay cases.
+Legal abstract/static callable bodies and unknown transformations remain distinct from fixed-P0 findings.
+ABC/custom-metaclass binding, C++ cross-TU closure and full research-release readiness remain open.

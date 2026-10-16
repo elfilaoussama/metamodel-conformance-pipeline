@@ -75,6 +75,8 @@ request = json.load(sys.stdin)
 root = pathlib.Path(request["root"])
 paths = sorted(request["paths"])
 classes = []
+method_bodies = []
+body_census_complete = True
 diagnostics = []
 hierarchy_incomplete = False
 
@@ -984,6 +986,56 @@ def process_body(body, prefix, bindings, module, is_package, scope_kind, star_im
     return star_imported
 
 
+def collect_method_bodies(tree, rel, module, text):
+    """Syntax-only class-suite functions, independently of declaration binding.
+
+    AST columns are UTF-8 byte positions in decoded source, not character or
+    original-file byte offsets. Decorators, pass, ellipsis, async and abstract
+    functions still have suites. Free functions and lambdas are not methods.
+    """
+    result = []
+    lines = text.splitlines(keepends=True)
+
+    class Census(ast.NodeVisitor):
+        prefix = module
+        scope = "module"
+        outer = frozenset()
+
+        def enter(self, node, prefix, scope, outer):
+            previous = self.prefix, self.scope, self.outer
+            self.prefix, self.scope, self.outer = prefix, scope, outer
+            for statement in node.body:
+                self.visit(statement)
+            self.prefix, self.scope, self.outer = previous
+
+        def visit_ClassDef(self, node):
+            globals_, nonlocals = scope_declarations(node.body)
+            self.enter(node, child_name(self.prefix, node.name), "class", globals_ | nonlocals)
+
+        def visit_FunctionDef(self, node):
+            if self.scope == "class" and node.name not in self.outer:
+                first, last = node.body[0], node.body[-1]
+                start = first.lineno, first.col_offset
+                # Decorated definitions are one statement whose first token is @.
+                for decorator in getattr(first, "decorator_list", []):
+                    start = min(start, (decorator.lineno, decorator.col_offset - 1))
+                end = last.end_lineno, last.end_col_offset
+                if not (1 <= start[0] <= end[0] <= len(lines) and start < end
+                        and 0 <= start[1] < len(lines[start[0]-1].encode("utf-8"))
+                        and 0 <= end[1] <= len(lines[end[0]-1].encode("utf-8"))):
+                    raise ValueError("unavailable Python method suite source span")
+                result.append(dict(path=rel, startLine=start[0], startColumn=start[1],
+                                   endLine=end[0], endColumn=end[1],
+                                   definitionKey=member_definition_key(rel, node, self.prefix,
+                                       "METHOD", mangled_name(node.name, self.prefix))))
+            self.enter(node, child_name(self.prefix, node.name) + ".<locals>", "function", frozenset())
+
+        visit_AsyncFunctionDef = visit_FunctionDef
+
+    Census().visit(tree)
+    return result
+
+
 def static_lookup_reason(tree):
     """Admission boundary for source-derived vanilla-class C3, not execution."""
     primitive_types = {"int", "str", "bool", "float", "bytes", "object"}
@@ -1049,6 +1101,7 @@ for current_rel in paths:
             text = source.read()
         tree = ast.parse(text, filename=current_rel, type_comments=True)
     except (SyntaxError, UnicodeError) as failure:
+        body_census_complete = False
         lookup_reason = lookup_reason or "parse error prevents static lookup"
         hierarchy_incomplete = True
         line = getattr(failure, "lineno", 0) or 0
@@ -1062,6 +1115,23 @@ for current_rel in paths:
         )
         continue
 
+    try:
+        method_bodies.extend(collect_method_bodies(tree, current_rel, module, text))
+    except (ValueError, TypeError, AttributeError, IndexError) as failure:
+        body_census_complete = False
+        diagnostics.append(dict(kind="EVIDENCE_INCOMPLETE", path=current_rel, line=0,
+                                message="Python method-body census incomplete: " + str(failure)))
+    # ast.parse alone omits compiler scope checks (e.g. an unbound nonlocal).
+    # Compile the captured AST without executing any user code. Keep syntax bodies
+    # even if attribution of the source namespace cannot be certified.
+    try:
+        compile(tree, current_rel, "exec", dont_inherit=True)
+    except (SyntaxError, ValueError, TypeError) as failure:
+        lookup_reason = lookup_reason or "compiler rejects the captured source"
+        hierarchy_incomplete = True
+        diagnostics.append(dict(kind="PARSE_ERROR", path=current_rel,
+                                line=getattr(failure, "lineno", 0) or 0,
+                                message=str(failure)[:4096]))
     lookup_reason = lookup_reason or static_lookup_reason(tree)
     current_escaping_writes = escaping_writes(tree)
     process_body(tree.body, module, {}, module, is_package, "module")
@@ -1084,6 +1154,8 @@ json.dump(
         "hierarchyIncomplete": hierarchy_incomplete,
         "lookupReason": lookup_reason,
         "classes": classes,
+        "methodBodies": method_bodies,
+        "bodyCensusComplete": body_census_complete,
         "diagnostics": diagnostics,
     },
     sys.stdout,

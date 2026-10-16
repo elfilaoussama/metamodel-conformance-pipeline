@@ -7,6 +7,9 @@ import metamodel.conformance.pipeline.adapter.SourceObserver;
 import metamodel.conformance.pipeline.adapter.SourceInputSnapshot;
 import metamodel.conformance.pipeline.model.ClassifierKind;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
+import metamodel.conformance.pipeline.model.ClassifierAbstraction;
+import metamodel.conformance.pipeline.model.MethodBodyObservation;
+import metamodel.conformance.pipeline.model.ImplementationBindingObservation;
 import metamodel.conformance.pipeline.model.DiagnosticKind;
 import metamodel.conformance.pipeline.model.EvidenceKind;
 import metamodel.conformance.pipeline.model.Inheritability;
@@ -66,7 +69,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.17.0";
+    public static final String ADAPTER_VERSION = "0.18.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -326,7 +329,7 @@ public final class PythonAstObserver implements SourceObserver {
                                 + "; boundary attribution does not establish complete hierarchy evidence."));
             }
             diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
-                    evidencePath, 0, "Python implementation, return-type and native override evidence remain incomplete; "
+                    evidencePath, 0, "Python return-type and native override evidence remain incomplete; "
                             + "inherited lookup is admitted only for the documented guarded source-only fragment."));
             if (signaturesIncomplete) {
                 diagnostics.add(new ObservationDiagnostic(
@@ -366,6 +369,24 @@ public final class PythonAstObserver implements SourceObserver {
 
             PythonStaticLookup.Result lookup = PythonStaticLookup.observe(
                     contextId, classifiers, members, nativeBases, bridge.lookupReason());
+            boolean vanillaClasses = !parseError && !declarationIncomplete && !hierarchyIncomplete
+                    && unresolved.isEmpty() && lookup.complete();
+            BodyEvidence bodyEvidence = bodyEvidence(contextId, bridge, drafts, members,
+                    vanillaClasses && !abstractionsIncomplete, diagnostics, evidencePath);
+            // The shared contract forbids every completeness claim in a source
+            // population with parse/compiler diagnostics; positive bodies remain.
+            if (bodyEvidence.censusComplete() && !parseError) completeEvidence.add(EvidenceKind.METHOD_BODIES);
+            if (bodyEvidence.bindingsComplete()) completeEvidence.add(EvidenceKind.IMPLEMENTATION_BINDINGS);
+            if (vanillaClasses) {
+                // The existing guarded fragment admits only undecorated classes
+                // with the vanilla type metaclass and internally closed bases.
+                // ABC/custom metaclasses are not inferred from method modifiers.
+                classifiers = classifiers.stream().map(c -> new ClassifierObservation(
+                        c.id(), c.qualifiedName(), c.packageName(), c.kind(), c.sourcePath(),
+                        c.startLine(), c.endLine(), c.parentIds(), c.declaredMemberKeys(),
+                        c.inheritedMemberKeys(), ClassifierAbstraction.CONCRETE)).toList();
+                completeEvidence.add(EvidenceKind.CLASSIFIER_ABSTRACTION);
+            }
             if (!parseError && !declarationIncomplete && !hierarchyIncomplete
                     && unresolved.isEmpty() && lookup.complete()) {
                 // Python has no access-control restriction on the canonical, already
@@ -414,13 +435,13 @@ public final class PythonAstObserver implements SourceObserver {
                     units,
                     classifiers,
                     members,
-                    List.of(),
-                    List.of(),
+                    bodyEvidence.bodies(),
+                    bodyEvidence.bindings(),
                     unresolved,
                     diagnostics,
                     List.of(),
                     new NativeEvidence.Bundle(List.of(domain), PythonObservationInputs.roles(contextId, sourceUnits), List.of(), nativeBases,
-                            nativeSignatures, lookup.rows(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId),
+                            nativeSignatures, lookup.rows(), bodyEvidence.nativeBindings(), List.of(bridge.runtimeContext().reportedInputs(contextId),
                                     PythonObservationInputs.launch(contextId, execution.command(), bridge.runtimeExecutable()),
                                     PythonObservationInputs.sources(contextId, sourceUnits),
                                     ToolRuntimeEvidence.reported(contextId, toolPolicy))));
@@ -430,6 +451,67 @@ public final class PythonAstObserver implements SourceObserver {
         } catch (RuntimeException | IOException exception) {
             throw new ObservationException("Python observation failed: " + exception.getMessage(), exception);
         }
+    }
+
+    private record BodyEvidence(boolean censusComplete, boolean bindingsComplete,
+            List<MethodBodyObservation> bodies, List<ImplementationBindingObservation> bindings,
+            List<NativeEvidence.BodyBinding> nativeBindings) { }
+
+    private static BodyEvidence bodyEvidence(String context, BridgeResult bridge, List<TypeDraft> drafts,
+            List<MemberObservation> members, boolean vanillaClasses,
+            List<ObservationDiagnostic> diagnostics, String evidencePath) {
+        Set<String> memberKeys = members.stream().filter(m -> m.kind() == MemberKind.METHOD)
+                .map(MemberObservation::technicalKey).collect(java.util.stream.Collectors.toSet());
+        Map<String, String> owners = new HashMap<>();
+        for (TypeDraft draft : drafts) for (BridgeMember member : draft.members()) {
+            if ("METHOD".equals(member.kind())) {
+                String key = stableMemberKey(context, draft.path(), member.definitionKey());
+                if (owners.putIfAbsent(key, draft.id()) != null) vanillaClasses = false;
+            }
+        }
+        var bodies = new ArrayList<MethodBodyObservation>();
+        var bindings = new ArrayList<ImplementationBindingObservation>();
+        var nativeBindings = new ArrayList<NativeEvidence.BodyBinding>();
+        Set<String> bodyKeys = new HashSet<>(), boundMembers = new HashSet<>();
+        boolean censusComplete = bridge.bodyCensusComplete() && bridge.methodBodies() != null;
+        boolean bindingComplete = vanillaClasses;
+        for (BridgeBody source : safe(bridge.methodBodies())) {
+            try {
+                if (source.startColumn() < 0 || source.endColumn() < 0
+                        || source.startLine() == source.endLine() && source.startColumn() >= source.endColumn())
+                    throw new IllegalArgumentException("invalid UTF-8 suite coordinates");
+                String bodyKey = "body_" + Hashing.sha256("python-body\0" + context + "\0" + source.path()
+                        + "\0" + source.startLine() + ":" + source.startColumn()
+                        + "\0" + source.endLine() + ":" + source.endColumn());
+                var body = new MethodBodyObservation(bodyKey, source.path(), source.startLine(), source.endLine());
+                if (!bodyKeys.add(bodyKey)) throw new IllegalArgumentException("duplicate suite span");
+                bodies.add(body); // Positive syntax evidence survives failed target correspondence.
+                String memberKey = stableMemberKey(context, source.path(), source.definitionKey());
+                String owner = owners.get(memberKey);
+                if (owner == null || !memberKeys.contains(memberKey) || !boundMembers.add(memberKey)) {
+                    bindingComplete = false;
+                    continue;
+                }
+                var targets = vanillaClasses ? NativeEvidence.Evidence.known(List.of(memberKey))
+                        : NativeEvidence.Evidence.<String>unavailable(NativeEvidence.Knowledge.UNKNOWN,
+                            "source namespace outside the guarded vanilla-class binding fragment");
+                nativeBindings.add(new NativeEvidence.BodyBinding(context, owner, memberKey,
+                        NativeEvidence.Evidence.known(List.of(new NativeEvidence.SourceSpan(
+                            source.path(), source.startLine(), source.endLine()))), targets));
+                if (vanillaClasses) bindings.add(new ImplementationBindingObservation(
+                        "bind_" + Hashing.sha256("python-binding\0" + owner + "\0" + memberKey + "\0" + bodyKey),
+                        owner, memberKey, bodyKey));
+            } catch (IllegalArgumentException | NullPointerException invalid) {
+                censusComplete = false;
+                bindingComplete = false;
+                diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        evidencePath, 0, "Python suite span/correspondence unavailable: " + invalid.getMessage()));
+            }
+        }
+        bindingComplete &= censusComplete && boundMembers.equals(memberKeys);
+        if (!bindingComplete) diagnostics.add(new ObservationDiagnostic(DiagnosticKind.EVIDENCE_INCOMPLETE,
+                evidencePath, 0, "Python implementation binding population remains incomplete; syntax bodies retained"));
+        return new BodyEvidence(censusComplete, bindingComplete, bodies, bindings, nativeBindings);
     }
 
     private BridgeExecution runBridge(Path root, List<String> relativePaths) throws ObservationException, IOException {
@@ -629,6 +711,8 @@ public final class PythonAstObserver implements SourceObserver {
             PythonRuntimeContext runtimeContext,
             boolean hierarchyIncomplete,
             String lookupReason,
+            boolean bodyCensusComplete,
+            List<BridgeBody> methodBodies,
             List<BridgeClass> classes,
             List<BridgeDiagnostic> diagnostics) {
     }
@@ -643,6 +727,9 @@ public final class PythonAstObserver implements SourceObserver {
             List<BridgeBase> bases,
             List<BridgeMember> members) {
     }
+
+    private record BridgeBody(String path, int startLine, int startColumn, int endLine, int endColumn,
+                              String definitionKey) { }
 
     private record BridgeMember(
             String definitionKey,
