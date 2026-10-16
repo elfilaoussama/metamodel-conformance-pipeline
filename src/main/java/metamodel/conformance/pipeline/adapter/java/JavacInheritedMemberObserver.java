@@ -196,6 +196,9 @@ final class JavacInheritedMemberObserver {
                 if (kind == null) {
                     continue;
                 }
+                if (JavacImplicitMembers.isObjectLookupOnInterface(type, element, elements)) {
+                    continue;
+                }
                 Element enclosing = element.getEnclosingElement();
                 if (!(enclosing instanceof TypeElement declaringType)) {
                     return incomplete(classifiers, "javac member has no declaring classifier");

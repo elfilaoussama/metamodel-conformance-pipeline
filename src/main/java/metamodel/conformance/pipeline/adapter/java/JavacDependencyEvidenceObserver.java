@@ -222,6 +222,9 @@ final class JavacDependencyEvidenceObserver {
                 if (kind == null) {
                     continue;
                 }
+                if (JavacImplicitMembers.isObjectLookupOnInterface(type, element, elements)) {
+                    continue;
+                }
                 Owner owner = ownerOf(
                         root, trees, elements, element, sourceByLocation, productionByName, supportByName);
                 if (owner == null) {
@@ -335,6 +338,9 @@ final class JavacDependencyEvidenceObserver {
         for (var mirror : types.directSupertypes(ancestorCursor.asType())) {
             Element element = types.asElement(mirror);
             if (!(element instanceof TypeElement ancestorType)) {
+                continue;
+            }
+            if (JavacImplicitMembers.isImplicitObjectSupertype(ancestorCursor, ancestorType, elements)) {
                 continue;
             }
             String ancestorName = ancestorType.getQualifiedName().toString();

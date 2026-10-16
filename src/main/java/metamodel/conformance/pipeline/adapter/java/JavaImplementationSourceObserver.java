@@ -36,7 +36,7 @@ import java.util.stream.Stream;
  */
 public final class JavaImplementationSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = SpoonJavaObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.6.4";
+    public static final String ADAPTER_VERSION = "1.7.0";
 
     private final JavaDependencyInputs dependencyInputs;
 
@@ -58,19 +58,17 @@ public final class JavaImplementationSourceObserver implements SourceObserver {
         try {
             Path root = sourceRoot.toRealPath(LinkOption.NOFOLLOW_LINKS);
             List<Path> files = discoverJavaFiles(root);
-            SpoonMethodBodyObserver.Result bodyResult = observeBodiesByContext(root, files, dependencyInputs);
+            SpoonMethodBodyObserver.Result spoonBodies = observeBodiesByContext(root, files, dependencyInputs);
             SpoonAbstractionObserver.Result abstractionResult =
                     observeAbstractionByContext(root, files, base.classifiers(), base.members(), dependencyInputs);
             JavaDependencyClasspath.Result dependencies = JavaDependencyClasspath.resolve(dependencyInputs);
-            JavacImplementationObserver.Result implementation = bodyResult.complete()
-                    ? new JavacImplementationObserver().observe(
+            JavacImplementationObserver.Result implementation = new JavacImplementationObserver().observe(
                             root,
                             files,
                             base.classifiers(),
                             base.members(),
-                            bodyResult.bodies(),
-                            dependencies.paths())
-                    : JavacImplementationObserver.Result.incomplete();
+                            dependencies.paths());
+            SpoonMethodBodyObserver.Result bodyResult = reconcileBodies(root, files, spoonBodies, implementation.bodyCensus());
             JavacOverrideObserver.Result overrideEvidence = new JavacOverrideObserver().observe(
                     root,
                     files,
@@ -236,6 +234,29 @@ public final class JavaImplementationSourceObserver implements SourceObserver {
         }
         return new SpoonMethodBodyObserver.Result(
                 complete, List.copyOf(bodies.values()), canonicalDiagnostics(diagnostics));
+    }
+
+    private static SpoonMethodBodyObserver.Result reconcileBodies(
+            Path root, List<Path> files, SpoonMethodBodyObserver.Result spoon, JavacMethodBodyCensus syntax) {
+        var diagnostics = new ArrayList<>(spoon.diagnostics());
+        String sourcePath = root.relativize(files.get(0)).toString().replace('\\', '/');
+        if (syntax.complete()) {
+            if (!Set.copyOf(spoon.bodies()).equals(Set.copyOf(syntax.bodies()))) {
+                diagnostics.add(new ObservationDiagnostic(
+                        metamodel.conformance.pipeline.model.DiagnosticKind.EVIDENCE_INCOMPLETE,
+                        sourcePath, 0,
+                        "Spoon/javac method-body populations differ; retained compiler syntax census"));
+            }
+            return new SpoonMethodBodyObserver.Result(true, syntax.bodies(), canonicalDiagnostics(diagnostics));
+        }
+        // Retain known spans even when a complete syntax population was not measured.
+        var known = new TreeMap<String, MethodBodyObservation>();
+        spoon.bodies().forEach(body -> known.put(body.technicalKey(), body));
+        syntax.bodies().forEach(body -> known.put(body.technicalKey(), body));
+        diagnostics.add(new ObservationDiagnostic(
+                metamodel.conformance.pipeline.model.DiagnosticKind.EVIDENCE_INCOMPLETE,
+                sourcePath, 0, "Complete javac method-body syntax census is unavailable"));
+        return new SpoonMethodBodyObserver.Result(false, List.copyOf(known.values()), canonicalDiagnostics(diagnostics));
     }
 
     private static SpoonAbstractionObserver.Result observeAbstractionByContext(

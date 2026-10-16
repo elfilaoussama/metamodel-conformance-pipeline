@@ -43,14 +43,15 @@ final class JavacImplementationObserver {
             List<Path> files,
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,
-            List<MethodBodyObservation> bodies,
             List<Path> dependencyArchives) {
         JavaDependencyInputs inputs = JavaDependencyInputs.global(dependencyArchives);
         JavaCompilationContexts.Grouping grouping = JavaCompilationContexts.group(root, files, inputs);
         Map<String, ImplementationAvailability> availability = new HashMap<>();
         Map<String, List<String>> bindings = new HashMap<>();
+        Map<String, MethodBodyObservation> syntaxBodies = new TreeMap<>();
         List<ObservationDiagnostic> diagnostics = new ArrayList<>();
         boolean complete = grouping.unownedFiles().isEmpty();
+        boolean syntaxComplete = complete;
         for (Map.Entry<String, List<Path>> entry : grouping.filesByContext().entrySet()) {
             JavaCompilationContext compilationContext = grouping.context(entry.getKey());
             Set<String> scopedPaths = entry.getValue().stream()
@@ -60,8 +61,6 @@ final class JavacImplementationObserver {
                     .filter(item -> scopedPaths.contains(item.sourcePath())).toList();
             List<MemberObservation> scopedMembers = members.stream()
                     .filter(item -> scopedPaths.contains(item.sourcePath())).toList();
-            List<MethodBodyObservation> scopedBodies = bodies.stream()
-                    .filter(item -> scopedPaths.contains(item.sourcePath())).toList();
             Result result;
             try (JavacCompilationContext context = JavacCompilationContext.prepare(
                     root, compilationContext, grouping.filesByContext(), inputs)) {
@@ -69,7 +68,7 @@ final class JavacImplementationObserver {
                     result = new Result(false, Map.of(), Map.of(), context.diagnostics());
                 } else {
                     result = observeCompilationContext(
-                            root, entry.getValue(), scopedClassifiers, scopedMembers, scopedBodies,
+                            root, entry.getValue(), scopedClassifiers, scopedMembers,
                             context.options());
                 }
             } catch (IOException | RuntimeException failure) {
@@ -79,6 +78,12 @@ final class JavacImplementationObserver {
                                 + failure.getClass().getSimpleName());
             }
             complete &= result.complete();
+            syntaxComplete &= result.bodyCensus().complete();
+            diagnostics.addAll(result.bodyCensus().diagnostics());
+            for (MethodBodyObservation body : result.bodyCensus().bodies()) {
+                MethodBodyObservation previous = syntaxBodies.putIfAbsent(body.technicalKey(), body);
+                if (previous != null && !previous.equals(body)) syntaxComplete = false;
+            }
             diagnostics.addAll(result.diagnostics());
             complete &= mergeConsistent(availability, result.availabilityByMember(),
                     diagnostics, entry.getKey(), "implementation availability");
@@ -100,7 +105,8 @@ final class JavacImplementationObserver {
                 diagnostics.stream().distinct().sorted(
                         Comparator.comparing(ObservationDiagnostic::sourcePath)
                                 .thenComparingInt(ObservationDiagnostic::line)
-                                .thenComparing(ObservationDiagnostic::message)).toList());
+                                .thenComparing(ObservationDiagnostic::message)).toList(),
+                new JavacMethodBodyCensus(syntaxComplete, List.copyOf(syntaxBodies.values()), List.of()));
     }
 
     private static <K, V> boolean mergeConsistent(
@@ -124,7 +130,6 @@ final class JavacImplementationObserver {
             List<Path> files,
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,
-            List<MethodBodyObservation> bodies,
             List<String> compilerOptions) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
@@ -132,6 +137,7 @@ final class JavacImplementationObserver {
                     "JDK compiler is unavailable; implementation-binding evidence was not observed");
         }
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
+        JavacMethodBodyCensus census = JavacMethodBodyCensus.unavailable();
         try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
                 diagnostics, java.util.Locale.ROOT, java.nio.charset.StandardCharsets.UTF_8)) {
             Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
@@ -144,17 +150,24 @@ final class JavacImplementationObserver {
                     sources);
             List<CompilationUnitTree> parsed = new ArrayList<>();
             task.parse().forEach(parsed::add);
+            census = JavacMethodBodyCensus.capture(root, files, parsed, Trees.instance(task),
+                    diagnostics.getDiagnostics().stream().anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR));
             task.analyze();
             if (diagnostics.getDiagnostics().stream()
                     .anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR)) {
                 return new Result(false, Map.of(), Map.of(),
-                        evidenceDiagnostics(root, files, diagnostics));
+                        evidenceDiagnostics(root, files, diagnostics), census);
             }
-            return resolve(root, parsed, task, classifiers, members, bodies);
+            if (!census.complete()) {
+                return new Result(false, Map.of(), Map.of(), census.diagnostics(), census);
+            }
+            Result resolved = resolve(root, parsed, task, classifiers, members, census.bodies());
+            return new Result(resolved.complete(), resolved.availabilityByMember(),
+                    resolved.bodyKeysByMember(), resolved.diagnostics(), census);
         } catch (IOException | RuntimeException | StackOverflowError failure) {
-            return Result.incomplete(relativePath(root, files.get(0)),
-                    "javac implementation-binding observation failed: "
-                            + failure.getClass().getSimpleName());
+            return new Result(false, Map.of(), Map.of(), List.of(new ObservationDiagnostic(
+                    DiagnosticKind.EVIDENCE_INCOMPLETE, relativePath(root, files.get(0)), 0,
+                    "javac implementation-binding observation failed: " + failure.getClass().getSimpleName())), census);
         }
     }
 
@@ -257,7 +270,7 @@ final class JavacImplementationObserver {
                 if (bodyCandidates == null || bodyCandidates.size() != 1) {
                     return Result.incomplete(
                             methodLocation.path(), methodLocation.line(),
-                            "javac method body could not be matched to one Spoon body");
+                            "javac method body could not be matched to one retained syntax body");
                 }
                 bindings.put(declaration.technicalKey(),
                         List.of(bodyCandidates.get(0).technicalKey()));
@@ -437,7 +450,12 @@ final class JavacImplementationObserver {
             boolean complete,
             Map<String, ImplementationAvailability> availabilityByMember,
             Map<String, List<String>> bodyKeysByMember,
-            List<ObservationDiagnostic> diagnostics) {
+            List<ObservationDiagnostic> diagnostics,
+            JavacMethodBodyCensus bodyCensus) {
+        Result(boolean complete, Map<String, ImplementationAvailability> availabilityByMember,
+               Map<String, List<String>> bodyKeysByMember, List<ObservationDiagnostic> diagnostics) {
+            this(complete, availabilityByMember, bodyKeysByMember, diagnostics, JavacMethodBodyCensus.unavailable());
+        }
         Result {
             availabilityByMember = Map.copyOf(availabilityByMember);
             bodyKeysByMember = bodyKeysByMember.entrySet().stream()

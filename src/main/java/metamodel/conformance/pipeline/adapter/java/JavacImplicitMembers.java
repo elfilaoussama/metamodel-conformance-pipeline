@@ -4,6 +4,8 @@ import com.sun.source.util.Trees;
 
 import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
+import javax.lang.model.element.TypeElement;
+import javax.lang.model.util.Elements;
 
 /**
  * Compiler-synthesized members that javac's effective member view exposes but
@@ -11,6 +13,29 @@ import javax.lang.model.element.ElementKind;
  */
 final class JavacImplicitMembers {
     private JavacImplicitMembers() {
+    }
+
+    /**
+     * JLS 9.2 gives interfaces implicit Object-shaped methods, not an Object
+     * superclass. javac exposes Object carriers in its lookup view; these are
+     * not inherited explicit source declarations. A declaration owned by an
+     * actual superinterface is deliberately retained, even for the same name.
+     */
+    static boolean isObjectLookupOnInterface(TypeElement receiver, Element member, Elements elements) {
+        if (!receiver.getKind().isInterface() || member.getKind() != ElementKind.METHOD) {
+            return false;
+        }
+        return member.getEnclosingElement() instanceof TypeElement owner
+                && isImplicitObjectSupertype(receiver, owner, elements);
+    }
+
+    /** Types.directSupertypes includes Object for interfaces as a type-system carrier. */
+    static boolean isImplicitObjectSupertype(TypeElement receiver, TypeElement candidate, Elements elements) {
+        if (!receiver.getKind().isInterface()) {
+            return false;
+        }
+        TypeElement object = elements.getTypeElement("java.lang.Object");
+        return object != null && object.equals(candidate);
     }
 
     /**

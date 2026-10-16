@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.41.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.42.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -81,3 +81,11 @@ Configured policy is retained separately from semantic capabilities in schema15.
 Validated with 467 integration tests and eight small semantic preservation controls
 plus four hanging-tool controls. Full stage deadlines, OS containment and complete
 research readiness remain open.
+
+rc42 retains explicit method-body syntax independently of successful Java analysis.
+Interface Object lookup carriers do not become inherited source declarations or override ancestors.
+Explicit superinterface declarations and normal class/Object inheritance remain observed.
+Validated with 477 current regression cases across a focused package and bounded Maven shards,
+twelve small native/source/reference/replay cases (including a repeat) and two model-fault controls.
+Controls use serialized analysis with identity-bound JVM class metadata sharing; native compiler, reference and replay remain separate.
+Cold-process startup exceeded its limit on one case; general runtime and three-language F3/F4 research readiness remain open.
