@@ -2,6 +2,7 @@ package metamodel.conformance.pipeline.adapter.python;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import metamodel.conformance.pipeline.adapter.ObservationException;
+import metamodel.conformance.pipeline.adapter.ToolRuntimeEvidence;
 import metamodel.conformance.pipeline.adapter.SourceObserver;
 import metamodel.conformance.pipeline.adapter.SourceInputSnapshot;
 import metamodel.conformance.pipeline.model.ClassifierKind;
@@ -22,6 +23,8 @@ import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.model.UnresolvedParent;
 import metamodel.conformance.pipeline.util.ArtifactLimits;
 import metamodel.conformance.pipeline.util.Hashing;
+import metamodel.conformance.pipeline.util.ToolProcessLease;
+import metamodel.conformance.pipeline.util.ToolProcessPolicy;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -63,10 +66,11 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.16.0";
+    public static final String ADAPTER_VERSION = "0.17.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
+    private final ToolProcessPolicy toolPolicy;
     private final String pythonExecutable;
     private final PythonDependencyInputs dependencyInputs;
 
@@ -86,6 +90,7 @@ public final class PythonAstObserver implements SourceObserver {
         if (pythonExecutable == null || pythonExecutable.isBlank()) {
             throw new IllegalArgumentException("python executable must not be blank");
         }
+        this.toolPolicy = ToolProcessPolicy.configured();
         this.pythonExecutable = pythonExecutable;
         this.dependencyInputs = dependencyInputs == null
                 ? PythonDependencyInputs.none() : dependencyInputs;
@@ -417,7 +422,8 @@ public final class PythonAstObserver implements SourceObserver {
                     new NativeEvidence.Bundle(List.of(domain), PythonObservationInputs.roles(contextId, sourceUnits), List.of(), nativeBases,
                             nativeSignatures, lookup.rows(), List.of(), List.of(bridge.runtimeContext().reportedInputs(contextId),
                                     PythonObservationInputs.launch(contextId, execution.command(), bridge.runtimeExecutable()),
-                                    PythonObservationInputs.sources(contextId, sourceUnits))));
+                                    PythonObservationInputs.sources(contextId, sourceUnits),
+                                    ToolRuntimeEvidence.reported(contextId, toolPolicy))));
             }
         } catch (ObservationException exception) {
             throw exception;
@@ -434,53 +440,51 @@ public final class PythonAstObserver implements SourceObserver {
             ProcessBuilder builder = new ProcessBuilder(pythonExecutable, "-I", "-S", "-c", BRIDGE_SCRIPT);
             List<String> command = List.copyOf(builder.command());
             builder.redirectError(stderr.toFile());
-            Process process;
-            try {
-                process = builder.start();
-            } catch (IOException failure) {
-                throw new ObservationException(
-                        "cannot start Python interpreter '" + pythonExecutable + "': " + failure.getMessage(), failure);
-            }
+            try (var lease = ToolProcessLease.start(builder, toolPolicy)) {
+                try {
+                    Process process = lease.process();
 
-            byte[] manifest = JSON.writeValueAsBytes(Map.of(
-                    "root", root.toString(),
-                    "paths", relativePaths));
-            try (OutputStream input = process.getOutputStream()) {
-                input.write(manifest);
-            }
+                    byte[] manifest = JSON.writeValueAsBytes(Map.of(
+                            "root", root.toString(),
+                            "paths", relativePaths));
+                    try (OutputStream input = process.getOutputStream()) {
+                        input.write(manifest);
+                    }
 
-            byte[] output;
-            try {
-                output = process.getInputStream().readNBytes(MAX_BRIDGE_BYTES + 1);
-            } catch (IOException failure) {
-                process.destroyForcibly();
-                throw failure;
-            }
-            if (output.length > MAX_BRIDGE_BYTES) {
-                process.destroyForcibly();
-                throw new ObservationException("Python observer output exceeds canonical artifact boundary");
-            }
+                    byte[] output;
+                    try {
+                        output = process.getInputStream().readNBytes(MAX_BRIDGE_BYTES + 1);
+                    } catch (IOException failure) {
+                        process.destroyForcibly();
+                        throw failure;
+                    }
+                    if (output.length > MAX_BRIDGE_BYTES) {
+                        process.destroyForcibly();
+                        throw new ObservationException("Python observer output exceeds canonical artifact boundary");
+                    }
 
-            int exit;
-            try {
-                exit = process.waitFor();
-            } catch (InterruptedException interrupted) {
-                process.destroyForcibly();
-                Thread.currentThread().interrupt();
-                throw new ObservationException("Python observation interrupted", interrupted);
-            }
-            if (exit != 0) {
-                String error = Files.readString(stderr, StandardCharsets.UTF_8);
-                if (error.length() > 4096) {
-                    error = error.substring(0, 4096);
-                }
-                throw new ObservationException(
-                        "Python AST bridge exited " + exit + (error.isBlank() ? "" : ": " + error.strip()));
-            }
-            try {
-                return new BridgeExecution(JSON.readValue(output, BridgeResult.class), command);
-            } catch (IOException malformed) {
-                throw new ObservationException("Python AST bridge returned invalid JSON", malformed);
+                    int exit;
+                    try {
+                        exit = lease.awaitExit();
+                    } catch (InterruptedException interrupted) {
+                        process.destroyForcibly();
+                        Thread.currentThread().interrupt();
+                        throw new ObservationException("Python observation interrupted", interrupted);
+                    }
+                    if (exit != 0) {
+                        String error = Files.readString(stderr, StandardCharsets.UTF_8);
+                        if (error.length() > 4096) {
+                            error = error.substring(0, 4096);
+                        }
+                        throw new ObservationException(
+                                "Python AST bridge exited " + exit + (error.isBlank() ? "" : ": " + error.strip()));
+                    }
+                    try {
+                        return new BridgeExecution(JSON.readValue(output, BridgeResult.class), command);
+                    } catch (IOException malformed) {
+                        throw new ObservationException("Python AST bridge returned invalid JSON", malformed);
+                    }
+                } catch (IOException failure) { throw lease.classify(failure); }
             }
         } finally {
             Files.deleteIfExists(stderr);

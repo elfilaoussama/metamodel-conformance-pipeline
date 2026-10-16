@@ -5,6 +5,7 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import metamodel.conformance.pipeline.adapter.ObservationException;
+import metamodel.conformance.pipeline.adapter.ToolRuntimeEvidence;
 import metamodel.conformance.pipeline.adapter.SourceObserver;
 import metamodel.conformance.pipeline.model.ClassifierKind;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
@@ -23,6 +24,8 @@ import metamodel.conformance.pipeline.model.ObservationDiagnostic;
 import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.model.UnresolvedParent;
 import metamodel.conformance.pipeline.util.Hashing;
+import metamodel.conformance.pipeline.util.ToolProcessLease;
+import metamodel.conformance.pipeline.util.ToolProcessPolicy;
 
 import java.io.File;
 import java.io.IOException;
@@ -69,7 +72,7 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.14.0";
+    public static final String ADAPTER_VERSION = "0.15.0";
     private static final String PROFILE_ID = "contextual-native-projection-v8";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
@@ -81,6 +84,7 @@ public final class ClangCppObserver implements SourceObserver {
             "(?m)^[ \\t]*#[ \\t]*(if|ifdef|ifndef|elif|define|endif)\\b([^\\r\\n]*)");
     private static final Pattern IF_NOT_DEFINED = Pattern.compile(
             "^!\\s*defined\\s*(?:\\(\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*\\)|\\s+([A-Za-z_][A-Za-z0-9_]*))\\s*$");
+    private final ToolProcessPolicy toolPolicy;
     private final String clangExecutable;
     private final CppDependencyInputs dependencyInputs;
     private final Path nativeHelper;
@@ -107,6 +111,7 @@ public final class ClangCppObserver implements SourceObserver {
         if (clangExecutable == null || clangExecutable.isBlank()) {
             throw new IllegalArgumentException("clang executable must not be blank");
         }
+        this.toolPolicy = ToolProcessPolicy.configured();
         this.clangExecutable = clangExecutable;
         this.dependencyInputs = dependencyInputs == null
                 ? CppDependencyInputs.none() : dependencyInputs;
@@ -480,7 +485,7 @@ public final class ClangCppObserver implements SourceObserver {
                         contextual.stream().flatMap(d -> memberKeysByOwner.get(d.id()).stream()).toList()));
             }
             return new Observation(
-                    "14",
+                    "15",
                     ADAPTER_ID,
                     adapterVersion,
                     List.copyOf(allowed),
@@ -494,7 +499,8 @@ public final class ClangCppObserver implements SourceObserver {
                     diagnostics,
                     List.of(),
                     new NativeEvidence.Bundle(domains, inputRoles, nativeInvocations, nativeBases,
-                            nativeSignatures, nativeLookups, List.of()));
+                            nativeSignatures, nativeLookups, List.of(), domains.stream()
+                                    .map(domain -> ToolRuntimeEvidence.reported(domain.contextId(), toolPolicy)).toList()));
         } catch (ObservationException exception) {
             throw exception;
         } catch (IOException | RuntimeException failure) {
@@ -702,57 +708,55 @@ public final class ClangCppObserver implements SourceObserver {
             ProcessBuilder builder = new ProcessBuilder(command);
             builder.directory(workingDirectory.toFile());
             builder.redirectError(stderr.toFile());
-            Process process;
-            try {
-                process = builder.start();
-            } catch (IOException failure) {
-                throw new ObservationException(
-                        "cannot start Clang executable '" + clangExecutable + "': " + failure.getMessage(), failure);
-            }
+            try (var lease = ToolProcessLease.start(builder, toolPolicy)) {
+                try {
+                    Process process = lease.process();
 
-            try (InputStream ast = process.getInputStream();
-                 JsonParser parser = JSON.getFactory().createParser(ast)) {
-                JsonToken token = parser.nextToken();
-                if (token == JsonToken.START_OBJECT) {
-                    collector.walk(parser, List.of(), null, false);
-                    if (parser.nextToken() != null) {
-                        astFailure = new IOException("multiple top-level JSON values in Clang AST dump");
+                    try (InputStream ast = process.getInputStream();
+                         JsonParser parser = JSON.getFactory().createParser(ast)) {
+                        JsonToken token = parser.nextToken();
+                        if (token == JsonToken.START_OBJECT) {
+                            collector.walk(parser, List.of(), null, false);
+                            if (parser.nextToken() != null) {
+                                astFailure = new IOException("multiple top-level JSON values in Clang AST dump");
+                            }
+                        } else if (token != null) {
+                            astFailure = new IOException("Clang AST dump does not begin with a JSON object");
+                        }
+                    } catch (Exception malformed) {
+                        astFailure = malformed;
+                        process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
                     }
-                } else if (token != null) {
-                    astFailure = new IOException("Clang AST dump does not begin with a JSON object");
-                }
-            } catch (Exception malformed) {
-                astFailure = malformed;
-                process.getInputStream().transferTo(java.io.OutputStream.nullOutputStream());
-            }
 
-            int exit;
-            try {
-                exit = process.waitFor();
-            } catch (InterruptedException interrupted) {
-                process.destroyForcibly();
-                Thread.currentThread().interrupt();
-                throw new ObservationException("C++ observation interrupted", interrupted);
-            }
-            String error = Files.readString(stderr, StandardCharsets.UTF_8);
-            if (exit != 0) {
-                return new AnalysisResult(exit, error, collector, List.of(), null, astFailure, null);
-            }
+                    int exit;
+                    try {
+                        exit = lease.awaitExit();
+                    } catch (InterruptedException interrupted) {
+                        process.destroyForcibly();
+                        Thread.currentThread().interrupt();
+                        throw new ObservationException("C++ observation interrupted", interrupted);
+                    }
+                    String error = Files.readString(stderr, StandardCharsets.UTF_8);
+                    if (exit != 0) {
+                        return new AnalysisResult(exit, error, collector, List.of(), null, astFailure, null);
+                    }
 
-            List<Path> dependencyPaths;
-            String dependencyError = null;
-            try {
-                dependencyPaths = parseDependencyFile(workingDirectory, dependencies);
-            } catch (IOException | RuntimeException failure) {
-                dependencyPaths = List.of();
-                dependencyError = failure.getMessage() == null
-                        ? failure.getClass().getSimpleName() : failure.getMessage();
+                    List<Path> dependencyPaths;
+                    String dependencyError = null;
+                    try {
+                        dependencyPaths = parseDependencyFile(workingDirectory, dependencies);
+                    } catch (IOException | RuntimeException failure) {
+                        dependencyPaths = List.of();
+                        dependencyError = failure.getMessage() == null
+                                ? failure.getClass().getSimpleName() : failure.getMessage();
+                    }
+                    CppNativeInputReceipt.Result trace = receipt == null ? null : CppNativeInputReceipt.read(
+                            receipt, new CppNativeInputReceipt.Context(contextId, clangExecutable, clang.version(), clang.target(), nativeHelper,
+                            workingDirectory, source, executedCompilerArgv, semanticArguments, compilerHash));
+                    return new AnalysisResult(
+                            exit, error, collector, dependencyPaths, dependencyError, astFailure, trace);
+                } catch (IOException failure) { throw lease.classify(failure); }
             }
-            CppNativeInputReceipt.Result trace = receipt == null ? null : CppNativeInputReceipt.read(
-                    receipt, new CppNativeInputReceipt.Context(contextId, clangExecutable, clang.version(), clang.target(), nativeHelper,
-                    workingDirectory, source, executedCompilerArgv, semanticArguments, compilerHash));
-            return new AnalysisResult(
-                    exit, error, collector, dependencyPaths, dependencyError, astFailure, trace);
         } finally {
             Files.deleteIfExists(stderr);
             Files.deleteIfExists(dependencies);
@@ -774,28 +778,20 @@ public final class ClangCppObserver implements SourceObserver {
     }
 
     private String commandOutput(String argument) throws ObservationException, IOException {
-        Process process;
-        try {
-            process = new ProcessBuilder(clangExecutable, argument)
-                    .redirectErrorStream(true)
-                    .start();
-        } catch (IOException failure) {
-            throw new ObservationException(
-                    "cannot start Clang executable '" + clangExecutable + "': " + failure.getMessage(), failure);
+        try (var lease = ToolProcessLease.start(new ProcessBuilder(clangExecutable, argument)
+                .redirectErrorStream(true), toolPolicy)) {
+            try {
+            byte[] output = lease.process().getInputStream().readAllBytes();
+            int exit;
+            try { exit = lease.awaitExit(); }
+            catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new ObservationException("Clang identity probe interrupted", interrupted);
+            }
+            if (exit != 0) throw new ObservationException("Clang identity probe '" + argument + "' exited " + exit);
+            return new String(output, StandardCharsets.UTF_8);
+            } catch (IOException failure) { throw lease.classify(failure); }
         }
-        byte[] output = process.getInputStream().readAllBytes();
-        int exit;
-        try {
-            exit = process.waitFor();
-        } catch (InterruptedException interrupted) {
-            process.destroyForcibly();
-            Thread.currentThread().interrupt();
-            throw new ObservationException("Clang identity probe interrupted", interrupted);
-        }
-        if (exit != 0) {
-            throw new ObservationException("Clang identity probe '" + argument + "' exited " + exit);
-        }
-        return new String(output, StandardCharsets.UTF_8);
     }
 
     private Path resolveClangExecutable() throws IOException, ObservationException {

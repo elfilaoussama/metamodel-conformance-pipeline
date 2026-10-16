@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.40.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.41.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -74,3 +74,10 @@ contextual lookup populations. Ambiguous, dependent and unsupported scopes stay
 unevaluated. Fixed P0 remains unchanged; language/policy disagreements remain
 findings. Validated with 457 integration tests, seventeen small native/provider/
 formal/replay controls and a seeded overlap. Full research readiness remains open.
+
+rc41 bounds launched C++/Python tool subprocesses during streaming reads and waits.
+Timeouts and interruption are execution failures, never semantic findings.
+Configured policy is retained separately from semantic capabilities in schema15.
+Validated with 467 integration tests and eight small semantic preservation controls
+plus four hanging-tool controls. Full stage deadlines, OS containment and complete
+research readiness remain open.
