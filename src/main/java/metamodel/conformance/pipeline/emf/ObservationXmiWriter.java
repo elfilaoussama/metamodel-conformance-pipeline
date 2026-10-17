@@ -31,7 +31,7 @@ import java.util.Map;
 
 public final class ObservationXmiWriter {
     public void write(Observation observation, Path target) throws IOException {
-        if (!ObservationSchema.VERSION.equals(observation.schemaVersion()) && !"14".equals(observation.schemaVersion())) {
+        if (!java.util.Set.of("14","15",ObservationSchema.VERSION).contains(observation.schemaVersion())) {
             throw new IllegalArgumentException("unsupported observation schema: " + observation.schemaVersion());
         }
         if ("14".equals(observation.schemaVersion()) && !observation.nativeEvidence().reportedInputs().isEmpty()) {

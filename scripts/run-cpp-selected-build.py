@@ -25,7 +25,11 @@ def sha(path):
     return digest.hexdigest()
 
 
-def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
+def execution_plan(source,manifest,jar,java_home,output,native_helper=None,native_batch_helper=None):
+    if native_helper is not None and native_batch_helper is not None:
+        raise ValueError('select one native transport explicitly')
+    batch=native_batch_helper is not None
+    if batch:native_helper=native_batch_helper
     source,manifest,jar,java_home,output=[p.resolve(strict=True) for p in (source,manifest,jar,java_home,output)]
     provenance=Path(str(manifest)+'.provenance.json')
     data=json.loads(provenance.read_text())
@@ -80,6 +84,7 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
             raise ValueError('configured target population/provenance mismatch')
     elif data.get('configuredTargetSelection') is not None:
         raise ValueError('configured target population missing from manifest')
+    if batch and selection is None:raise ValueError('retained batch requires explicit configured target selection')
     if native_helper is not None:
         native_helper=native_helper.resolve(strict=True)
         if not native_helper.is_file() or not os.access(native_helper,os.X_OK):
@@ -100,7 +105,7 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
         configuredJavaHome=str(java_home),controllerSha256=sha(Path(__file__)),executorSha256=sha(executor_path))
     if configured_model is not None:identity['configuredBuildFacts']=configured_model
     if selection is not None:identity['configuredTargetSelection']=selection
-    identity['nativeInputProfile']='UNTRACED' if native_helper is None else 'SAME_PASS_INPUTS_V1'
+    identity['nativeInputProfile']='RETAINED_BATCH_V1' if batch else 'UNTRACED' if native_helper is None else 'SAME_PASS_INPUTS_V1'
     if native_helper is not None:
         identity['nativeHelper']=dict(configuredPath=str(native_helper),containerPath='/pipeline-native-helper',sha256=sha(native_helper))
     return base,recipe['imageId'],identity
@@ -110,6 +115,8 @@ def analysis_java_arguments(identity):
     arguments=['/pipeline-java/bin/java','-Xmx1g']
     if identity['nativeInputProfile']=='SAME_PASS_INPUTS_V1':
         arguments.append('-Dmetamodel.conformance.cpp.nativeHelper=/pipeline-native-helper')
+    elif identity['nativeInputProfile']=='RETAINED_BATCH_V1':
+        arguments.append('-Dmetamodel.conformance.cpp.nativeBatchHelper=/pipeline-native-helper')
     return arguments+['-jar','/pipeline.jar','analyze',
         '--source','/workspace/worktree','--language','cpp','--dependency-manifest','/pipeline-contexts.tsv',
         '--output','/pipeline-output/result']
@@ -119,6 +126,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ['source','manifest','jar','java-home','output']:parser.add_argument('--'+name,type=Path,required=True)
     parser.add_argument('--native-helper',type=Path,help='optional executable built for the recorded provider image; no fallback on failure')
+    parser.add_argument('--native-batch-helper',type=Path,help='retained-AST worker; requires explicit target selection and excludes --native-helper')
     parser.add_argument('--analysis-seconds',type=int,default=30)
     parser.add_argument('--replay-seconds',type=int,default=20)
     a=parser.parse_args()
@@ -128,7 +136,7 @@ def main():
         if (a.output/name).exists():parser.error('execution output must be fresh: '+name)
     started=time.monotonic();receipt=dict(state='FAILED',analysisExit=69,verificationExit=99,measurementCompleteness='NOT_CERTIFIED')
     try:
-        base,image,identity=execution_plan(a.source,a.manifest,a.jar,a.java_home,a.output,a.native_helper)
+        base,image,identity=execution_plan(a.source,a.manifest,a.jar,a.java_home,a.output,a.native_helper,a.native_batch_helper)
         receipt.update(identity)
         receipt['analysis']=run_stage(base,image,analysis_java_arguments(identity),a.output/'analysis.log',a.analysis_seconds)
         receipt['analysisExit']=receipt['analysis']['exit']

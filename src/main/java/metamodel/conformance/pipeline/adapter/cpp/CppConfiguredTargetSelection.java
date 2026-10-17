@@ -125,10 +125,7 @@ public final class CppConfiguredTargetSelection {
         require(value!=null && (empty || !value.isBlank()) && value.indexOf('\0')<0,"invalid configured selection text");return value;
     }
     private static String identity(String model,String configuration,List<String> ids) {
-        try {
-            return Hashing.sha256("cpp-direct-target-population-v1\0"+model+"\0"
-                    +new ObjectMapper().writeValueAsString(List.of(configuration,ids.stream().sorted().toList())));
-        } catch(IOException impossible) { throw new IllegalArgumentException("selected population cannot be encoded",impossible); }
+        return metamodel.conformance.pipeline.model.NativeEvidence.BuildSelection.identityFor(model,configuration,ids);
     }
     private static void require(boolean condition,String message) {
         if(!condition)throw new IllegalArgumentException(message);

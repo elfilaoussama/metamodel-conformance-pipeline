@@ -37,6 +37,13 @@ final class NativeEvidenceXmiCodec {
         Class<?> raw = recordClass(type);
         EObject object = schema.ePackage().getEFactoryInstance().create(schema.classifier(name(type)));
         for (RecordComponent component : raw.getRecordComponents()) {
+            if (raw==NativeEvidence.Bundle.class && !schema.version().equals("16")
+                    && (component.getName().equals("buildSelections") || component.getName().equals("definitionCorrespondences"))) {
+                NativeEvidence.Bundle bundle=(NativeEvidence.Bundle)record;
+                if(!bundle.buildSelections().isEmpty() || !bundle.definitionCorrespondences().isEmpty())
+                    throw new IOException("legacy schema cannot retain cross-context provenance");
+                continue;
+            }
             if (raw == NativeEvidence.Bundle.class && component.getName().equals("reportedInputs")
                     && schema.version().equals("14")) {
                 if (!((NativeEvidence.Bundle) record).reportedInputs().isEmpty()) {
@@ -85,6 +92,10 @@ final class NativeEvidenceXmiCodec {
         for (int i = 0; i < components.length; i++) {
             RecordComponent component = components[i];
             Type fieldType = resolve(component.getGenericType(), type);
+            if(raw==NativeEvidence.Bundle.class && !schema.version().equals("16")
+                    && (component.getName().equals("buildSelections") || component.getName().equals("definitionCorrespondences"))) {
+                constructorTypes[i]=component.getType();values[i]=List.of();continue;
+            }
             if (raw == NativeEvidence.Bundle.class && component.getName().equals("reportedInputs")
                     && schema.version().equals("14")) {
                 constructorTypes[i] = component.getType();

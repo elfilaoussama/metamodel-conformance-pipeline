@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.46.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.47.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -116,3 +116,9 @@ Dependency edges do not select sources automatically; excluded translation units
 Selection is retained in provenance and context identity. This is direct source membership, not transitive link closure or cross-TU binding completeness.
 Validated with 513 current JVM tests, 23 script controls, three actual-provider/native/full-reference/replay selected cases, a typed repeat and accepted/candidate legacy preservation.
 Whole research-release gates remain open.
+
+rc47 adds optional retained-context C++ definition correspondence under an explicit direct-target source population.
+Use --native-batch-helper with an executable built against the matching Clang14 frontend; the source worker is bundled at src/main/resources/native/cpp-batch-observation-helper.cpp beside its shared headers. The runner records its hash and RETAINED_BATCH_V1 profile. It cannot combine with --native-helper or fall back to another mode.
+Native linkage, structural/type/body, ABI record-layout and import-identity guards qualify positive original source/receiving declaration relationships. Schema16 retains both contexts, input identities and the explicit selection; schemas14/15 remain readable. Pointer addresses and timing metrics are excluded from semantic receipt identity.
+Validated with 542 applicable current JVM tests, 12 repaired native controls, 14 runner controls and seven small actual-provider/native/raw-XMI/full-reference/replay engine runs, including exact typed repeat, competing definitions, packing rejection and accepted/current single-unit preservation.
+A retained failing packing control motivated the native layout guard. These finite controls are not a general ODR proof, transitive link closure or complete implementation population. Whole research-release gates remain open.

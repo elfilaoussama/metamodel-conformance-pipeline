@@ -25,6 +25,7 @@ public final class NativeEvidence {
     public enum Virtuality { VIRTUAL, NON_VIRTUAL, NOT_APPLICABLE, UNKNOWN }
     public enum TypeMeaning { COMPILER_TYPE, SOURCE_ANNOTATION, PARAMETER_NAME_CONVENTION, UNRESOLVED_SPELLING }
     public enum LookupMechanism { DECLARED, JAVA_INHERITANCE, PYTHON_C3, CPP_SUBOBJECT }
+    public enum CorrespondenceMechanism { CPP_GUARDED_IMPORT }
 
     /** Ordered evidence: a KNOWN empty sequence differs from unavailable evidence. */
     public record Evidence<T>(Knowledge knowledge, List<T> values, String reason) {
@@ -282,16 +283,77 @@ public final class NativeEvidence {
         }
     }
 
+    /** Explicit configured population; generic target dependencies do not imply membership. */
+    public record BuildSelection(String selectionId,String modelUnitPath,String modelSha256,
+            String selectionUnitPath,String configuration,List<String> targetIds,List<String> contextIds) {
+        public BuildSelection {
+            selectionId=CanonicalObservationValue.sha256(selectionId,"selection identity");
+            modelSha256=CanonicalObservationValue.sha256(modelSha256,"selected model identity");
+            modelUnitPath=CanonicalObservationValue.relativePath(modelUnitPath,"selected model unit");
+            selectionUnitPath=CanonicalObservationValue.relativePath(selectionUnitPath,"selection unit");
+            if(configuration==null || configuration.indexOf('\0')>=0)
+                throw new IllegalArgumentException("invalid selected configuration");
+            targetIds=uniqueTexts(targetIds,"selected target");contextIds=uniqueTexts(contextIds,"selected context");
+            if(targetIds.isEmpty() || contextIds.isEmpty())throw new IllegalArgumentException("selected population cannot be empty");
+            if(!selectionId.equals(identityFor(modelSha256,configuration,targetIds)))
+                throw new IllegalArgumentException("selection identity disagrees with its declared configuration/targets");
+        }
+        public static String identityFor(String modelSha256,String configuration,List<String> targetIds) {
+            CanonicalObservationValue.sha256(modelSha256,"selected model identity");
+            if(configuration==null || configuration.indexOf('\0')>=0)
+                throw new IllegalArgumentException("invalid selected configuration");
+            List<String> ids=uniqueTexts(targetIds,"selected target");
+            if(ids.isEmpty())throw new IllegalArgumentException("selected targets cannot be empty");
+            try {
+                return metamodel.conformance.pipeline.util.Hashing.sha256("cpp-direct-target-population-v1\0"+modelSha256+"\0"
+                        +new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(List.of(configuration,ids)));
+            } catch(com.fasterxml.jackson.core.JsonProcessingException invalid) {
+                throw new IllegalArgumentException("selected population cannot be encoded",invalid);
+            }
+        }
+    }
+
+    /** Positive compiler correspondence, distinct from a fixed-P0 implementation binding. */
+    public record DefinitionCorrespondence(String selectionId,String sourceContextId,String sourceMemberKey,
+            String sourceInputIdentitySha256,String targetContextId,String targetMemberKey,
+            String targetInputIdentitySha256,String sourceDeclarationIdentity,String targetDeclarationIdentity,
+            CorrespondenceMechanism mechanism,String receiptUnitPath,String receiptSha256) {
+        public DefinitionCorrespondence {
+            selectionId=CanonicalObservationValue.sha256(selectionId,"correspondence selection");
+            sourceContextId=text(sourceContextId,"definition context");targetContextId=text(targetContextId,"receiving context");
+            if(sourceContextId.equals(targetContextId))throw new IllegalArgumentException("cross-context correspondence requires distinct contexts");
+            sourceMemberKey=CanonicalObservationValue.technicalId(sourceMemberKey,"mem_","definition member");
+            targetMemberKey=CanonicalObservationValue.technicalId(targetMemberKey,"mem_","receiving member");
+            sourceInputIdentitySha256=CanonicalObservationValue.sha256(sourceInputIdentitySha256,"definition input identity");
+            targetInputIdentitySha256=CanonicalObservationValue.sha256(targetInputIdentitySha256,"receiving input identity");
+            sourceDeclarationIdentity=text(sourceDeclarationIdentity,"definition native identity");
+            targetDeclarationIdentity=text(targetDeclarationIdentity,"receiving native identity");
+            mechanism=Objects.requireNonNull(mechanism,"correspondence mechanism");
+            if(!sourceDeclarationIdentity.startsWith("c:") || !sourceDeclarationIdentity.equals(targetDeclarationIdentity))
+                throw new IllegalArgumentException("guarded C++ correspondence requires equal native Clang declaration identities");
+            receiptUnitPath=CanonicalObservationValue.relativePath(receiptUnitPath,"correspondence receipt");
+            receiptSha256=CanonicalObservationValue.sha256(receiptSha256,"correspondence receipt digest");
+        }
+    }
+
     /** A validated native bundle; no ability to certify a projected EvidenceKind. */
     public record Bundle(List<Domain> domains, List<RoleReceipt> roles, List<Invocation> invocations,
                          List<Bases> bases, List<Signature> signatures, List<Lookup> lookups,
                          List<BodyBinding> bodyBindings,
                          @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
-                         List<ReportedInputs> reportedInputs) {
+                         List<ReportedInputs> reportedInputs,
+                         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+                         List<BuildSelection> buildSelections,
+                         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+                         List<DefinitionCorrespondence> definitionCorrespondences) {
         public Bundle(List<Domain> domains, List<RoleReceipt> roles, List<Invocation> invocations,
                       List<Bases> bases, List<Signature> signatures, List<Lookup> lookups,
                       List<BodyBinding> bodyBindings) {
-            this(domains, roles, invocations, bases, signatures, lookups, bodyBindings, List.of());
+            this(domains, roles, invocations, bases, signatures, lookups, bodyBindings, List.of(),List.of(),List.of());
+        }
+        public Bundle(List<Domain> domains,List<RoleReceipt> roles,List<Invocation> invocations,List<Bases> bases,
+                List<Signature> signatures,List<Lookup> lookups,List<BodyBinding> bodyBindings,List<ReportedInputs> reportedInputs) {
+            this(domains,roles,invocations,bases,signatures,lookups,bodyBindings,reportedInputs,List.of(),List.of());
         }
 
         public Bundle {
@@ -304,11 +366,13 @@ public final class NativeEvidence {
             bodyBindings = List.copyOf(bodyBindings);
             // Missing legacy JSON fields mean unreported inventory, never known-empty inputs.
             reportedInputs = reportedInputs == null ? List.of() : List.copyOf(reportedInputs);
+            buildSelections=buildSelections==null?List.of():List.copyOf(buildSelections);
+            definitionCorrespondences=definitionCorrespondences==null?List.of():List.copyOf(definitionCorrespondences);
             Map<String, DomainIndex> byContext = new HashMap<>();
             Set<String> contextualIds = new HashSet<>();
             for (Domain domain : domains) {
                 if (byContext.put(domain.contextId(), new DomainIndex(
-                        Set.copyOf(domain.classifierIds()), Set.copyOf(domain.memberKeys()))) != null) {
+                        Set.copyOf(domain.classifierIds()), Set.copyOf(domain.memberKeys()),domain)) != null) {
                     throw new IllegalArgumentException("duplicate domain");
                 }
                 for (String id : domain.classifierIds()) unique(contextualIds, id, "classifier identity reused across contexts");
@@ -364,6 +428,53 @@ public final class NativeEvidence {
                 unique(occurrences, List.of("body", binding.contextId(), binding.memberKey()), "duplicate body receipt");
                 binding.implementationTargetKeys().values().forEach(id -> require(domain.memberKeys(), id, "implementation target"));
             }
+            Map<String,BuildSelection> selections=new HashMap<>();Set<String> selectedContexts=new HashSet<>();
+            for(BuildSelection selection:buildSelections) {
+                if(selections.putIfAbsent(selection.selectionId(),selection)!=null)
+                    throw new IllegalArgumentException("duplicate selected population");
+                for(String context:selection.contextIds()) {
+                    Domain entry=domain(byContext,context).value();
+                    if(entry.language()!=Language.CPP || entry.mode()!=MeasurementMode.SELECTED_BUILD
+                            || !selectedContexts.add(context))
+                        throw new IllegalArgumentException("selected population requires uniquely owned configured C++ contexts");
+                }
+            }
+            Map<List<String>,BodyBinding> bodies=new HashMap<>();
+            bodyBindings.forEach(binding->bodies.put(List.of(binding.contextId(),binding.memberKey()),binding));
+            Map<String,Invocation> invocationByContext=new HashMap<>();
+            invocations.forEach(invocation->invocationByContext.put(invocation.contextId(),invocation));
+            Set<List<String>> importedTargets=new HashSet<>();
+            for(DefinitionCorrespondence entry:definitionCorrespondences) {
+                BuildSelection selection=selections.get(entry.selectionId());
+                if(selection==null || !selection.contextIds().containsAll(List.of(entry.sourceContextId(),entry.targetContextId())))
+                    throw new IllegalArgumentException("definition correspondence is outside selected population");
+                Domain source=domain(byContext,entry.sourceContextId()).value(),target=domain(byContext,entry.targetContextId()).value();
+                require(Set.copyOf(source.memberKeys()),entry.sourceMemberKey(),"definition source");
+                require(Set.copyOf(target.memberKeys()),entry.targetMemberKey(),"definition receiver");
+                if(!source.inputIdentitySha256().equals(entry.sourceInputIdentitySha256())
+                        || !target.inputIdentitySha256().equals(entry.targetInputIdentitySha256()))
+                    throw new IllegalArgumentException("definition correspondence input identity mismatch");
+                for(String context:List.of(source.contextId(),target.contextId())) {
+                    Invocation invocation=invocationByContext.get(context);
+                    if(invocation==null || invocation.consumedInputs().knowledge()!=Knowledge.KNOWN
+                            || invocation.consumedInputs().values().isEmpty())
+                        throw new IllegalArgumentException("definition correspondence requires actual native input receipts");
+                }
+                if(!invocationByContext.get(source.contextId()).toolIdentitySha256()
+                        .equals(invocationByContext.get(target.contextId()).toolIdentitySha256()))
+                    throw new IllegalArgumentException("guarded import requires one native frontend identity");
+                BodyBinding sourceBody=bodies.get(List.of(entry.sourceContextId(),entry.sourceMemberKey()));
+                BodyBinding targetBody=bodies.get(List.of(entry.targetContextId(),entry.targetMemberKey()));
+                if(sourceBody==null || targetBody==null || sourceBody.bodySpan().knowledge()!=Knowledge.KNOWN
+                        || !sourceBody.bodySpan().equals(targetBody.bodySpan())
+                        || !sourceBody.implementationTargetKeys().values().contains(entry.sourceMemberKey())
+                        || !targetBody.implementationTargetKeys().values().contains(entry.targetMemberKey()))
+                    throw new IllegalArgumentException("definition correspondence requires matching positive native body receipts");
+                unique(importedTargets,List.of(entry.targetContextId(),entry.targetMemberKey()),"duplicate definition correspondence receiver");
+            }
+            for(DefinitionCorrespondence entry:definitionCorrespondences)
+                if(importedTargets.contains(List.of(entry.sourceContextId(),entry.sourceMemberKey())))
+                    throw new IllegalArgumentException("definition origin cannot itself be an imported alias");
         }
 
         public static Bundle empty() {
@@ -393,7 +504,15 @@ public final class NativeEvidence {
         return result.stream().sorted().toList();
     }
 
-    private record DomainIndex(Set<String> classifierIds, Set<String> memberKeys) { }
+    private static List<String> uniqueTexts(List<String> values,String name) {
+        List<String> result=List.copyOf(Objects.requireNonNull(values,name));Set<String> unique=new HashSet<>();
+        for(String value:result) {
+            text(value,name);if(value.indexOf('\0')>=0 || !unique.add(value))throw new IllegalArgumentException("invalid/duplicate "+name);
+        }
+        return result.stream().sorted().toList();
+    }
+
+    private record DomainIndex(Set<String> classifierIds, Set<String> memberKeys,Domain value) { }
 
     private static DomainIndex domain(Map<String, DomainIndex> domains, String id) {
         DomainIndex domain = domains.get(id);

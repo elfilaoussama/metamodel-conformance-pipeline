@@ -59,9 +59,11 @@ public record Observation(
                 units, classifiers, members, methodBodies, implementationBindings,
                 unresolvedParents, diagnostics);
         nativeEvidence = nativeEvidence == null ? NativeEvidence.Bundle.empty() : nativeEvidence;
-        if (!nativeEvidence.reportedInputs().isEmpty() && !schemaVersion.equals("15")) {
-            throw new IllegalArgumentException("reported inventories require schema15");
+        if (!nativeEvidence.reportedInputs().isEmpty() && !Set.of("15","16").contains(schemaVersion)) {
+            throw new IllegalArgumentException("reported inventories require schema15 or newer");
         }
+        if((!nativeEvidence.buildSelections().isEmpty() || !nativeEvidence.definitionCorrespondences().isEmpty())
+                && !schemaVersion.equals("16"))throw new IllegalArgumentException("cross-context provenance requires schema16");
         if (!nativeEvidence.domains().isEmpty()) validateNativePopulation(nativeEvidence, units, classifiers, members);
         if (!unresolvedParents.isEmpty() && completeEvidence.contains(EvidenceKind.HIERARCHY)) {
             throw new IllegalArgumentException("hierarchy evidence cannot be complete with unresolved parents");
@@ -206,6 +208,16 @@ public record Observation(
             requireNativeMethod(byMemberKey, value.memberKey());
             value.implementationTargetKeys().values().forEach(key -> requireNativeMethod(byMemberKey, key));
         });
+        Map<String,SourceUnit> byPath=new HashMap<>();units.forEach(unit->byPath.put(unit.path(),unit));
+        for(var selection:nativeEvidence.buildSelections()) {
+            requireNativeUnit(byPath,selection.modelUnitPath(),selection.modelSha256());
+            requireNativeUnit(byPath,selection.selectionUnitPath(),selection.selectionId());
+        }
+        for(var correspondence:nativeEvidence.definitionCorrespondences()) {
+            requireNativeMethod(byMemberKey,correspondence.sourceMemberKey());
+            requireNativeMethod(byMemberKey,correspondence.targetMemberKey());
+            requireNativeUnit(byPath,correspondence.receiptUnitPath(),correspondence.receiptSha256());
+        }
         nativeEvidence.lookups().forEach(value -> value.targets().values().forEach(target ->
                 target.overriddenMemberKeys().values().forEach(key -> requireNativeMethod(byMemberKey, key))));
     }
@@ -215,6 +227,12 @@ public record Observation(
         if (member == null || member.kind() != MemberKind.METHOD) {
             throw new IllegalArgumentException("native method evidence must reference a canonical method");
         }
+    }
+
+    private static void requireNativeUnit(Map<String,SourceUnit> units,String path,String digest) {
+        SourceUnit unit=units.get(path);
+        if(unit==null || unit.language()!=Language.CPP || !unit.sha256().equals(digest))
+            throw new IllegalArgumentException("native correspondence/selection source-unit identity mismatch");
     }
 
     private static void validateReferences(

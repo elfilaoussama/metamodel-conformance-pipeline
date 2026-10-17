@@ -75,8 +75,8 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.18.0";
-    private static final String PROFILE_ID = "contextual-native-projection-v10";
+    public static final String ADAPTER_VERSION = "0.19.0";
+    private static final String PROFILE_ID = "contextual-native-projection-v11";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -91,6 +91,7 @@ public final class ClangCppObserver implements SourceObserver {
     private final String clangExecutable;
     private final CppDependencyInputs dependencyInputs;
     private final Path nativeHelper;
+    private final Path nativeBatchHelper;
 
     static {
         Set<String> extensions = new HashSet<>(SOURCE_EXTENSIONS);
@@ -111,6 +112,10 @@ public final class ClangCppObserver implements SourceObserver {
     }
 
     public ClangCppObserver(String clangExecutable, CppDependencyInputs dependencyInputs, String nativeHelper) {
+        this(clangExecutable,dependencyInputs,nativeHelper,System.getProperty("metamodel.conformance.cpp.nativeBatchHelper",""));
+    }
+
+    public ClangCppObserver(String clangExecutable, CppDependencyInputs dependencyInputs, String nativeHelper,String nativeBatchHelper) {
         if (clangExecutable == null || clangExecutable.isBlank()) {
             throw new IllegalArgumentException("clang executable must not be blank");
         }
@@ -122,6 +127,13 @@ public final class ClangCppObserver implements SourceObserver {
         if (this.nativeHelper != null && !this.nativeHelper.isAbsolute()) {
             throw new IllegalArgumentException("C++ native helper must be an absolute executable path");
         }
+        this.nativeBatchHelper=nativeBatchHelper==null || nativeBatchHelper.isBlank()?null:Path.of(nativeBatchHelper);
+        if(this.nativeBatchHelper!=null && !this.nativeBatchHelper.isAbsolute())
+            throw new IllegalArgumentException("C++ native batch helper must be an absolute executable path");
+        if(this.nativeBatchHelper!=null && this.nativeHelper!=null)
+            throw new IllegalArgumentException("select one C++ native transport explicitly");
+        if(this.nativeBatchHelper!=null && this.dependencyInputs.targetSelection()==null)
+            throw new IllegalArgumentException("C++ retained batch requires explicit configured target selection");
     }
 
     @Override
@@ -164,6 +176,7 @@ public final class ClangCppObserver implements SourceObserver {
             Map<String,List<NativeEvidence.DirectBase>> compilerBases = new HashMap<>();
             Set<Path> coveredProjectFiles = new HashSet<>();
             if (nativeHelper != null) recordPhysicalHash(nativeHelper, physicalHashes);
+            if (nativeBatchHelper != null) recordPhysicalHash(nativeBatchHelper, physicalHashes);
 
             List<Path> translationUnits = files.stream()
                     .filter(path -> isSourcePath(path.getFileName().toString()))
@@ -176,10 +189,16 @@ public final class ClangCppObserver implements SourceObserver {
                     && initialUnits.stream().allMatch(file ->
                     dependencyInputs.contextForSourcePath(relativePath(root, file)) != null);
 
-            for (Path file : initialUnits) {
+            Map<Path,String> initialContexts=new java.util.LinkedHashMap<>();
+            for(Path file:initialUnits) {
                 String contextId = recordCompilationContext(root, file, unitsByPath, clangHash);
                 sourceByContext.put(contextId, relativePath(root, file));
-                AnalysisResult result = analyzeUnit(root, file, contextId, clang, clangHash);
+                initialContexts.put(file,contextId);
+            }
+            BatchAnalysis batch=nativeBatchHelper==null?null:analyzeBatch(root,initialContexts,clang,clangHash);
+            for (Path file : initialUnits) {
+                String contextId=initialContexts.get(file);
+                AnalysisResult result = batch==null?analyzeUnit(root, file, contextId, clang, clangHash):batch.results().get(file);
                 Set<Path> associated = new HashSet<>(result.dependencies());
                 associated.add(file);
                 associatedInputs.put(contextId, associated);
@@ -500,6 +519,20 @@ public final class ClangCppObserver implements SourceObserver {
                             .equals(List.of(binding.ownerClassifierId()))) nativeBodyBindings.add(binding);
                 }
             }
+            CppNativeCorrespondenceReceipt.Result foreign=null;
+            String correspondenceUnit="cpp-native-correspondence/selected-contexts-v1";
+            if(batch!=null) {
+                Map<String,CppNativeCorrespondenceReceipt.Frame> frames=new HashMap<>();
+                for(var result:batch.results().values())if(result.trace()!=null && result.astFailure()==null && result.exitCode()==0) {
+                    String context=result.collector().contextId;
+                    frames.put(context,new CppNativeCorrespondenceReceipt.Frame(result.collector().nativeDeclarationKeys,
+                            result.trace().implementationFacts(),implementationCensuses.get(context)));
+                }
+                foreign=CppNativeCorrespondenceReceipt.project(root,targetSelection.sha256(),batch.receipt(),frames,declarationOwners);
+                methodBodies.addAll(foreign.bodies());sourceBindings.addAll(foreign.bindings());nativeBodyBindings.addAll(foreign.nativeBindings());
+                diagnostics.addAll(foreign.diagnostics());
+                unitsByPath.put(correspondenceUnit,new SourceUnit(Language.CPP,correspondenceUnit,Hashing.sha256(foreign.canonicalReceipt())));
+            }
             classAbstractionComplete &= classifiers.stream().allMatch(c -> nativeAbstractions.containsKey(c.id())
                     && nativeAbstractions.get(c.id())!=ClassifierAbstraction.UNKNOWN);
             classifiers = classifiers.stream().map(c -> new ClassifierObservation(c.id(),c.qualifiedName(),c.packageName(),
@@ -513,7 +546,7 @@ public final class ClangCppObserver implements SourceObserver {
             String adapterVersion = ADAPTER_VERSION
                     + "/clang-" + canonicalToken(clang.version())
                     + "/" + canonicalToken(clang.target())
-                    + "/" + PROFILE_ID + (nativeHelper == null ? "" : "/same-pass-inputs-v1");
+                    + "/" + PROFILE_ID + (nativeBatchHelper!=null?"/retained-batch-v1":nativeHelper == null ? "" : "/same-pass-inputs-v1");
             // This is the recorded configuration/byte subset, not a claim of closed
             // native runtime, filesystem metadata, clock or negative-probe inputs.
             String recordedInputs = JSON.writeValueAsString(unitsByPath.values().stream()
@@ -547,8 +580,17 @@ public final class ClangCppObserver implements SourceObserver {
                         contextual.stream().map(Draft::id).toList(),
                         contextual.stream().flatMap(d -> memberKeysByOwner.get(d.id()).stream()).toList()));
             }
+            List<NativeEvidence.DefinitionCorrespondence> correspondences=new ArrayList<>();
+            if(foreign!=null) {
+                Map<String,NativeEvidence.Domain> indexed=new HashMap<>();for(var domain:domains)indexed.put(domain.contextId(),domain);
+                for(var match:foreign.matches())correspondences.add(new NativeEvidence.DefinitionCorrespondence(targetSelection.sha256(),
+                        match.sourceContext(),match.sourceMember(),indexed.get(match.sourceContext()).inputIdentitySha256(),
+                        match.targetContext(),match.targetMember(),indexed.get(match.targetContext()).inputIdentitySha256(),
+                        match.usr(),match.usr(),NativeEvidence.CorrespondenceMechanism.CPP_GUARDED_IMPORT,correspondenceUnit,
+                        unitsByPath.get(correspondenceUnit).sha256()));
+            }
             return new Observation(
-                    "15",
+                    targetSelection==null?"15":"16",
                     ADAPTER_ID,
                     adapterVersion,
                     List.copyOf(allowed),
@@ -563,7 +605,12 @@ public final class ClangCppObserver implements SourceObserver {
                     List.of(),
                     new NativeEvidence.Bundle(domains, inputRoles, nativeInvocations, nativeBases,
                             nativeSignatures, nativeLookups, nativeBodyBindings, domains.stream()
-                                    .map(domain -> ToolRuntimeEvidence.reported(domain.contextId(), toolPolicy)).toList()));
+                                    .map(domain -> ToolRuntimeEvidence.reported(domain.contextId(), toolPolicy)).toList(),
+                            targetSelection==null?List.of():List.of(new NativeEvidence.BuildSelection(
+                                    targetSelection.sha256(),"cpp-configured-build/cmake-codemodel-v2",targetSelection.modelSha256(),
+                                    "cpp-configured-build/direct-target-population-v1",targetSelection.configuration(),
+                                    targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).toList(),
+                                    domains.stream().map(NativeEvidence.Domain::contextId).toList())),correspondences));
         } catch (ObservationException exception) {
             throw exception;
         } catch (IOException | RuntimeException failure) {
@@ -750,6 +797,73 @@ public final class ClangCppObserver implements SourceObserver {
     private record CompilationContextIdentity(
             String schemaVersion, String sourcePath, String workingDirectory,
             boolean declared, List<String> arguments) { }
+
+    private record BatchCommand(Path source,String contextId,Path cwd,Path dependencies,
+            List<String> compilerArgv,List<String> semanticArguments) { }
+    private record BatchAnalysis(Map<Path,AnalysisResult> results,CppNativeBatchReceipt.Result receipt) {
+        BatchAnalysis {results=Map.copyOf(results);}
+    }
+
+    private BatchAnalysis analyzeBatch(Path root,Map<Path,String> contexts,ClangIdentity clang,String compilerHash)
+            throws IOException,ObservationException {
+        Path scratch=Files.createTempDirectory("metamodel-clang-batch-").toRealPath();
+        try {
+            List<BatchCommand> commands=new ArrayList<>();List<Map<String,Object>> jobs=new ArrayList<>();
+            for(var context:contexts.entrySet()) {
+                Path source=context.getKey();var declared=dependencyInputs.contextForSourcePath(relativePath(root,source));
+                if(declared==null)throw new ObservationException("retained batch source lacks declared compilation context");
+                var execution=declared.execution();Path cwd=execution==null?root:Path.of(execution.workingDirectory());
+                List<String> semantic=new ArrayList<>(declaredClangArguments(root,source));
+                semantic.addAll(List.of("-fsyntax-only","-fno-color-diagnostics","-Wno-pragma-once-outside-header",
+                        "-x","c++","-Xclang","-ast-dump=json",execution==null?source.toString():execution.sourceOperand()));
+                Path dependencies=scratch.resolve("compiler-"+commands.size()+".d");
+                List<String> arguments=new ArrayList<>(semantic);
+                arguments.addAll(arguments.size()-3,List.of("-MD","-MF",dependencies.toString(),"-MT","observation"));
+                arguments.add(0,clangExecutable);
+                commands.add(new BatchCommand(source,context.getValue(),cwd,dependencies,List.copyOf(arguments),List.copyOf(semantic)));
+                jobs.add(Map.of("contextId",context.getValue(),"workingDirectory",cwd.toString(),"arguments",arguments));
+            }
+            Path request=scratch.resolve("request.json"),output=scratch.resolve("result.json"),errors=scratch.resolve("worker.stderr");
+            JSON.writeValue(request.toFile(),Map.of("projectRoot",root.toString(),"jobs",jobs));
+            ProcessBuilder builder=new ProcessBuilder(nativeBatchHelper.toString(),request.toString(),output.toString())
+                    .directory(root.toFile()).redirectError(errors.toFile()).redirectOutput(scratch.resolve("worker.stdout").toFile());
+            try(var lease=ToolProcessLease.start(builder,toolPolicy)) {
+                try {
+                    int exit=lease.awaitExit();
+                    if(exit!=0)throw new ObservationException("C++ retained batch worker failed (no fallback): "+exit+"; "
+                            +normalizeDiagnostic(root,Files.readString(errors,StandardCharsets.UTF_8)));
+                } catch(InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();throw new ObservationException("C++ retained batch interrupted",interrupted);
+                } catch(IOException failure){throw lease.classify(failure);}
+            }
+            var receipt=CppNativeBatchReceipt.read(output,root,commands.stream().map(BatchCommand::contextId).toList());
+            Map<Path,AnalysisResult> results=new java.util.LinkedHashMap<>();
+            for(int index=0;index<commands.size();index++) {
+                var command=commands.get(index);var job=receipt.jobs().get(index);
+                AstCollector collector=new AstCollector(root,command.cwd(),command.contextId(),new ArrayList<>());
+                Exception malformed=null;List<Path> dependencies=List.of();String dependencyError=null;CppNativeInputReceipt.Result trace=null;
+                if(job.exitCode()==0) {
+                    try(InputStream input=Files.newInputStream(job.astPath());JsonParser parser=JSON.getFactory().createParser(input)) {
+                        if(parser.nextToken()!=JsonToken.START_OBJECT)throw new IOException("Clang AST dump does not begin with a JSON object");
+                        collector.walk(parser,List.of(),null,false);
+                        if(parser.nextToken()!=null)throw new IOException("multiple top-level JSON values in Clang AST dump");
+                    } catch(Exception failure){malformed=failure;}
+                    try {dependencies=parseDependencyFile(command.cwd(),command.dependencies());}
+                    catch(IOException|RuntimeException failure){dependencyError=failure.getMessage()==null?failure.getClass().getSimpleName():failure.getMessage();}
+                    trace=CppNativeInputReceipt.read(job.inputPath(),new CppNativeInputReceipt.Context(command.contextId(),clangExecutable,
+                            clang.version(),clang.target(),nativeBatchHelper,command.cwd(),command.source(),command.compilerArgv(),command.semanticArguments(),compilerHash));
+                }
+                results.put(command.source(),new AnalysisResult(job.exitCode(),Files.readString(job.errorPath(),StandardCharsets.UTF_8),
+                        collector,dependencies,dependencyError,malformed,trace));
+            }
+            return new BatchAnalysis(results,receipt);
+        } finally {
+            // Only the adapter-created scratch tree is removed, after all raw joins are read.
+            try(Stream<Path> paths=Files.walk(scratch)) {
+                for(Path path:paths.sorted(Comparator.reverseOrder()).toList())Files.deleteIfExists(path);
+            }
+        }
+    }
 
     private AnalysisResult analyzeUnit(Path root, Path source, List<String> declaredArguments, String contextId,
                                        ClangIdentity clang, String compilerHash)
