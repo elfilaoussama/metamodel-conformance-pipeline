@@ -72,7 +72,7 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.15.0";
+    public static final String ADAPTER_VERSION = "0.16.0";
     private static final String PROFILE_ID = "contextual-native-projection-v8";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
@@ -664,8 +664,12 @@ public final class ClangCppObserver implements SourceObserver {
             putUnit(units,new SourceUnit(Language.CPP,path+"/execution-layout",
                     Hashing.sha256(JSON.writeValueAsString(declared.execution()))));
         }
+        var buildModel = dependencyInputs.configuredBuildModel();
+        if (buildModel != null) putUnit(units, new SourceUnit(Language.CPP,
+                "cpp-configured-build/cmake-codemodel-v2", buildModel.sha256()));
         return "cpp-domain-" + Hashing.sha256(identity + "\0" + compilerHash + "\0"
-                + (execution == null ? "" : JSON.writeValueAsString(execution)));
+                + (execution == null ? "" : JSON.writeValueAsString(execution))
+                + (buildModel == null ? "" : "\0cmake-codemodel-v2\0" + buildModel.sha256()));
     }
 
     private record CompilationContextIdentity(

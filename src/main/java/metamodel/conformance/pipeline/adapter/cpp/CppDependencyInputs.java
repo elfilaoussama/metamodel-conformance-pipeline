@@ -18,17 +18,20 @@ import java.util.Map;
  */
 public final class CppDependencyInputs {
     private final Map<String, CppCompileContext> contextsBySourcePath;
+    private final CppConfiguredBuildModel configuredBuildModel;
 
-    private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath) {
+    private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath, CppConfiguredBuildModel configuredBuildModel) {
         this.contextsBySourcePath = Map.copyOf(contextsBySourcePath);
+        this.configuredBuildModel = configuredBuildModel;
     }
 
     public static CppDependencyInputs none() {
-        return new CppDependencyInputs(Map.of());
+        return new CppDependencyInputs(Map.of(), null);
     }
 
     public static CppDependencyInputs fromManifest(Path manifest) {
         Map<String, CppCompileContext> contextsBySourcePath = new LinkedHashMap<>();
+        CppConfiguredBuildModel configuredModel = null;
         try {
             List<String> lines = Files.readAllLines(manifest, StandardCharsets.UTF_8);
             int lineNumber = 0;
@@ -42,17 +45,24 @@ public final class CppDependencyInputs {
                 String kind = fields[0];
                 try {
                     switch (kind) {
+                        case "build-model" -> {
+                            requireFields(fields, 3);
+                            if (configuredModel != null || !fields[1].equals("cmake-codemodel-v2"))
+                                throw new IllegalArgumentException("exactly one supported configured build model required");
+                            configuredModel = CppConfiguredBuildModel.parse(fields[2]);
+                        }
                         case "context" -> {
                             requireFields(fields, 3);
                             requireContextId(fields[1]);
                             if (contextsById.containsKey(fields[1])) {
                                 throw new IllegalArgumentException("duplicate context row: " + fields[1]);
                             }
-                            if (!List.of(".", "ordered-v2", "ordered-v3", "ordered-v4").contains(fields[2])) {
+                            if (!List.of(".", "ordered-v2", "ordered-v3", "ordered-v4", "ordered-v5").contains(fields[2])) {
                                 throw new IllegalArgumentException("unsupported context version");
                             }
                             contextsById.put(fields[1], new Builder(!fields[2].equals("."),
-                                    List.of("ordered-v3","ordered-v4").contains(fields[2]), fields[2].equals("ordered-v4")));
+                                    List.of("ordered-v3","ordered-v4","ordered-v5").contains(fields[2]),
+                                    List.of("ordered-v4","ordered-v5").contains(fields[2]), fields[2].equals("ordered-v5")));
                         }
                         case "source" -> {
                             requireFields(fields, 3);
@@ -110,6 +120,8 @@ public final class CppDependencyInputs {
             }
             for (Map.Entry<String, Builder> entry : contextsById.entrySet()) {
                 Builder builder = entry.getValue();
+                if (builder.modelRequired != (configuredModel != null))
+                    throw new IllegalArgumentException("ordered-v5 requires one configured build model and cannot mix legacy contexts");
                 if (builder.sealed && builder.compiler == null) {
                     throw new IllegalArgumentException("ordered-v3 context requires compiler attestation");
                 }
@@ -123,6 +135,10 @@ public final class CppDependencyInputs {
                     throw new IllegalArgumentException(
                             "C++ manifest context has no source path: " + entry.getKey());
                 }
+                if (configuredModel != null && (!configuredModel.declaresSource(builder.sourcePath)
+                        || !configuredModel.sourceRoot().toString().equals(builder.execution.sourceRoot())
+                        || !Path.of(builder.execution.workingDirectory()).startsWith(configuredModel.buildRoot())))
+                    throw new IllegalArgumentException("configured target model does not cover the declared source/layout");
                 if (!builder.ordered && builder.operations.stream().filter(op -> op.kind().equals("std")).count() > 1) {
                     throw new IllegalArgumentException(
                             "C++ manifest context declares more than one language standard: " + entry.getKey());
@@ -138,12 +154,16 @@ public final class CppDependencyInputs {
         } catch (IOException failure) {
             throw new UncheckedIOException("C++ dependency manifest is not readable: " + manifest, failure);
         }
-        return new CppDependencyInputs(contextsBySourcePath);
+        if (configuredModel != null && contextsBySourcePath.isEmpty())
+            throw new IllegalArgumentException("configured build model without compile contexts");
+        return new CppDependencyInputs(contextsBySourcePath, configuredModel);
     }
 
     public boolean isEmpty() {
         return contextsBySourcePath.isEmpty();
     }
+
+    public CppConfiguredBuildModel configuredBuildModel() { return configuredBuildModel; }
 
     /**
      * The declared compile context of a translation unit, or null when the
@@ -296,11 +316,13 @@ public final class CppDependencyInputs {
         private final boolean ordered;
         private final boolean sealed;
         private final boolean layoutRequired;
+        private final boolean modelRequired;
         private CompilerIdentity compiler;
         private ExecutionLayout execution;
         private final List<CompileOperation> operations = new ArrayList<>();
-        private Builder(boolean ordered, boolean sealed, boolean layoutRequired) {
+        private Builder(boolean ordered, boolean sealed, boolean layoutRequired, boolean modelRequired) {
             this.ordered = ordered; this.sealed = sealed; this.layoutRequired=layoutRequired;
+            this.modelRequired = modelRequired;
         }
     }
     private static void requireFields(String[] fields, int count) {

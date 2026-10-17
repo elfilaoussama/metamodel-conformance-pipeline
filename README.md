@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.43.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.44.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -96,3 +96,10 @@ Compiler scope errors retain positive spans while withholding completeness; targ
 Validated with 486 current regression cases and twelve small native/full-reference/replay cases.
 Legal abstract/static callable bodies and unknown transformations remain distinct from fixed-P0 findings.
 ABC/custom-metaclass binding, C++ cross-TU closure and full research-release readiness remain open.
+
+rc44 captures configured CMake File API target facts in ordered-v5 manifests.
+The configured-model digest participates in C++ compiler-world identity; exact generated capture bytes are checked before selected-build execution.
+Declared target dependencies and link fragments do not certify implementation or consumed-linker-input closure.
+Validated with 492 current JVM tests, fourteen script controls, three small actual-provider/native/full-reference/replay cases and a complete typed repeat with source timestamps preserved.
+A paired accepted/candidate check preserves existing source facts and all eleven decision statuses.
+C++ cross-TU body/binding admission and the full research-release gates remain open.

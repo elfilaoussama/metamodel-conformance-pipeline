@@ -41,6 +41,30 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
         raise ValueError('unsupported provider mount layout')
     configured=cache/'worktree'
     if not configured.is_dir() or not (java_home/'bin/java').is_file():raise ValueError('configured tree or Java runtime is unavailable')
+    model_rows=[line.split('\t',2) for line in manifest.read_text().splitlines() if line.startswith('build-model\t')]
+    configured_model=None
+    if model_rows:
+        if len(model_rows)!=1 or len(model_rows[0])!=3 or model_rows[0][1]!='cmake-codemodel-v2':
+            raise ValueError('invalid configured build model row')
+        model_text=model_rows[0][2];model_hash=hashlib.sha256(model_text.encode()).hexdigest()
+        capture=data.get('configuredBuildCapture',{})
+        if data.get('configuredBuildModel')!=json.loads(model_text) or capture.get('formatVersion')!=1 \
+                or capture.get('semanticModelSha256')!=model_hash \
+                or capture.get('meaning')!='CONFIGURED_TARGET_FACTS_NOT_LINKER_INPUT_CLOSURE':
+            raise ValueError('configured build model/capture mismatch')
+        inputs=capture.get('inputs')
+        if not isinstance(inputs,list) or not inputs:raise ValueError('configured build capture inputs missing')
+        reply=cache/'build/.cmake/api/v1/reply';seen=set()
+        for row in inputs:
+            name=row.get('path')
+            if not isinstance(name,str) or Path(name).name!=name or '\\' in name or name in seen:
+                raise ValueError('invalid configured build capture path')
+            seen.add(name);path=reply/name
+            if path.is_symlink() or path.resolve(strict=True).parent!=reply.resolve(strict=True) or sha(path)!=row.get('sha256'):
+                raise ValueError('configured File API input changed or aliased')
+        configured_model=dict(semanticModelSha256=model_hash,reportedInputs=len(inputs),meaning=capture['meaning'])
+    elif data.get('configuredBuildModel') is not None or data.get('configuredBuildCapture') is not None:
+        raise ValueError('configured build facts missing from manifest')
     if native_helper is not None:
         native_helper=native_helper.resolve(strict=True)
         if not native_helper.is_file() or not os.access(native_helper,os.X_OK):
@@ -59,6 +83,7 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
     identity=dict(recipe=recipe,manifestSha256=sha(manifest),
         producerJarSha256=sha(jar),javaExecutableSha256=sha(java_home/'bin/java'),
         configuredJavaHome=str(java_home),controllerSha256=sha(Path(__file__)),executorSha256=sha(executor_path))
+    if configured_model is not None:identity['configuredBuildFacts']=configured_model
     identity['nativeInputProfile']='UNTRACED' if native_helper is None else 'SAME_PASS_INPUTS_V1'
     if native_helper is not None:
         identity['nativeHelper']=dict(configuredPath=str(native_helper),containerPath='/pipeline-native-helper',sha256=sha(native_helper))

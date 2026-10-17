@@ -60,6 +60,11 @@ container_tmp="$container_out/tmp"
 # observing compiler must be checked before source observation.
 compile_flags=(-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang)
 
+# Ask the actual configured generator for target/source/link facts. A fresh
+# resolution cache gives one reply index; no build-file text parsing is used.
+mkdir -p "$resolution_root/build/.cmake/api/v1/query"
+: > "$resolution_root/build/.cmake/api/v1/query/codemodel-v2"
+
 docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
   --tmpfs /tmp:rw,nosuid,nodev,noexec \
   --user "$(id -u):$(id -g)" \
@@ -84,8 +89,10 @@ docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-
   --mount "type=bind,src=$identity_script,dst=/compiler-identity.sh,readonly" \
   "$resolver_image_id" bash /compiler-identity.sh clang++ >"$resolution_root/compiler-identity.json"
 
+python3 "$(dirname "$0")/cpp-cmake-model.py" "$resolution_root/build/.cmake/api/v1/reply" \
+  "$resolution_root/configured-build-model.json"
 python3 "$(dirname "$0")/cpp-context-manifest.py" "$compile_commands" "$output_file" "$worktree_root" \
-  "$resolution_root/compiler-identity.json" "$container_worktree"
+  "$resolution_root/compiler-identity.json" "$container_worktree" "$resolution_root/configured-build-model.json"
 
 # Preserve the actual provider image as an execution recipe, separate from the
 # compiler byte receipt and semantic context. Never infer an image from a tag
@@ -97,6 +104,7 @@ import sys
 manifest, image, source, cache = sys.argv[1:]
 path = Path(manifest + '.provenance.json')
 data = json.loads(path.read_text())
+data['configuredBuildCapture'] = json.loads((Path(cache) / 'configured-build-model.json.capture.json').read_text())
 data['providerExecution'] = dict(recipeVersion=1, imageId=image,
     originalSourceRoot=str(Path(source).resolve()), cacheRoot=str(Path(cache).resolve()),
     configuredSourceRoot='/workspace/worktree', originalSourceMount='/workspace/source',
