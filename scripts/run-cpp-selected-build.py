@@ -65,6 +65,21 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
         configured_model=dict(semanticModelSha256=model_hash,reportedInputs=len(inputs),meaning=capture['meaning'])
     elif data.get('configuredBuildModel') is not None or data.get('configuredBuildCapture') is not None:
         raise ValueError('configured build facts missing from manifest')
+    selection_rows=[line.split('\t',2) for line in manifest.read_text().splitlines() if line.startswith('build-selection\t')]
+    selection=None
+    if selection_rows:
+        if configured_model is None or len(selection_rows)!=1 or len(selection_rows[0])!=3 \
+                or selection_rows[0][1]!='direct-targets-v1':
+            raise ValueError('invalid configured target population row')
+        selection=json.loads(selection_rows[0][2])
+        if not isinstance(selection,dict) or set(selection)!={'configuration','targetIds'} \
+                or not isinstance(selection['configuration'],str) or not isinstance(selection['targetIds'],list) \
+                or not selection['targetIds'] or any(not isinstance(value,str) or not value for value in selection['targetIds']) \
+                or len(set(selection['targetIds']))!=len(selection['targetIds']) \
+                or selection!=data.get('configuredTargetSelection'):
+            raise ValueError('configured target population/provenance mismatch')
+    elif data.get('configuredTargetSelection') is not None:
+        raise ValueError('configured target population missing from manifest')
     if native_helper is not None:
         native_helper=native_helper.resolve(strict=True)
         if not native_helper.is_file() or not os.access(native_helper,os.X_OK):
@@ -84,6 +99,7 @@ def execution_plan(source,manifest,jar,java_home,output,native_helper=None):
         producerJarSha256=sha(jar),javaExecutableSha256=sha(java_home/'bin/java'),
         configuredJavaHome=str(java_home),controllerSha256=sha(Path(__file__)),executorSha256=sha(executor_path))
     if configured_model is not None:identity['configuredBuildFacts']=configured_model
+    if selection is not None:identity['configuredTargetSelection']=selection
     identity['nativeInputProfile']='UNTRACED' if native_helper is None else 'SAME_PASS_INPUTS_V1'
     if native_helper is not None:
         identity['nativeHelper']=dict(configuredPath=str(native_helper),containerPath='/pipeline-native-helper',sha256=sha(native_helper))

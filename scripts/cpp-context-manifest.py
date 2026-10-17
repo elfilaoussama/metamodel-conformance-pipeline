@@ -24,6 +24,43 @@ def atom(value):
         raise ValueError("unrepresentable argument")
     return value
 
+
+def selected_targets(path, model):
+    """Resolve an explicit request against native target names, never edges."""
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError('duplicate target selection field')
+            result[key] = value
+        return result
+    request = json.loads(path.read_text(), object_pairs_hook=unique)
+    if not isinstance(request, dict) or set(request) != {'configuration', 'targetNames'} \
+            or not isinstance(request['configuration'], str) or '\0' in request['configuration'] \
+            or not isinstance(request['targetNames'], list) or not request['targetNames']:
+        raise ValueError('target selection needs an explicit configuration and targetNames')
+    names = request['targetNames']
+    if any(not isinstance(name, str) or not name.strip() or '\0' in name for name in names) \
+            or len(set(names)) != len(names):
+        raise ValueError('target names must be textual, nonempty and unique')
+    if model is None:
+        raise ValueError('target selection requires configured build facts')
+    configuration = request['configuration']
+    configurations = {row['name'] for row in model['codemodel']['configurations']}
+    if configuration not in configurations:
+        raise ValueError('unknown selected configuration')
+    targets = {}
+    for row in model['targets']:
+        if row['configuration'] != configuration:
+            continue
+        name = row['object']['name']
+        if name in targets:
+            raise ValueError('ambiguous configured target name')
+        targets[name] = row['id']
+    if not set(names).issubset(targets):
+        raise ValueError('unknown selected target name')
+    return {'configuration': configuration, 'targetIds': sorted(targets[name] for name in names)}
+
 def source_relative(value, directory, source_root):
     absolute = posixpath.normpath(value if value.startswith("/") else posixpath.join(directory, value))
     for prefix in ("/workspace/worktree", "/workspace/source", source_root.resolve().as_posix()):
@@ -102,8 +139,6 @@ def parse(entry, source_root, preserve_layout=False):
 def atomic(path, content):
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".")
     try:
-        if len(sys.argv) not in (4, 5, 6, 7):
-            raise ValueError('expected database, output, source root and optional compiler receipt')
         with os.fdopen(descriptor, "w", encoding="utf-8") as sink:
             sink.write(content); sink.flush(); os.fsync(sink.fileno())
         os.replace(temporary, path)
@@ -122,7 +157,10 @@ def main():
         if logical_root is not None and (not logical_root.startswith('/') or posixpath.normpath(logical_root) != logical_root):
             raise ValueError('logical root must be canonical and absolute')
         tree_digest = input_tree_digest(source_root) if logical_root else None
-        build_model = json.loads(Path(sys.argv[6]).read_text()) if len(sys.argv) == 7 else None
+        if not 4 <= len(sys.argv) <= 8:
+            raise ValueError('unsupported compilation transport arguments')
+        build_model = json.loads(Path(sys.argv[6]).read_text()) if len(sys.argv) >= 7 else None
+        selection = selected_targets(Path(sys.argv[7]), build_model) if len(sys.argv) == 8 else None
         if build_model is not None and (not logical_root or not compiler_receipt
                 or build_model.get('formatVersion') != 1
                 or build_model.get('codemodel', {}).get('paths', {}).get('source') != logical_root):
@@ -158,6 +196,8 @@ def main():
         rows = []
         if build_model is not None:
             rows.append(['build-model', 'cmake-codemodel-v2', json.dumps(build_model, sort_keys=True, separators=(',', ':'), ensure_ascii=False)])
+        if selection is not None:
+            rows.append(['build-selection', 'direct-targets-v1', json.dumps(selection, sort_keys=True, separators=(',', ':'), ensure_ascii=False)])
         for source, (operations, layout) in sorted(contexts.items()):
             identifier = "cpp|" + source
             rows += [["context", identifier, transport], ["source", identifier, source]]
@@ -169,6 +209,7 @@ def main():
         content = "".join("\t".join(row) + "\n" for row in rows)
         atomic(provenance, json.dumps({"transportVersion": transport,
                "configuredBuildModel": build_model,
+               "configuredTargetSelection": selection,
                "compilerReceipt": compiler_receipt, "invocations": originals,
                "manifestSha256": hashlib.sha256(content.encode()).hexdigest()}, indent=2) + "\n")
         atomic(output, content)

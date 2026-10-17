@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Declared C++ build facts read from a resolver manifest. Only declared facts
@@ -19,10 +20,17 @@ import java.util.Map;
 public final class CppDependencyInputs {
     private final Map<String, CppCompileContext> contextsBySourcePath;
     private final CppConfiguredBuildModel configuredBuildModel;
+    private final CppConfiguredTargetSelection targetSelection;
 
     private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath, CppConfiguredBuildModel configuredBuildModel) {
+        this(contextsBySourcePath,configuredBuildModel,null);
+    }
+
+    private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath,
+            CppConfiguredBuildModel configuredBuildModel,CppConfiguredTargetSelection targetSelection) {
         this.contextsBySourcePath = Map.copyOf(contextsBySourcePath);
         this.configuredBuildModel = configuredBuildModel;
+        this.targetSelection=targetSelection;
     }
 
     public static CppDependencyInputs none() {
@@ -32,6 +40,7 @@ public final class CppDependencyInputs {
     public static CppDependencyInputs fromManifest(Path manifest) {
         Map<String, CppCompileContext> contextsBySourcePath = new LinkedHashMap<>();
         CppConfiguredBuildModel configuredModel = null;
+        String selection=null;
         try {
             List<String> lines = Files.readAllLines(manifest, StandardCharsets.UTF_8);
             int lineNumber = 0;
@@ -45,6 +54,12 @@ public final class CppDependencyInputs {
                 String kind = fields[0];
                 try {
                     switch (kind) {
+                        case "build-selection" -> {
+                            requireFields(fields,3);
+                            if(selection!=null || !fields[1].equals("direct-targets-v1"))
+                                throw new IllegalArgumentException("exactly one supported target population required");
+                            selection=fields[2];
+                        }
                         case "build-model" -> {
                             requireFields(fields, 3);
                             if (configuredModel != null || !fields[1].equals("cmake-codemodel-v2"))
@@ -156,7 +171,8 @@ public final class CppDependencyInputs {
         }
         if (configuredModel != null && contextsBySourcePath.isEmpty())
             throw new IllegalArgumentException("configured build model without compile contexts");
-        return new CppDependencyInputs(contextsBySourcePath, configuredModel);
+        CppDependencyInputs result=new CppDependencyInputs(contextsBySourcePath,configuredModel);
+        return selection==null?result:result.selectTargets(selection);
     }
 
     public boolean isEmpty() {
@@ -164,6 +180,46 @@ public final class CppDependencyInputs {
     }
 
     public CppConfiguredBuildModel configuredBuildModel() { return configuredBuildModel; }
+    public CppConfiguredTargetSelection targetSelection() { return targetSelection; }
+
+    /** Selection is a measurement population, not inferred transitive link closure. */
+    public CppDependencyInputs selectTargets(String configuration,Set<String> ids) {
+        if(configuredBuildModel==null)throw new IllegalArgumentException("target selection requires a configured build model");
+        var selected=CppConfiguredTargetSelection.select(configuredBuildModel,configuration,ids);
+        Set<String> sources=new java.util.HashSet<>();
+        for(var target:selected.targets())for(var source:target.sources())if(source.compiled()) {
+            if(!source.language().equals("CXX") || !source.path().startsWith(configuredBuildModel.sourceRoot()))
+                throw new IllegalArgumentException("selected C++ source language/layout unsupported");
+            String relative=configuredBuildModel.sourceRoot().relativize(source.path()).toString().replace('\\','/');
+            if(!contextsBySourcePath.containsKey(relative))
+                throw new IllegalArgumentException("selected compiled source has no attested compile context: "+relative);
+            sources.add(relative);
+        }
+        if(sources.isEmpty())throw new IllegalArgumentException("selected population has no compiled C++ sources");
+        return new CppDependencyInputs(contextsBySourcePath,configuredBuildModel,selected);
+    }
+
+    public Set<String> selectedSourcePaths() {
+        if(targetSelection==null)return Set.of();
+        var result=new java.util.TreeSet<String>();
+        for(var target:targetSelection.targets())for(var source:target.sources())if(source.compiled())
+            result.add(configuredBuildModel.sourceRoot().relativize(source.path()).toString().replace('\\','/'));
+        return Set.copyOf(result);
+    }
+
+    private CppDependencyInputs selectTargets(String value) {
+        try {
+            var mapper=new ObjectMapper().enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+                    .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
+            var node=mapper.readTree(value);
+            if(node==null || !node.isObject() || node.size()!=2 || !node.path("configuration").isTextual()
+                    || !node.path("targetIds").isArray())throw new IllegalArgumentException("invalid target population envelope");
+            Set<String> ids=new java.util.HashSet<>();
+            for(var id:node.get("targetIds"))if(!id.isTextual() || !ids.add(id.textValue()))
+                throw new IllegalArgumentException("target IDs must be textual and unique");
+            return selectTargets(node.get("configuration").textValue(),ids);
+        } catch(IOException invalid) {throw new IllegalArgumentException("invalid target population JSON",invalid);}
+    }
 
     /**
      * The declared compile context of a translation unit, or null when the

@@ -3,12 +3,12 @@
 # database. Only declared provider facts are emitted; a project without CMake
 # keeps failing closed rather than guessing include directories or macros.
 #
-# usage: resolve-cpp-dependencies.sh source-root output-manifest
+# usage: resolve-cpp-dependencies.sh source-root output-manifest [target-selection.json]
 # env:   CPP_PROVIDER_IMAGE (default silkeh/clang:14, clang 14 + cmake)
 set -euo pipefail
 
-if [[ $# -ne 2 ]]; then
-  echo "usage: resolve-cpp-dependencies.sh source-root output-manifest" >&2
+if [[ $# -lt 2 || $# -gt 3 ]]; then
+  echo "usage: resolve-cpp-dependencies.sh source-root output-manifest [target-selection.json]" >&2
   exit 64
 fi
 source_root="$1"
@@ -91,8 +91,13 @@ docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-
 
 python3 "$(dirname "$0")/cpp-cmake-model.py" "$resolution_root/build/.cmake/api/v1/reply" \
   "$resolution_root/configured-build-model.json"
-python3 "$(dirname "$0")/cpp-context-manifest.py" "$compile_commands" "$output_file" "$worktree_root" \
-  "$resolution_root/compiler-identity.json" "$container_worktree" "$resolution_root/configured-build-model.json"
+manifest_arguments=("$compile_commands" "$output_file" "$worktree_root"
+  "$resolution_root/compiler-identity.json" "$container_worktree" "$resolution_root/configured-build-model.json")
+if [[ $# -eq 3 ]]; then
+  [[ -f "$3" && ! -L "$3" ]] || { echo "target selection must be a regular file" >&2; exit 66; }
+  manifest_arguments+=("$3")
+fi
+python3 "$(dirname "$0")/cpp-context-manifest.py" "${manifest_arguments[@]}"
 
 # Preserve the actual provider image as an execution recipe, separate from the
 # compiler byte receipt and semantic context. Never infer an image from a tag

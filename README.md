@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.45.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.46.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -108,4 +108,11 @@ rc45 retains native C++ source bodies independently from declaration corresponde
 Positive same-invocation canonical bindings and native classifier abstraction are retained; complete selected-program implementation bindings remain unavailable.
 Body spans use consumed source bytes; macro spans and dependent abstraction stay unknown.
 Validated with 500 current JVM tests and thirteen small full-reference/replay controls.
+Whole research-release gates remain open.
+
+rc46 supports an explicit configured C++ target source population.
+Pass an optional JSON file with configuration and targetNames as the third resolver argument.
+Dependency edges do not select sources automatically; excluded translation units and headers do not acquire fallback compiler worlds.
+Selection is retained in provenance and context identity. This is direct source membership, not transitive link closure or cross-TU binding completeness.
+Validated with 513 current JVM tests, 23 script controls, three actual-provider/native/full-reference/replay selected cases, a typed repeat and accepted/candidate legacy preservation.
 Whole research-release gates remain open.

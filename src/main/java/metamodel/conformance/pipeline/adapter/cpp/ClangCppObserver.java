@@ -75,8 +75,8 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.17.0";
-    private static final String PROFILE_ID = "contextual-native-projection-v9";
+    public static final String ADAPTER_VERSION = "0.18.0";
+    private static final String PROFILE_ID = "contextual-native-projection-v10";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -148,7 +148,9 @@ public final class ClangCppObserver implements SourceObserver {
                     new SourceUnit(Language.CPP, "cpp-toolchain/clang-executable", clangHash));
 
             List<ObservationDiagnostic> diagnostics = new ArrayList<>();
-            boolean conditionalIncomplete = conditionalCompilationDiagnostics(root, files, diagnostics);
+            var targetSelection=dependencyInputs.targetSelection();
+            Set<String> selectedSourcePaths=dependencyInputs.selectedSourcePaths();
+            boolean conditionalIncomplete = targetSelection==null && conditionalCompilationDiagnostics(root, files, diagnostics);
             boolean observationIncomplete = false;
             Map<String, Draft> byDefinitionKey = new HashMap<>();
             Map<String, String> sourceByContext = new java.util.TreeMap<>();
@@ -166,8 +168,12 @@ public final class ClangCppObserver implements SourceObserver {
             List<Path> translationUnits = files.stream()
                     .filter(path -> isSourcePath(path.getFileName().toString()))
                     .toList();
-            List<Path> initialUnits = translationUnits.isEmpty() ? files : translationUnits;
-            boolean allUnitsDeclared = !translationUnits.isEmpty() && initialUnits.stream().allMatch(file ->
+            List<Path> initialUnits = targetSelection==null ? (translationUnits.isEmpty() ? files : translationUnits)
+                    : files.stream().filter(file -> selectedSourcePaths.contains(relativePath(root,file))).toList();
+            if(targetSelection!=null && initialUnits.size()!=selectedSourcePaths.size())
+                throw new ObservationException("selected compiled source is absent from the supported source population");
+            boolean allUnitsDeclared = (targetSelection==null ? !translationUnits.isEmpty() : !initialUnits.isEmpty())
+                    && initialUnits.stream().allMatch(file ->
                     dependencyInputs.contextForSourcePath(relativePath(root, file)) != null);
 
             for (Path file : initialUnits) {
@@ -187,6 +193,7 @@ public final class ClangCppObserver implements SourceObserver {
             }
 
             for (Path header : files.stream()
+                    .filter(path -> targetSelection==null)
                     .filter(path -> !isSourcePath(path.getFileName().toString()))
                     .filter(path -> !coveredProjectFiles.contains(path))
                     .toList()) {
@@ -206,6 +213,15 @@ public final class ClangCppObserver implements SourceObserver {
                 observationIncomplete |= incorporateResult(
                         root, header, result, byDefinitionKey, diagnostics,
                         unitsByPath, physicalHashes, coveredProjectFiles);
+            }
+
+            if(targetSelection!=null) {
+                Set<Path> selectedInputs=new HashSet<>();
+                associatedInputs.values().forEach(selectedInputs::addAll);
+                selectedInputs.addAll(coveredProjectFiles);
+                for(var input:tracedInputs.values())selectedInputs.add(Path.of(input.path()));
+                conditionalIncomplete=conditionalCompilationDiagnostics(root,
+                        files.stream().filter(selectedInputs::contains).toList(),diagnostics);
             }
 
             List<Draft> drafts = byDefinitionKey.values().stream()
@@ -523,7 +539,11 @@ public final class ClangCppObserver implements SourceObserver {
                                 + (invocationByContext.containsKey(context.getKey())
                                     ? "; same-pass source-buffer hashes, file metadata, loaded images and actual builtin literals"
                                     : "; recorded configuration/compiler/byte subset")
-                                + "; full environment/filesystem probe and role closure unverified",
+                                + "; full environment/filesystem probe and role closure unverified"
+                                + (targetSelection==null?"":"; explicit direct-target population (not link closure): configuration="
+                                    +JSON.writeValueAsString(targetSelection.configuration())+"; targetIds="
+                                    +JSON.writeValueAsString(targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).toList())
+                                    +"; selectionSha256="+targetSelection.sha256()),
                         contextual.stream().map(Draft::id).toList(),
                         contextual.stream().flatMap(d -> memberKeysByOwner.get(d.id()).stream()).toList()));
             }
@@ -718,9 +738,13 @@ public final class ClangCppObserver implements SourceObserver {
         var buildModel = dependencyInputs.configuredBuildModel();
         if (buildModel != null) putUnit(units, new SourceUnit(Language.CPP,
                 "cpp-configured-build/cmake-codemodel-v2", buildModel.sha256()));
+        var selected=dependencyInputs.targetSelection();
+        if(selected!=null)putUnit(units,new SourceUnit(Language.CPP,
+                "cpp-configured-build/direct-target-population-v1",selected.sha256()));
         return "cpp-domain-" + Hashing.sha256(identity + "\0" + compilerHash + "\0"
                 + (execution == null ? "" : JSON.writeValueAsString(execution))
-                + (buildModel == null ? "" : "\0cmake-codemodel-v2\0" + buildModel.sha256()));
+                + (buildModel == null ? "" : "\0cmake-codemodel-v2\0" + buildModel.sha256())
+                + (selected==null?"":"\0direct-target-population-v1\0"+selected.sha256()));
     }
 
     private record CompilationContextIdentity(
