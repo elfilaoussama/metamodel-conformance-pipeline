@@ -69,7 +69,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.18.0";
+    public static final String ADAPTER_VERSION = "0.19.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -137,7 +137,7 @@ public final class PythonAstObserver implements SourceObserver {
             bridge.runtimeContext().verify();
             dependencyInputs.requireInterpreterVersion(bridge.pythonVersion());
             String configuration = JSON.writeValueAsString(new MeasurementContextIdentity(
-                    "5", Hashing.sha256(BRIDGE_SCRIPT), execution.command().get(0), bridge.pythonVersion(), bridge.runtimeExecutable(), bridge.runtimeContext(), dependencyInputs.contextIdentity(),
+                    "6", Hashing.sha256(BRIDGE_SCRIPT), execution.command().get(0), bridge.pythonVersion(), bridge.runtimeExecutable(), bridge.runtimeContext(), dependencyInputs.contextIdentity(),
                     externalParents == null ? List.of() : externalParents.stream().sorted().toList()));
             String contextHash = Hashing.sha256(configuration);
             String contextId = "python-ast-domain-" + contextHash;
@@ -369,22 +369,31 @@ public final class PythonAstObserver implements SourceObserver {
 
             PythonStaticLookup.Result lookup = PythonStaticLookup.observe(
                     contextId, classifiers, members, nativeBases, bridge.lookupReason());
-            boolean vanillaClasses = !parseError && !declarationIncomplete && !hierarchyIncomplete
+            Map<String,ClassifierAbstraction> nativeAbstractions=new HashMap<>();
+            for(var entry:(bridge.classifierAbstractions()==null?Map.<String,String>of():bridge.classifierAbstractions()).entrySet()) {
+                TypeDraft draft=byDefinitionKey.get(entry.getKey());
+                if(draft==null)throw new ObservationException("Python native class creation refers to an unobserved declaration");
+                ClassifierAbstraction value=ClassifierAbstraction.valueOf(entry.getValue());
+                if(value==ClassifierAbstraction.UNKNOWN)throw new ObservationException("Python native class creation cannot certify unknown abstraction");
+                nativeAbstractions.put(draft.id(),value);
+            }
+            boolean guardedClasses = !parseError && !declarationIncomplete && !hierarchyIncomplete
                     && unresolved.isEmpty() && lookup.complete();
+            guardedClasses &= nativeAbstractions.keySet().equals(classifiers.stream().map(ClassifierObservation::id)
+                    .collect(java.util.stream.Collectors.toSet()));
             BodyEvidence bodyEvidence = bodyEvidence(contextId, bridge, drafts, members,
-                    vanillaClasses && !abstractionsIncomplete, diagnostics, evidencePath);
+                    guardedClasses && !abstractionsIncomplete, diagnostics, evidencePath);
             // The shared contract forbids every completeness claim in a source
             // population with parse/compiler diagnostics; positive bodies remain.
             if (bodyEvidence.censusComplete() && !parseError) completeEvidence.add(EvidenceKind.METHOD_BODIES);
             if (bodyEvidence.bindingsComplete()) completeEvidence.add(EvidenceKind.IMPLEMENTATION_BINDINGS);
-            if (vanillaClasses) {
-                // The existing guarded fragment admits only undecorated classes
-                // with the vanilla type metaclass and internally closed bases.
-                // ABC/custom metaclasses are not inferred from method modifiers.
+            if (guardedClasses) {
+                // Native type/ABCMeta construction supplies class abstraction;
+                // method markers alone do not determine the class state.
                 classifiers = classifiers.stream().map(c -> new ClassifierObservation(
                         c.id(), c.qualifiedName(), c.packageName(), c.kind(), c.sourcePath(),
                         c.startLine(), c.endLine(), c.parentIds(), c.declaredMemberKeys(),
-                        c.inheritedMemberKeys(), ClassifierAbstraction.CONCRETE)).toList();
+                        c.inheritedMemberKeys(), nativeAbstractions.get(c.id()))).toList();
                 completeEvidence.add(EvidenceKind.CLASSIFIER_ABSTRACTION);
             }
             if (!parseError && !declarationIncomplete && !hierarchyIncomplete
@@ -458,7 +467,7 @@ public final class PythonAstObserver implements SourceObserver {
             List<NativeEvidence.BodyBinding> nativeBindings) { }
 
     private static BodyEvidence bodyEvidence(String context, BridgeResult bridge, List<TypeDraft> drafts,
-            List<MemberObservation> members, boolean vanillaClasses,
+            List<MemberObservation> members, boolean guardedClasses,
             List<ObservationDiagnostic> diagnostics, String evidencePath) {
         Set<String> memberKeys = members.stream().filter(m -> m.kind() == MemberKind.METHOD)
                 .map(MemberObservation::technicalKey).collect(java.util.stream.Collectors.toSet());
@@ -466,7 +475,7 @@ public final class PythonAstObserver implements SourceObserver {
         for (TypeDraft draft : drafts) for (BridgeMember member : draft.members()) {
             if ("METHOD".equals(member.kind())) {
                 String key = stableMemberKey(context, draft.path(), member.definitionKey());
-                if (owners.putIfAbsent(key, draft.id()) != null) vanillaClasses = false;
+                if (owners.putIfAbsent(key, draft.id()) != null) guardedClasses = false;
             }
         }
         var bodies = new ArrayList<MethodBodyObservation>();
@@ -474,7 +483,7 @@ public final class PythonAstObserver implements SourceObserver {
         var nativeBindings = new ArrayList<NativeEvidence.BodyBinding>();
         Set<String> bodyKeys = new HashSet<>(), boundMembers = new HashSet<>();
         boolean censusComplete = bridge.bodyCensusComplete() && bridge.methodBodies() != null;
-        boolean bindingComplete = vanillaClasses;
+        boolean bindingComplete = guardedClasses;
         for (BridgeBody source : safe(bridge.methodBodies())) {
             try {
                 if (source.startColumn() < 0 || source.endColumn() < 0
@@ -492,13 +501,13 @@ public final class PythonAstObserver implements SourceObserver {
                     bindingComplete = false;
                     continue;
                 }
-                var targets = vanillaClasses ? NativeEvidence.Evidence.known(List.of(memberKey))
+                var targets = guardedClasses ? NativeEvidence.Evidence.known(List.of(memberKey))
                         : NativeEvidence.Evidence.<String>unavailable(NativeEvidence.Knowledge.UNKNOWN,
-                            "source namespace outside the guarded vanilla-class binding fragment");
+                            "source namespace outside the guarded source-class binding fragment");
                 nativeBindings.add(new NativeEvidence.BodyBinding(context, owner, memberKey,
                         NativeEvidence.Evidence.known(List.of(new NativeEvidence.SourceSpan(
                             source.path(), source.startLine(), source.endLine()))), targets));
-                if (vanillaClasses) bindings.add(new ImplementationBindingObservation(
+                if (guardedClasses) bindings.add(new ImplementationBindingObservation(
                         "bind_" + Hashing.sha256("python-binding\0" + owner + "\0" + memberKey + "\0" + bodyKey),
                         owner, memberKey, bodyKey));
             } catch (IllegalArgumentException | NullPointerException invalid) {
@@ -674,8 +683,12 @@ public final class PythonAstObserver implements SourceObserver {
     }
 
     private static String loadBridgeScript() {
+        return loadBridgeResource("/python/native_class_creation.py")+"\n"+loadBridgeResource("/python/ast_hierarchy_bridge.py");
+    }
+
+    private static String loadBridgeResource(String resource) {
         try (InputStream input = PythonAstObserver.class
-                .getResourceAsStream("/python/ast_hierarchy_bridge.py")) {
+                .getResourceAsStream(resource)) {
             if (input == null) {
                 throw new IllegalStateException("bundled Python AST bridge is missing");
             }
@@ -711,6 +724,7 @@ public final class PythonAstObserver implements SourceObserver {
             PythonRuntimeContext runtimeContext,
             boolean hierarchyIncomplete,
             String lookupReason,
+            Map<String,String> classifierAbstractions,
             boolean bodyCensusComplete,
             List<BridgeBody> methodBodies,
             List<BridgeClass> classes,

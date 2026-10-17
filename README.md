@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.47.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.48.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -122,3 +122,6 @@ Use --native-batch-helper with an executable built against the matching Clang14 
 Native linkage, structural/type/body, ABI record-layout and import-identity guards qualify positive original source/receiving declaration relationships. Schema16 retains both contexts, input identities and the explicit selection; schemas14/15 remain readable. Pointer addresses and timing metrics are excluded from semantic receipt identity.
 Validated with 542 applicable current JVM tests, 12 repaired native controls, 14 runner controls and seven small actual-provider/native/raw-XMI/full-reference/replay engine runs, including exact typed repeat, competing definitions, packing rejection and accepted/current single-unit preservation.
 A retained failing packing control motivated the native layout guard. These finite controls are not a general ODR proof, transitive link closure or complete implementation population. Whole research-release gates remain open.
+
+rc48 adds guarded native Python class abstraction through inert namespace construction under the selected runtime type/ABCMeta. Captured module, class and method bodies, defaults and annotations are never executed. Standard descriptor combinations and internally closed inheritance are checked independently from fixed P0; unsupported dynamic and external-base cases remain unavailable. Class methods retain UNKNOWN common instance/static scope.
+Validated with 551 applicable current JVM tests, 18 bridge/native controls and eleven small native/raw-XMI/full-reference/replay engine runs, including typed repeat and accepted/current vanilla preservation. A legal Python abstract method with a body may disagree with the frozen policy; that result is retained rather than changing P0. Whole research-release gates remain open.

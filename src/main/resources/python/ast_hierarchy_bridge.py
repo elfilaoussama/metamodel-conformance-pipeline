@@ -77,6 +77,7 @@ paths = sorted(request["paths"])
 classes = []
 method_bodies = []
 body_census_complete = True
+classifier_abstractions = {}
 diagnostics = []
 hierarchy_incomplete = False
 
@@ -1132,7 +1133,17 @@ for current_rel in paths:
         diagnostics.append(dict(kind="PARSE_ERROR", path=current_rel,
                                 line=getattr(failure, "lineno", 0) or 0,
                                 message=str(failure)[:4096]))
-    lookup_reason = lookup_reason or static_lookup_reason(tree)
+    legacy_reason = static_lookup_reason(tree)
+    shadowed_abc = any(name == "abc" or name.startswith("abc.") for name in source_modules)
+    creation = (dict(complete=False, classes={}, reason="project abc namespace prevents standard-library identity proof")
+                if shadowed_abc and legacy_reason else project(tree))
+    if creation["complete"]:
+        for node in tree.body:
+            if isinstance(node, ast.ClassDef):
+                key = definition_key(current_rel, node, child_name(module, node.name))
+                classifier_abstractions[key] = creation["classes"][node.name]["abstraction"]
+    else:
+        lookup_reason = lookup_reason or legacy_reason or creation["reason"]
     current_escaping_writes = escaping_writes(tree)
     process_body(tree.body, module, {}, module, is_package, "module")
 
@@ -1153,6 +1164,7 @@ json.dump(
                            "modules": list(runtime_modules_after.values())},
         "hierarchyIncomplete": hierarchy_incomplete,
         "lookupReason": lookup_reason,
+        "classifierAbstractions": classifier_abstractions,
         "classes": classes,
         "methodBodies": method_bodies,
         "bodyCensusComplete": body_census_complete,
