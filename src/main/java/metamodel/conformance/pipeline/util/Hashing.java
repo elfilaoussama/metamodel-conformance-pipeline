@@ -32,6 +32,10 @@ public final class Hashing {
         return HexFormat.of().formatHex(digest().digest(value.getBytes(StandardCharsets.UTF_8)));
     }
 
+    public static String sha256(byte[] value) {
+        return HexFormat.of().formatHex(digest().digest(value));
+    }
+
     public static String sourceSetDigest(List<SourceUnit> units) {
         StringBuilder canonical = new StringBuilder();
         units.stream().sorted(java.util.Comparator.comparing(SourceUnit::path))

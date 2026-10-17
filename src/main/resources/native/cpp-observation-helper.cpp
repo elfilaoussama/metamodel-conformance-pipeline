@@ -23,7 +23,9 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <cstdlib>
 #include "cpp-member-lookup.h"
+#include "cpp-implementation-facts.h"
 
 static std::string digest(llvm::StringRef bytes) {
     auto value = llvm::SHA256::hash(llvm::ArrayRef<uint8_t>(
@@ -118,6 +120,11 @@ protected:
         auto &compiler = getCompilerInstance();
         CppMemberLookup lookup(compiler.getSema());
         lookup.TraverseDecl(compiler.getASTContext().getTranslationUnitDecl());
+        const char *projectRoot=std::getenv("METAMODEL_CPP_SOURCE_ROOT");
+        CppImplementationFacts implementation(compiler.getSourceManager(),compiler.getLangOpts(),
+                projectRoot ? projectRoot : "");
+        bool implementationTraversed=implementation.rootAvailable()
+                && implementation.TraverseDecl(compiler.getASTContext().getTranslationUnitDecl());
         llvm::json::Array consumed, images, argv;
         for (auto &file : files) consumed.push_back(std::move(file.second));
         std::set<std::string> names;
@@ -144,6 +151,13 @@ protected:
             {"consumedFiles", std::move(consumed)}, {"physicalImages", std::move(images)},
             {"physicalImagesComplete", imagesComplete},
             {"builtinInputEvents", std::move(events)}, {"builtinLiteralTokens", std::move(literals)},
+            {"implementationFacts",llvm::json::Object{{"format","cpp-implementation-facts-v1"},
+                {"projectRoot",implementation.projectRoot()},
+                {"scope","PROJECT_CLASS_STRUCT_WRITTEN_NON_SPECIAL_METHODS"},
+                {"populationComplete",implementationTraversed && !compiler.getDiagnostics().hasErrorOccurred()},
+                {"classes",std::move(implementation.classes)},
+                {"methods",std::move(implementation.methods)},
+                {"bodies",std::move(implementation.bodies)}}},
             {"memberLookup",llvm::json::Object{{"format","cpp-member-lookup-v1"},
                 {"populationComplete",true},
                 {"classes",std::move(lookup.rows)}}}}) << "\n";
