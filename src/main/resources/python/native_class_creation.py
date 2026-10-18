@@ -4,6 +4,7 @@ Never execute a captured module, class suite, default, annotation or method body
 Only trusted stdlib/type descriptors participate in the native construction.
 """
 import abc
+import builtins
 import ast
 import inspect
 import types
@@ -15,7 +16,7 @@ class OutsideFragment(ValueError):
 
 def project(tree):
     aliases={name:value for name,value in dict(object=object,type=type,staticmethod=staticmethod,classmethod=classmethod).items()}
-    built_classes={};result={}
+    built_classes={};result={};native_names={};source_methods={}
     primitives={'int','str','bool','float','bytes','object'}
     hooks={'__init_subclass__','__class_getitem__','__getattribute__','__getattr__','__setattr__','__get__','__set__','__delete__'}
     metadata={name for base in type.__mro__ for name,value in vars(base).items() if hasattr(type(value),'__set__') or hasattr(type(value),'__delete__')}
@@ -35,11 +36,44 @@ def project(tree):
         if isinstance(node,ast.Attribute) and isinstance(node.value,ast.Name) and aliases.get(node.value.id) is abc and node.attr in abc_members:
             return getattr(abc,node.attr)
         raise OutsideFragment('unresolved constructor/decorator identity')
+    def method_facts(native,keys):
+        rows=[]
+        for key in sorted(keys):
+            descriptor=vars(native)[key]
+            if isinstance(descriptor,staticmethod):kind='STATIC';function=descriptor.__func__
+            elif isinstance(descriptor,classmethod):kind='CLASS';function=descriptor.__func__
+            else:kind='INSTANCE';function=descriptor
+            if not isinstance(function,types.FunctionType):raise OutsideFragment('unobserved method transformation')
+            targets=[];reason=''
+            for ancestor in native.__mro__[1:]:
+                if key not in vars(ancestor):continue
+                owner=native_names.get(ancestor)
+                if owner is None:reason='ancestor slot outside observed source population';break
+                if key not in source_methods[ancestor]:reason='method/attribute ancestor slot collision';break
+                targets.append(dict(owner=owner,name=key))
+            annotations=inspect.get_annotations(function,eval_str=False)
+            token=None
+            if 'return' in annotations:
+                value=annotations['return']
+                if value is None:token='None'
+                elif any(value is getattr(builtins,name) for name in primitives):token=value.__name__
+            rows.append(dict(name=key,descriptorKind=kind,
+                overrideKnowledge='UNKNOWN' if reason else 'KNOWN',overrides=[] if reason else targets,
+                overrideReason=reason,returnKnowledge='KNOWN' if token is not None else 'UNKNOWN',
+                returnToken=token,returnReason='' if token is not None else 'no supported bound builtin return annotation'))
+        return rows
+
     def fresh_function(node):
         def stub(*args,**kwargs):return None
         async def async_stub(*args,**kwargs):return None
         code=async_stub.__code__ if isinstance(node,ast.AsyncFunctionDef) else stub.__code__
         value=types.FunctionType(code,{'__builtins__':{}},node.name)
+        # Reconstruct only inert, closed annotation metadata. No captured expression
+        # is evaluated, and string annotations are never passed to eval.
+        if isinstance(node.returns,ast.Name) and node.returns.id in primitives:
+            value.__annotations__={'return':aliases.get(node.returns.id,getattr(builtins,node.returns.id))}
+        elif isinstance(node.returns,ast.Constant):value.__annotations__={'return':node.returns.value}
+
         for expression in reversed(node.decorator_list):
             decorator=resolve(expression)
             if decorator not in decorators:raise OutsideFragment('unsupported descriptor')
@@ -78,7 +112,7 @@ def project(tree):
                 if meta not in (type,abc.ABCMeta):raise OutsideFragment('custom metaclass')
                 keywords['metaclass']=meta
             uses_abc=keywords.get('metaclass') is abc.ABCMeta or any(isinstance(base,abc.ABCMeta) for base in bases)
-            namespace={'__module__':'native_source_projection','__qualname__':node.name};seen=set()
+            namespace={'__module__':'native_source_projection','__qualname__':node.name};seen=set();method_keys=set()
             for member in node.body:
                 if inert(member):continue
                 if isinstance(member,(ast.FunctionDef,ast.AsyncFunctionDef)):
@@ -98,11 +132,13 @@ def project(tree):
                 key='_'+private_owner+name if private_owner and name.startswith('__') and not name.endswith('__') else name
                 if key in seen:raise OutsideFragment('redefined runtime member')
                 seen.add(key);namespace[key]=value
+                if isinstance(member,(ast.FunctionDef,ast.AsyncFunctionDef)):method_keys.add(key)
             if '__eq__' in seen and '__hash__' not in seen:raise OutsideFragment('implicit hash suppression')
             native=types.new_class(node.name,tuple(bases),keywords,lambda ns:ns.update(namespace))
-            built_classes[node.name]=native
+            built_classes[node.name]=native;native_names[native]=node.name;source_methods[native]=method_keys
             result[node.name]=dict(abstraction='ABSTRACT' if inspect.isabstract(native) else 'CONCRETE',
-                abstractNames=sorted(getattr(native,'__abstractmethods__',())),mro=[c.__name__ for c in native.__mro__])
+                abstractNames=sorted(getattr(native,'__abstractmethods__',())),mro=[c.__name__ for c in native.__mro__],
+                methods=method_facts(native,method_keys))
         return dict(complete=True,classes=result,reason='')
     except (OutsideFragment,TypeError) as error:
         return dict(complete=False,classes={},reason=str(error))

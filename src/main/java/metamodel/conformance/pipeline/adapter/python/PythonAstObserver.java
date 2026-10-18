@@ -1,6 +1,7 @@
 package metamodel.conformance.pipeline.adapter.python;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.JsonNode;
 import metamodel.conformance.pipeline.adapter.ObservationException;
 import metamodel.conformance.pipeline.adapter.ToolRuntimeEvidence;
 import metamodel.conformance.pipeline.adapter.SourceObserver;
@@ -69,7 +70,7 @@ import java.util.stream.Stream;
  */
 public final class PythonAstObserver implements SourceObserver {
     public static final String ADAPTER_ID = "python-ast";
-    public static final String ADAPTER_VERSION = "0.19.0";
+    public static final String ADAPTER_VERSION = "0.20.0";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final int MAX_BRIDGE_BYTES = (int) ArtifactLimits.MAX_XMI_BYTES;
     private static final String BRIDGE_SCRIPT = loadBridgeScript();
@@ -426,13 +427,55 @@ public final class PythonAstObserver implements SourceObserver {
                         evidencePath, 0, "Python static C3 lookup not admitted: "
                                 + (lookup.complete() ? "source declaration/hierarchy evidence incomplete" : lookup.reason())));
             }
+            Map<String,String> nativeClassDefinitions=new HashMap<>();
+            for(var entry:byDefinitionKey.entrySet())nativeClassDefinitions.put(entry.getKey(),entry.getValue().id());
+            Map<String,String> nativeMethodDefinitions=new HashMap<>(),methodOwners=new HashMap<>();
+            for(var draft:drafts)for(var source:draft.members()) {
+                if(!"METHOD".equals(source.kind()) || source.definitionKey()==null)continue;
+                String key=stableMemberKey(contextId,draft.path(),source.definitionKey());
+                if(memberTechnicalKeys.contains(key)) {
+                    nativeMethodDefinitions.put(source.definitionKey(),key);methodOwners.put(key,draft.id());
+                }
+            }
+            var methodReceipt=PythonNativeMethodReceipt.observe(bridge.methodSemantics(),nativeClassDefinitions,nativeMethodDefinitions,methodOwners);
+            var methodFacts=methodReceipt.methods();
+            Set<String> sourceMethods=members.stream().filter(m -> m.kind()==MemberKind.METHOD)
+                    .map(MemberObservation::technicalKey).collect(java.util.stream.Collectors.toSet());
+            boolean methodPopulationComplete=!parseError && !declarationIncomplete && methodReceipt.populationComplete()
+                    && methodFacts.keySet().equals(sourceMethods);
+            for(var member:members) {
+                var fact=methodFacts.get(member.technicalKey());
+                if(fact!=null && member.scope()!=MemberScope.UNKNOWN && member.scope()!=fact.scope())
+                    throw new ObservationException("Python native descriptor disagrees with source common-scope mapping");
+            }
+            members=members.stream().map(m -> {
+                var fact=methodFacts.get(m.technicalKey());
+                return fact==null ? m : new MemberObservation(m.technicalKey(),m.observedIdentifier(),m.kind(),m.inheritability(),
+                    m.visibility(),m.memberName(),m.sourcePath(),m.startLine(),m.endLine(),m.parameterTypes(),m.abstraction(),m.scope(),
+                    m.returnType(),fact.overrides().values());
+            }).toList();
+            nativeSignatures=nativeSignatures.stream().map(s -> {
+                var fact=methodFacts.get(s.memberKey());
+                return fact==null || fact.returnAnnotation().knowledge()!=NativeEvidence.Knowledge.KNOWN ? s
+                    : new NativeEvidence.Signature(s.contextId(),s.memberKey(),s.parameters(),s.receiverQualifiers(),fact.returnAnnotation());
+            }).toList();
+            List<NativeEvidence.Lookup> methodLookups=PythonNativeMethodReceipt.enrich(lookup.rows(),methodFacts);
+            Set<String> recordedOverrides=new HashSet<>();
+            for(var row:methodLookups)for(var target:row.targets().values())
+                if(target.overriddenMemberKeys().knowledge()==NativeEvidence.Knowledge.KNOWN)recordedOverrides.add(target.declarationKey());
+            // Declared annotation objects remain SOURCE_ANNOTATION metadata. They
+            // do not establish the common runtime return-type relation or its capability.
+            if(methodPopulationComplete && guardedClasses && recordedOverrides.containsAll(sourceMethods)
+                    && methodFacts.values().stream().allMatch(f -> f.overrides().knowledge()==NativeEvidence.Knowledge.KNOWN))
+                completeEvidence.add(EvidenceKind.OVERRIDE_RELATIONS);
+
             snapshot.verifyOriginalsUnchanged(discoverPythonFiles(root));
             bridge.runtimeExecutable().verify();
             bridge.runtimeContext().verify();
             var domain = new NativeEvidence.Domain(contextId, Language.PYTHON,
                     NativeEvidence.MeasurementMode.SOURCE_ONLY, NativeEvidence.View.SOURCE_DECLARATIONS,
                     Hashing.sha256(contextHash + "\0" + Hashing.sourceSetDigest(units)),
-                    "Captured source-only AST declarations; declared lock metadata, actual executable and reported module backing files/configuration fingerprinted; consumed bytecode/shared-image/transient-loader/environment/input/role closure unverified",
+                    "Captured source-only AST declarations; guarded source-MRO method replacement and declared builtin return annotations; runtime return-type evidence remains unavailable; declared lock metadata, actual executable and reported module backing files/configuration fingerprinted; consumed bytecode/shared-image/transient-loader/environment/input/role closure unverified",
                     classifiers.stream().map(ClassifierObservation::id).toList(),
                     members.stream().map(MemberObservation::technicalKey).toList());
             return new Observation(
@@ -450,7 +493,7 @@ public final class PythonAstObserver implements SourceObserver {
                     diagnostics,
                     List.of(),
                     new NativeEvidence.Bundle(List.of(domain), PythonObservationInputs.roles(contextId, sourceUnits), List.of(), nativeBases,
-                            nativeSignatures, lookup.rows(), bodyEvidence.nativeBindings(), List.of(bridge.runtimeContext().reportedInputs(contextId),
+                            nativeSignatures, methodLookups, bodyEvidence.nativeBindings(), List.of(bridge.runtimeContext().reportedInputs(contextId),
                                     PythonObservationInputs.launch(contextId, execution.command(), bridge.runtimeExecutable()),
                                     PythonObservationInputs.sources(contextId, sourceUnits),
                                     ToolRuntimeEvidence.reported(contextId, toolPolicy))));
@@ -725,6 +768,7 @@ public final class PythonAstObserver implements SourceObserver {
             boolean hierarchyIncomplete,
             String lookupReason,
             Map<String,String> classifierAbstractions,
+            JsonNode methodSemantics,
             boolean bodyCensusComplete,
             List<BridgeBody> methodBodies,
             List<BridgeClass> classes,

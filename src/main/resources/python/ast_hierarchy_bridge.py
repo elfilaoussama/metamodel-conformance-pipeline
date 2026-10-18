@@ -78,6 +78,8 @@ classes = []
 method_bodies = []
 body_census_complete = True
 classifier_abstractions = {}
+method_semantics = []
+method_semantics_complete = True
 diagnostics = []
 hierarchy_incomplete = False
 
@@ -1137,6 +1139,32 @@ for current_rel in paths:
     shadowed_abc = any(name == "abc" or name.startswith("abc.") for name in source_modules)
     creation = (dict(complete=False, classes={}, reason="project abc namespace prevents standard-library identity proof")
                 if shadowed_abc and legacy_reason else project(tree))
+    method_semantics_complete = method_semantics_complete and creation['complete']
+    if creation['complete']:
+        source_class_nodes = {n.name:n for n in tree.body if isinstance(n,ast.ClassDef)}
+        class_keys = {name:definition_key(current_rel,n,child_name(module,name)) for name,n in source_class_nodes.items()}
+        method_keys = {}
+        for name,n in source_class_nodes.items():
+            owner=child_name(module,name)
+            for member in n.body:
+                if isinstance(member,(ast.FunctionDef,ast.AsyncFunctionDef)):
+                    runtime_name=mangled_name(member.name,owner)
+                    method_keys[name,runtime_name]=member_definition_key(current_rel,member,owner,'METHOD',runtime_name)
+        for owner,description in creation['classes'].items():
+            if 'methods' not in description:
+                method_semantics_complete=False;continue
+            for row in description['methods']:
+                key=method_keys.get((owner,row['name']))
+                if key is None:raise RuntimeError('native method is outside captured source declarations')
+                targets=[]
+                for target in row['overrides']:
+                    target_key=method_keys.get((target['owner'],target['name']))
+                    if target_key is None:raise RuntimeError('native method target is outside captured source declarations')
+                    targets.append(target_key)
+                method_semantics.append(dict(definitionKey=key,ownerDefinitionKey=class_keys[owner],
+                    descriptorKind=row['descriptorKind'],overrideKnowledge=row['overrideKnowledge'],
+                    overriddenDefinitionKeys=targets,overrideReason=row['overrideReason'],
+                    returnKnowledge=row['returnKnowledge'],returnToken=row['returnToken'],returnReason=row['returnReason']))
     if creation["complete"]:
         for node in tree.body:
             if isinstance(node, ast.ClassDef):
@@ -1165,6 +1193,8 @@ json.dump(
         "hierarchyIncomplete": hierarchy_incomplete,
         "lookupReason": lookup_reason,
         "classifierAbstractions": classifier_abstractions,
+        "methodSemantics": {"format":"python-source-method-semantics-v1",
+                            "populationComplete":method_semantics_complete, "methods":method_semantics},
         "classes": classes,
         "methodBodies": method_bodies,
         "bodyCensusComplete": body_census_complete,
