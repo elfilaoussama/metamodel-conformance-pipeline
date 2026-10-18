@@ -26,7 +26,7 @@ final class CppNativeInputReceipt {
     private static final Pattern VERSION = Pattern.compile("(?:clang version|version)\\s+([0-9]+(?:\\.[0-9]+){0,2})");
 
     record Result(NativeEvidence.Invocation invocation, List<NativeEvidence.Input> physicalInputs,
-                  JsonNode memberLookup, JsonNode implementationFacts) { }
+                  JsonNode memberLookup, JsonNode implementationFacts, JsonNode methodSemantics) { }
     record Context(String contextId, String compilerExecutable, String compilerVersion, String target,
                    Path helper, Path workingDirectory, Path mainSource, List<String> actualCompilerArgv,
                    List<String> semanticCompilerArguments, String compilerSha256) {
@@ -113,7 +113,7 @@ final class CppNativeInputReceipt {
             return new Result(new NativeEvidence.Invocation(contextId, compilerExecutable,
                     workingDirectory.toString(), semanticCompilerArguments, toolIdentity,
                     NativeEvidence.Evidence.known(physical), NativeEvidence.Evidence.known(macros)), physical,
-                    root.get("memberLookup"), root.get("implementationFacts"));
+                    root.get("memberLookup"), root.get("implementationFacts"), root.get("methodSemantics"));
         } catch (IllegalArgumentException invalid) {
             throw new ObservationException("invalid C++ same-pass input receipt: " + invalid.getMessage(), invalid);
         }

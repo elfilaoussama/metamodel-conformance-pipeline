@@ -6,7 +6,7 @@ validated development history, as requested. It is a candidate distribution,
 not a claim of full research readiness or a promotion of main.
 
 Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.48.jar --help`
+Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.49.jar --help`
 for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
 `scripts/`; retain the manifest's accompanying cache while observing a project.
 Providers require their documented build tools and container runtime.
@@ -125,3 +125,6 @@ A retained failing packing control motivated the native layout guard. These fini
 
 rc48 adds guarded native Python class abstraction through inert namespace construction under the selected runtime type/ABCMeta. Captured module, class and method bodies, defaults and annotations are never executed. Standard descriptor combinations and internally closed inheritance are checked independently from fixed P0; unsupported dynamic and external-base cases remain unavailable. Class methods retain UNKNOWN common instance/static scope.
 Validated with 551 applicable current JVM tests, 18 bridge/native controls and eleven small native/raw-XMI/full-reference/replay engine runs, including typed repeat and accepted/current vanilla preservation. A legal Python abstract method with a body may disagree with the frozen policy; that result is retained rather than changing P0. Whole research-release gates remain open.
+
+rc49 retains compiler-owned C++ virtual override edges and canonical return types, joins out-of-line method occurrences through native canonical declaration identity, and qualifies source-definition incidence only for positively closed measured method/body populations. Unknown definitions, dependent types and cross-context/link boundaries remain explicit. Owner validation reuses the declaration index. Fixed P0, the evaluator, Java/Python and dependency bytes are preserved.
+Validated with all 571 current JVM regression tests, 26 script controls, 13 identity-bound native controls and 16 tiny full-stage/reference/replay engine runs, including typed repeat and accepted/current historical-helper preservation. Legal pure virtual methods with bodies and covariant returns can disagree with the frozen profile; such findings are retained. C++ analysis and replay start fresh JVMs within one owned container; setup and cleanup remain charged to the original stage budgets. Timeout124 and unconfirmed cleanup remain failures. Whole research-release gates remain open.

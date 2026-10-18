@@ -15,7 +15,6 @@ import time
 executor_path=Path(__file__).with_name('provider-execution.py')
 executor_spec=importlib.util.spec_from_file_location('provider_execution',executor_path)
 executor=importlib.util.module_from_spec(executor_spec);executor_spec.loader.exec_module(executor)
-run_stage=executor.run_stage
 
 
 def sha(path):
@@ -122,6 +121,42 @@ def analysis_java_arguments(identity):
         '--output','/pipeline-output/result']
 
 
+def execute_selected_stages(base,image,identity,output,analysis_seconds,replay_seconds,receipt):
+    # Setup is charged to analysis; final cleanup is charged to replay. No extra
+    # successful-job budget is introduced by retaining the container.
+    session=executor.ContainerSession(base,image,analysis_seconds+replay_seconds+30)
+    analysis_started=time.monotonic();replay_started=None
+    receipt['executionMode']='OWNED_CONTAINER_FRESH_JVM_PER_STAGE_V1'
+    try:
+        receipt['containerSetup']=session.start(output/'container-start.log',analysis_seconds)
+        if receipt['containerSetup']['exit']!=0:
+            receipt['analysisExit']=receipt['containerSetup']['exit'];return
+        remaining=analysis_seconds-(time.monotonic()-analysis_started)
+        receipt['analysis']=session.run(analysis_java_arguments(identity),output/'analysis.log',remaining)
+        receipt['analysis']['secondsIncludingSetup']=round(time.monotonic()-analysis_started,3)
+        if time.monotonic()-analysis_started>analysis_seconds:
+            receipt['analysis']['exit']=124;receipt['analysis']['timedOut']=True
+        receipt['analysisExit']=receipt['analysis']['exit']
+        capsule=output/'result/verification-capsule.json'
+        if receipt['analysisExit'] in (0,2,3) and capsule.is_file():
+            replay_started=time.monotonic()
+            receipt['replay']=session.run(['/pipeline-java/bin/java','-Xmx1g','-jar','/pipeline.jar','verify-capsule',
+                '--capsule','/pipeline-output/result/verification-capsule.json'],output/'verification.log',replay_seconds)
+            receipt['verificationExit']=receipt['replay']['exit']
+    finally:
+        cleanup_budget=15
+        if replay_started is not None and receipt.get('verificationExit')==0:
+            cleanup_budget=min(15,max(.001,replay_seconds-(time.monotonic()-replay_started)))
+        receipt['containerCleanup']=session.close(cleanup_budget)
+        if replay_started is not None and 'replay' in receipt:
+            elapsed=time.monotonic()-replay_started
+            receipt['replay']['secondsIncludingCleanup']=round(elapsed,3)
+            if elapsed>replay_seconds:
+                receipt['verificationExit']=124;receipt['replay']['exit']=124;receipt['replay']['timedOut']=True
+        if receipt.get('analysisExit') in (0,2,3) and receipt.get('verificationExit')==0 and receipt['containerCleanup']['status']=='ABSENT':
+            receipt['state']='REPLAY_VERIFIED'
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ['source','manifest','jar','java-home','output']:parser.add_argument('--'+name,type=Path,required=True)
@@ -132,20 +167,13 @@ def main():
     a=parser.parse_args()
     if a.analysis_seconds<=0 or a.replay_seconds<=0:parser.error('deadlines must be positive')
     a.output.mkdir(parents=True,exist_ok=True)
-    for name in ['result','analysis.log','verification.log','selected-build-execution.json']:
+    for name in ['result','analysis.log','verification.log','container-start.log','selected-build-execution.json']:
         if (a.output/name).exists():parser.error('execution output must be fresh: '+name)
     started=time.monotonic();receipt=dict(state='FAILED',analysisExit=69,verificationExit=99,measurementCompleteness='NOT_CERTIFIED')
     try:
         base,image,identity=execution_plan(a.source,a.manifest,a.jar,a.java_home,a.output,a.native_helper,a.native_batch_helper)
         receipt.update(identity)
-        receipt['analysis']=run_stage(base,image,analysis_java_arguments(identity),a.output/'analysis.log',a.analysis_seconds)
-        receipt['analysisExit']=receipt['analysis']['exit']
-        capsule=a.output/'result/verification-capsule.json'
-        if receipt['analysisExit'] in (0,2,3) and capsule.is_file():
-            receipt['replay']=run_stage(base,image,['/pipeline-java/bin/java','-Xmx1g','-jar','/pipeline.jar','verify-capsule',
-                '--capsule','/pipeline-output/result/verification-capsule.json'],a.output/'verification.log',a.replay_seconds)
-            receipt['verificationExit']=receipt['replay']['exit']
-            if receipt['verificationExit']==0:receipt['state']='REPLAY_VERIFIED'
+        execute_selected_stages(base,image,identity,a.output,a.analysis_seconds,a.replay_seconds,receipt)
     except Exception as failure:receipt['error']=repr(failure)
     receipt['secondsBeforeFinalReceiptWrite']=round(time.monotonic()-started,3)
     (a.output/'selected-build-execution.json').write_text(json.dumps(receipt,indent=2)+'\n')

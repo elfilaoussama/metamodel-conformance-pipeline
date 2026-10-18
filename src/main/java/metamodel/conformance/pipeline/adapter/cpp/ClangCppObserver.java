@@ -75,8 +75,8 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.19.0";
-    private static final String PROFILE_ID = "contextual-native-projection-v11";
+    public static final String ADAPTER_VERSION = "0.20.0";
+    private static final String PROFILE_ID = "contextual-native-projection-v12";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -173,6 +173,7 @@ public final class ClangCppObserver implements SourceObserver {
             List<NativeEvidence.Lookup> nativeLookups = new ArrayList<>();
             Map<String,CppNativeLookupReceipt.Result> lookupCensuses = new HashMap<>();
             Map<String,CppNativeImplementationReceipt.Result> implementationCensuses = new HashMap<>();
+            Map<String,CppNativeMethodReceipt.Result> methodCensuses = new HashMap<>();
             Map<String,List<NativeEvidence.DirectBase>> compilerBases = new HashMap<>();
             Set<Path> coveredProjectFiles = new HashSet<>();
             if (nativeHelper != null) recordPhysicalHash(nativeHelper, physicalHashes);
@@ -203,6 +204,7 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(file);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
+                retainMethodFacts(contextId,result,methodCensuses);
                 retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainImplementationFacts(root, relativePath(root,file), contextId, result, implementationCensuses);
                 retainBaseIdentities(result, compilerBases);
@@ -226,6 +228,7 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(header);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
+                retainMethodFacts(contextId,result,methodCensuses);
                 retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainImplementationFacts(root, relativePath(root,header), contextId, result, implementationCensuses);
                 retainBaseIdentities(result, compilerBases);
@@ -410,6 +413,43 @@ public final class ClangCppObserver implements SourceObserver {
             boolean hierarchyIncomplete = observationIncomplete || conditionalIncomplete || !unresolved.isEmpty();
             boolean localEvidenceIncomplete = observationIncomplete || (conditionalIncomplete && !allUnitsDeclared);
 
+            Map<String,List<String>> declarationOwners = new HashMap<>();
+            for (var classifier : classifiers) for (String member : classifier.declaredMemberKeys())
+                declarationOwners.computeIfAbsent(member, ignored -> new ArrayList<>()).add(classifier.id());
+            Map<String,CppNativeMethodReceipt.Method> methodFacts=new HashMap<>();
+            boolean methodPopulationComplete=!localEvidenceIncomplete && !declarationIncomplete
+                    && methodCensuses.keySet().equals(sourceByContext.keySet())
+                    && methodCensuses.values().stream().allMatch(CppNativeMethodReceipt.Result::populationComplete);
+            for(var census:methodCensuses.values())for(var entry:census.methods().entrySet()) {
+                if(methodFacts.putIfAbsent(entry.getKey(),entry.getValue())!=null)
+                    throw new ObservationException("duplicate contextual C++ native method facts");
+                boolean ownerMatches=declarationOwners.getOrDefault(entry.getKey(),List.of())
+                        .contains(entry.getValue().owner());
+                if(!ownerMatches)throw new ObservationException("C++ native method owner disagrees with source declaration census");
+            }
+            nativeLookups=CppNativeMethodReceipt.enrich(nativeLookups,methodFacts);
+            Set<String> methodKeys=members.stream().filter(m -> m.kind()==MemberKind.METHOD)
+                    .map(MemberObservation::technicalKey).collect(java.util.stream.Collectors.toSet());
+            Set<String> recordedOverrideKeys=new HashSet<>();
+            for(var lookup:nativeLookups)for(var target:lookup.targets().values())
+                if(target.overriddenMemberKeys().knowledge()==NativeEvidence.Knowledge.KNOWN)
+                    recordedOverrideKeys.add(target.declarationKey());
+            boolean returnsComplete=methodPopulationComplete && methodKeys.stream().allMatch(key -> methodFacts.containsKey(key)
+                    && methodFacts.get(key).returnType().knowledge()==NativeEvidence.Knowledge.KNOWN);
+            boolean overridesComplete=methodPopulationComplete && recordedOverrideKeys.containsAll(methodKeys)
+                    && methodKeys.stream().allMatch(key -> methodFacts.containsKey(key)
+                        && methodFacts.get(key).overrides().knowledge()==NativeEvidence.Knowledge.KNOWN);
+            members=members.stream().map(m -> {
+                var fact=methodFacts.get(m.technicalKey());
+                return fact==null ? m : new MemberObservation(m.technicalKey(),m.observedIdentifier(),m.kind(),m.inheritability(),
+                    m.visibility(),m.memberName(),m.sourcePath(),m.startLine(),m.endLine(),m.parameterTypes(),m.abstraction(),m.scope(),
+                    fact.returnType().values().isEmpty() ? null : fact.returnType().values().get(0).spelling(),fact.overrides().values());
+            }).toList();
+            nativeSignatures=nativeSignatures.stream().map(s -> {
+                var fact=methodFacts.get(s.memberKey());
+                return fact==null ? s : new NativeEvidence.Signature(s.contextId(),s.memberKey(),s.parameters(),s.receiverQualifiers(),fact.returnType());
+            }).toList();
+
             String evidencePath = relativePath(root, files.get(0));
             diagnostics.add(new ObservationDiagnostic(
                     DiagnosticKind.EVIDENCE_INCOMPLETE,
@@ -417,8 +457,8 @@ public final class ClangCppObserver implements SourceObserver {
                     0,
                     "C++ adapter observes class/struct direct hierarchy and source-declared member ownership, "
                             + "signatures, visibility, inheritability, abstraction and scope under the declared "
-                            + PROFILE_ID + " profile with compiler/include fingerprints; overrides and "
-                            + "implementation and return-type evidence remain incomplete."));
+                            + PROFILE_ID + " profile with compiler/include fingerprints; native override/return "
+                            + "evidence requires a complete mapped compiler census; whole-program link closure is not certified."));
             if (signaturesIncomplete) {
                 diagnostics.add(new ObservationDiagnostic(
                         DiagnosticKind.EVIDENCE_INCOMPLETE,
@@ -447,6 +487,8 @@ public final class ClangCppObserver implements SourceObserver {
             dependencyInputs.validateExecutionLayout(root);
 
             EnumSet<EvidenceKind> completeEvidence = EnumSet.noneOf(EvidenceKind.class);
+            if(returnsComplete)completeEvidence.add(EvidenceKind.METHOD_RETURN_TYPES);
+            if(overridesComplete)completeEvidence.add(EvidenceKind.OVERRIDE_RELATIONS);
             if (!hierarchyIncomplete && unresolved.isEmpty()) {
                 completeEvidence.add(EvidenceKind.HIERARCHY);
             }
@@ -496,9 +538,6 @@ public final class ClangCppObserver implements SourceObserver {
             List<ImplementationBindingObservation> sourceBindings = new ArrayList<>();
             List<NativeEvidence.BodyBinding> nativeBodyBindings = new ArrayList<>();
             Map<String,ClassifierAbstraction> nativeAbstractions = new HashMap<>();
-            Map<String,List<String>> declarationOwners = new HashMap<>();
-            for (var classifier : classifiers) for (String member : classifier.declaredMemberKeys())
-                declarationOwners.computeIfAbsent(member, ignored -> new ArrayList<>()).add(classifier.id());
             boolean noParseError = diagnostics.stream().noneMatch(d -> d.kind()==DiagnosticKind.PARSE_ERROR);
             boolean bodiesComplete = noParseError && !sourceByContext.isEmpty();
             boolean classAbstractionComplete = noParseError && !observationIncomplete && !declarationIncomplete;
@@ -519,6 +558,8 @@ public final class ClangCppObserver implements SourceObserver {
                             .equals(List.of(binding.ownerClassifierId()))) nativeBodyBindings.add(binding);
                 }
             }
+            boolean localDefinitionsComplete=CppSourceDefinitionCoverage.complete(members,methodFacts,
+                    methodPopulationComplete && noParseError,methodBodies,sourceBindings,bodiesComplete);
             CppNativeCorrespondenceReceipt.Result foreign=null;
             String correspondenceUnit="cpp-native-correspondence/selected-contexts-v1";
             if(batch!=null) {
@@ -540,9 +581,11 @@ public final class ClangCppObserver implements SourceObserver {
                     c.inheritedMemberKeys(),nativeAbstractions.getOrDefault(c.id(),ClassifierAbstraction.UNKNOWN))).toList();
             if (bodiesComplete) completeEvidence.add(EvidenceKind.METHOD_BODIES);
             if (classAbstractionComplete) completeEvidence.add(EvidenceKind.CLASSIFIER_ABSTRACTION);
-            // These are positive source-definition relationships. In particular,
-            // a declaration-only TU cannot certify absent definitions elsewhere.
-            // IMPLEMENTATION_BINDINGS remains withheld pending selected-target closure.
+            // This qualifies complete incidence over the measured source universe.
+            // Every method/body must have a same-invocation native association;
+            // no absent external definition or whole-program link closure is inferred.
+            if(localDefinitionsComplete && (foreign==null || foreign.bindings().isEmpty() && foreign.bodies().isEmpty()))
+                completeEvidence.add(EvidenceKind.IMPLEMENTATION_BINDINGS);
             String adapterVersion = ADAPTER_VERSION
                     + "/clang-" + canonicalToken(clang.version())
                     + "/" + canonicalToken(clang.target())
@@ -573,6 +616,7 @@ public final class ClangCppObserver implements SourceObserver {
                                     ? "; same-pass source-buffer hashes, file metadata, loaded images and actual builtin literals"
                                     : "; recorded configuration/compiler/byte subset")
                                 + "; full environment/filesystem probe and role closure unverified"
+                                + (localDefinitionsComplete ? "; complete same-invocation source-definition incidence; no link-closure claim" : "")
                                 + (targetSelection==null?"":"; explicit direct-target population (not link closure): configuration="
                                     +JSON.writeValueAsString(targetSelection.configuration())+"; targetIds="
                                     +JSON.writeValueAsString(targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).toList())
@@ -636,6 +680,17 @@ public final class ClangCppObserver implements SourceObserver {
                 : CppNativeImplementationReceipt.observe(root,context,source,result.trace().implementationFacts(),
                     result.collector().nativeDeclarationKeys,result.trace().physicalInputs(),result.collector().bytes);
         if (output.putIfAbsent(context,facts)!=null) throw new ObservationException("duplicate C++ implementation census context");
+    }
+
+    private static void retainMethodFacts(String context,AnalysisResult result,
+            Map<String,CppNativeMethodReceipt.Result> output) throws ObservationException {
+        var facts=result.trace()!=null && result.astFailure()==null && result.exitCode()==0
+                ? CppNativeMethodReceipt.observe(result.trace().methodSemantics(),result.collector().nativeDeclarationKeys)
+                : CppNativeMethodReceipt.Result.unavailable();
+        // Same-invocation native redeclarations name the same retained source member.
+        // Unknown canonical declarations are deliberately absent from this map.
+        result.collector().nativeDeclarationKeys.putAll(facts.declarationAliases());
+        if(output.putIfAbsent(context,facts)!=null)throw new ObservationException("duplicate C++ method census context");
     }
 
     private static void retainBaseIdentities(AnalysisResult result,

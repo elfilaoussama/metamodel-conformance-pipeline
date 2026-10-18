@@ -28,6 +28,7 @@
 #include <clang/Frontend/MultiplexConsumer.h>
 #include <clang/Sema/SemaConsumer.h>
 #include "cpp-member-lookup.h"
+#include "cpp-method-semantics.h"
 #include "cpp-implementation-facts.h"
 
 static std::string digest(llvm::StringRef bytes) {
@@ -146,6 +147,9 @@ protected:
                 projectRoot ? projectRoot : "");
         bool implementationTraversed=implementation.rootAvailable()
                 && implementation.TraverseDecl(compiler.getASTContext().getTranslationUnitDecl());
+        CppMethodSemantics semantics(compiler.getASTContext(),projectRoot ? projectRoot : "");
+        bool semanticsTraversed=semantics.rootAvailable()
+                && semantics.TraverseDecl(compiler.getASTContext().getTranslationUnitDecl());
         llvm::json::Array consumed, images, argv;
         for (auto &file : files) consumed.push_back(std::move(file.second));
         std::set<std::string> names;
@@ -179,6 +183,9 @@ protected:
                 {"classes",std::move(implementation.classes)},
                 {"methods",std::move(implementation.methods)},
                 {"bodies",std::move(implementation.bodies)}}},
+            {"methodSemantics",llvm::json::Object{{"format","cpp-method-semantics-v1"},
+                {"populationComplete",semanticsTraversed && !compiler.getDiagnostics().hasErrorOccurred()},
+                {"methods",std::move(semantics.rows)}}},
             {"memberLookup",llvm::json::Object{{"format","cpp-member-lookup-v1"},
                 {"populationComplete",true},
                 {"classes",std::move(lookup.rows)}}}}) << "\n";
