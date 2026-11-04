@@ -4,8 +4,8 @@ A Java/Python/C++ source-observation and formal-conformance engine. Language
 observers record facts and evidence in a shared, versioned EMF model. Registered
 Alloy rules evaluate those facts and return source-linked witnesses.
 
-This distribution is the validated **0.15.0-rc.64** engineering checkpoint.
-It replaces the earlier multi-module prototype. It is a release candidate;
+Public version **0.14.0** is based on the validated rc64 engineering checkpoint.
+It replaces the earlier multi-module prototype. This is an engineering baseline;
 whole-project semantic completeness and publication readiness remain open.
 The unfinished native-Java rc65 route is not included.
 
@@ -20,7 +20,7 @@ Use JDK 17 and Maven 3.9+. Check that `JAVA_HOME` points to JDK 17.
 
 ```bash
 mvn package
-PIPELINE_JAR=target/metamodel-conformance-pipeline-next-0.15.0-rc.64.jar
+PIPELINE_JAR=target/metamodel-conformance-pipeline-next-0.14.0.jar
 mkdir -p build/example-source
 printf '%s\n' 'class Example { int value; }' > build/example-source/Example.java
 java -jar "$PIPELINE_JAR" --help
