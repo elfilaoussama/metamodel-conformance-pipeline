@@ -1,9 +1,10 @@
 package metamodel.conformance.pipeline.invariant;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationFeature;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.util.Comparator;
 import java.util.List;
 
@@ -18,11 +19,15 @@ public final class InvariantRegistry {
     }
 
     public static InvariantRegistry load() {
-        try (InputStream input = InvariantRegistry.class.getResourceAsStream("/invariants/registry.json")) {
-            if (input == null) {
-                throw new IllegalStateException("bundled invariant registry is missing");
-            }
-            CatalogFile file = new ObjectMapper().readValue(input, CatalogFile.class);
+        return parse(InvariantProfile.readResource("invariants/registry.json", InvariantProfile.MAX_REGISTRY_BYTES));
+    }
+
+    static InvariantRegistry parse(byte[] bytes) {
+        try {
+            CatalogFile file = new ObjectMapper()
+                    .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+                    .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
+                    .readValue(bytes, CatalogFile.class);
             if (!"1".equals(file.schemaVersion()) || file.invariants() == null || file.invariants().isEmpty()) {
                 throw new IllegalStateException("unsupported or empty invariant registry");
             }

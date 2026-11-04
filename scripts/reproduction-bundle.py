@@ -80,6 +80,18 @@ def control(directory, action, **values):
     write(directory / ('state-' + action + '.json'), dict(action=action, **values))
 
 
+def record_failure(error, action, writer):
+    """Failed storage may also reject diagnostics; preserve the first failure."""
+    try:
+        writer()
+    except BaseException as recording_error:
+        detail = 'Could not record bundle '+action+': '+repr(recording_error)
+        previous = getattr(error, 'bundle_recording_error', '')
+        error.bundle_recording_error = previous+'\n'+detail if previous else detail
+        add_note = getattr(error, 'add_note', None)
+        if callable(add_note): add_note(detail)
+
+
 def scan(root, objects=None):
     root = Path(root)
     if root.is_symlink(): raise ValueError('mount root aliases are unsupported')
@@ -206,18 +218,161 @@ def docker(command, seconds):
     return result.stdout
 
 
+def exported_image_identity(archive, legacy, image):
+    """Prove one saved legacy image belongs to an exact config/OCI root identity.
+
+    Supported OCI profile: SHA256 descriptors, OCI indexes/manifests, exactly one
+    retained ordinary image manifest selecting the legacy config and ordered raw
+    layer bytes. Other-platform missing blobs are reported, never selected.
+    This does not claim arbitrary platform selection or validate absent content.
+    Namespace/layer application remains the legacy export reader's responsibility.
+    """
+    def member(name):
+        relative(name)
+        rows = [m for m in archive.getmembers() if m.name == name]
+        if len(rows) != 1 or not rows[0].isfile(): raise ValueError('missing/duplicate image identity member: '+name)
+        return rows[0]
+
+    digests = {}
+    def digest(row):
+        if row.name in digests: return digests[row.name]
+        h = hashlib.sha256()
+        with archive.extractfile(row) as stream:
+            for block in iter(lambda: stream.read(1 << 20), b''): h.update(block)
+        value = 'sha256:'+h.hexdigest();digests[row.name] = value
+        return value
+
+    config = member(legacy['Config']); config_id = digest(config)
+    if config_id == image:
+        return dict(kind='CONFIG_SHA256', expected=image, config=config_id)
+    if not isinstance(image,str) or not re.fullmatch(r'sha256:[0-9a-f]{64}',image):
+        raise ValueError('export image identity mismatch')
+    names = [m.name for m in archive.getmembers()]
+    if len(names) != len(set(names)): raise ValueError('duplicate OCI export member')
+
+    def unique(pairs):
+        result = {}
+        for key,value in pairs:
+            if key in result: raise ValueError('duplicate OCI JSON field')
+            result[key] = value
+        return result
+
+    def document(row):
+        if row.size > 16*1024*1024: raise ValueError('bounded OCI metadata required')
+        value = json.loads(archive.extractfile(row).read(),object_pairs_hook=unique)
+        if not isinstance(value,dict): raise ValueError('OCI metadata object required')
+        return value
+
+    INDEX = 'application/vnd.oci.image.index.v1+json'
+    MANIFEST = 'application/vnd.oci.image.manifest.v1+json'
+    CONFIG = 'application/vnd.oci.image.config.v1+json'
+    LAYERS = {'application/vnd.oci.image.layer.v1.tar',
+              'application/vnd.oci.image.layer.v1.tar+gzip',
+              'application/vnd.oci.image.layer.v1.tar+zstd'}
+    seen = {}; absent = {}; candidates = []; visiting = set(); visited = set(); graph_seen = set()
+
+    def descriptor(value):
+        if not isinstance(value,dict) or not {'mediaType','digest','size'}.issubset(value) \
+                or not isinstance(value['mediaType'],str) \
+                or not isinstance(value['digest'],str) \
+                or not re.fullmatch(r'sha256:[0-9a-f]{64}',value['digest']) \
+                or type(value['size']) != int or value['size'] < 0:
+            raise ValueError('invalid OCI descriptor')
+        identity = (value['mediaType'],value['size'])
+        prior = seen.setdefault(value['digest'],identity)
+        if prior != identity: raise ValueError('conflicting OCI descriptor')
+        path = 'blobs/sha256/'+value['digest'][7:]
+        rows = [m for m in archive.getmembers() if m.name == path]
+        if not rows:
+            if 'data' in value: raise ValueError('inline-only OCI content unsupported')
+            absent[value['digest']] = dict(digest=value['digest'],mediaType=value['mediaType'],size=value['size'])
+            return None
+        row = member(path)
+        if row.size != value['size'] or digest(row) != value['digest']:
+            raise ValueError('OCI descriptor size/digest mismatch')
+        if 'data' in value:
+            import base64
+            try: embedded = base64.b64decode(value['data'],validate=True)
+            except (ValueError,TypeError): raise ValueError('invalid OCI inline data')
+            if len(embedded) != row.size or 'sha256:'+hashlib.sha256(embedded).hexdigest() != value['digest']:
+                raise ValueError('OCI inline data differs')
+        return row
+
+    def visit(desc, depth=0):
+        if depth > 32 or len(visited) > 4096: raise ValueError('bounded OCI graph required')
+        row = descriptor(desc); key = desc['digest']
+        if key in visiting: raise ValueError('cyclic OCI image metadata')
+        if key in graph_seen: raise ValueError('ambiguous repeated OCI image metadata')
+        graph_seen.add(key)
+        if row is None:
+            return
+        visiting.add(key)
+        value = document(row)
+        if type(value.get('schemaVersion')) != int or value['schemaVersion'] != 2 \
+                or value.get('mediaType') != desc['mediaType']:
+            raise ValueError('OCI document type/version mismatch')
+        if desc['mediaType'] == INDEX:
+            children = value.get('manifests')
+            if not isinstance(children,list) or not children: raise ValueError('nonempty OCI index required')
+            digests = [child.get('digest') for child in children if isinstance(child,dict)]
+            if len(digests) != len(children) or len(set(digests)) != len(digests):
+                raise ValueError('duplicate/invalid OCI index descriptor')
+            for child in children:
+                if child.get('mediaType') not in {INDEX,MANIFEST}: raise ValueError('unsupported OCI graph media type')
+                visit(child,depth+1)
+        elif desc['mediaType'] == MANIFEST:
+            conf = value.get('config'); confrow = descriptor(conf)
+            layers = value.get('layers')
+            if not isinstance(layers,list): raise ValueError('OCI layers array required')
+            for layer in layers: descriptor(layer)
+            if conf['mediaType'] == CONFIG and conf['digest'] == config_id:
+                if confrow is None or confrow.size != config.size: raise ValueError('selected OCI config unavailable')
+                if value.get('artifactType') or value.get('subject'): raise ValueError('artifact cannot select exported image')
+                if len(layers) != len(legacy['Layers']): raise ValueError('OCI/legacy layer count mismatch')
+                for layer,name in zip(layers,legacy['Layers']):
+                    exported = member(name)
+                    if layer['mediaType'] not in LAYERS or descriptor(layer) is None \
+                            or exported.size != layer['size'] or digest(exported) != layer['digest']:
+                        raise ValueError('OCI/legacy ordered layer mismatch')
+                candidates.append(key)
+        else: raise ValueError('unsupported OCI root media type')
+        visiting.remove(key);visited.add(key)
+
+    if document(member('oci-layout')) != {'imageLayoutVersion':'1.0.0'}:
+        raise ValueError('unsupported OCI layout')
+    top = document(member('index.json'))
+    if type(top.get('schemaVersion')) != int or top['schemaVersion'] != 2 \
+            or top.get('mediaType') != INDEX or not isinstance(top.get('manifests'),list) \
+            or len(top['manifests']) != 1:
+        raise ValueError('single OCI export root required')
+    root = top['manifests'][0]
+    if not isinstance(root,dict) or root.get('digest') != image: raise ValueError('export image identity mismatch')
+    if descriptor(root) is None: raise ValueError('expected OCI root unavailable')
+    visit(root)
+    if len(candidates) != 1: raise ValueError('one retained OCI manifest must select legacy image')
+    return dict(kind='OCI_ROOT_SHA256',expected=image,config=config_id,
+                selectedManifest=candidates[0],verifiedMetadata=sorted(visited),
+                unselectedAbsentDescriptors=[absent[key] for key in sorted(absent)])
+
+
 def image_check(path, image):
     # Docker export is retained as opaque bytes; the daemon validates layers on load.
     import tarfile
+    def unique(pairs):
+        value = {}
+        for key,item in pairs:
+            if key in value: raise ValueError('duplicate saved-image JSON field')
+            value[key] = item
+        return value
     with tarfile.open(path) as archive:
         members = [m for m in archive.getmembers() if m.name == 'manifest.json']
         if len(members) != 1 or not members[0].isfile(): raise ValueError('invalid saved-image manifest')
-        manifests = json.load(archive.extractfile(members[0]))
+        manifests = json.load(archive.extractfile(members[0]),object_pairs_hook=unique)
         if len(manifests) != 1: raise ValueError('one immutable image per export required')
         name = manifests[0]['Config']; relative(name)
         configs = [m for m in archive.getmembers() if m.name == name]
         if len(configs) != 1 or not configs[0].isfile(): raise ValueError('invalid saved-image config')
-        if 'sha256:' + hashlib.sha256(archive.extractfile(configs[0]).read()).hexdigest() != image: raise ValueError('export image identity mismatch')
+        exported_image_identity(archive, manifests[0], image)
         namespace = {'/': dict(kind='directory')}
         for layer in manifests[0]['Layers']:
             relative(layer); matches = [m for m in archive.getmembers() if m.name == layer]
@@ -274,7 +429,8 @@ def capture(recipe, output, image_export=None, seconds=300):
         control(output, 'capture-complete', seconds=time.monotonic()-started, costs=costs, manifestSha256=sha(output/'manifest.json'), **checked)
         return checked
     except BaseException as error:
-        control(output, 'capture-failed', error=repr(error), costs=costs, seconds=time.monotonic()-started); raise
+        record_failure(error, 'capture-failed', lambda: control(output, 'capture-failed', error=repr(error), costs=costs, seconds=time.monotonic()-started))
+        raise
 
 
 def verify(bundle):
@@ -334,7 +490,8 @@ def restore(bundle, output):
         control(output, 'restore-complete', seconds=time.monotonic()-started, manifestSha256=sha(bundle/'manifest.json'), hardlinkGroupsPreserved=len(groups))
         return dict(state='DECLARED_MOUNTS_RESTORED', seconds=time.monotonic()-started)
     except BaseException as error:
-        control(output, 'restore-failed', error=repr(error), seconds=time.monotonic()-started); raise
+        record_failure(error, 'restore-failed', lambda: control(output, 'restore-failed', error=repr(error), seconds=time.monotonic()-started))
+        raise
 
 
 def execute(bundle, restored, output, load_seconds=300):
@@ -354,6 +511,7 @@ def execute(bundle, restored, output, load_seconds=300):
         if normalize(actual) != normalize(expected): raise ValueError('restored tree metadata/bytes changed')
     check_restored_aliases(restored, groups)
     output = fresh(output); started = time.monotonic(); receipt = dict(state='FAILED', stages=[], consumptionCertified=False, sourceReproductionCertified=False, manifestSha256=sha(bundle/'manifest.json'))
+    execution_error = None
     try:
         before = time.monotonic(); docker(['image', 'load', '--input', str(bundle/'image.tar')], load_seconds)
         if docker(['image', 'inspect', '--format', '{{.Id}}', recipe['imageId']], 15).strip() != recipe['imageId']: raise ValueError('loaded image identity differs')
@@ -374,9 +532,12 @@ def execute(bundle, restored, output, load_seconds=300):
             if row['exit'] not in stage['acceptedExits']: raise ValueError('stage failed: '+stage['name'])
         receipt['state'] = 'DECLARED_RECIPE_EXECUTED'
     except BaseException as error:
+        execution_error = error
         receipt['error'] = repr(error); raise
     finally:
-        receipt['seconds'] = time.monotonic()-started; write(output/'execution.json', receipt)
+        receipt['seconds'] = time.monotonic()-started
+        if execution_error is None: write(output/'execution.json', receipt)
+        else: record_failure(execution_error, 'execution-failed', lambda: write(output/'execution.json', receipt))
     return receipt
 
 

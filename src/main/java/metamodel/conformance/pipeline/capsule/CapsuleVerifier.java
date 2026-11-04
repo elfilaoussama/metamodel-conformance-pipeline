@@ -8,6 +8,7 @@ import metamodel.conformance.pipeline.emf.ObservationXmiReader;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.util.ArtifactLimits;
 import metamodel.conformance.pipeline.util.Hashing;
+import metamodel.conformance.pipeline.invariant.InvariantProfile;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -17,6 +18,14 @@ import java.nio.file.Path;
 import java.security.MessageDigest;
 
 public final class CapsuleVerifier {
+    private final InvariantProfile profile;
+
+    public CapsuleVerifier() { this(InvariantProfile.load()); }
+
+    public CapsuleVerifier(InvariantProfile profile) {
+        this.profile = java.util.Objects.requireNonNull(profile, "invariant profile");
+    }
+
     public CapsuleVerification verify(Path capsulePath) {
         try {
             Path capsuleFile = capsulePath.toRealPath(LinkOption.NOFOLLOW_LINKS);
@@ -35,6 +44,9 @@ public final class CapsuleVerifier {
             }
             if (capsule.alloyExecution() == null || !capsule.alloyExecution().supported()) {
                 return invalid("unsupported or missing Alloy execution configuration");
+            }
+            if (!profile.identity().equals(capsule.invariantProfile())) {
+                return invalid("invariant profile identity mismatch");
             }
             Path root = capsuleFile.getParent().toRealPath();
             Path observationPath = resolveArtifact(root, capsule.observationPath());
@@ -63,11 +75,11 @@ public final class CapsuleVerifier {
                 return invalid("observation diagnostics do not match capsule");
             }
             String alloy = Files.readString(alloyPath, StandardCharsets.UTF_8);
-            String regeneratedAlloy = new ExactAlloyEncoder().encode(observation);
+            String regeneratedAlloy = new ExactAlloyEncoder(profile).encode(observation);
             if (!regeneratedAlloy.equals(alloy)) {
                 return invalid(describeAlloyDrift(alloy, regeneratedAlloy));
             }
-            var repeated = new AlloyInvariantEvaluator(capsule.alloyExecution())
+            var repeated = new AlloyInvariantEvaluator(capsule.alloyExecution(), profile)
                     .evaluateAll(observation, alloy);
             if (!repeated.equals(capsule.decisions())) {
                 return invalid("repeated Alloy decisions do not match capsule");

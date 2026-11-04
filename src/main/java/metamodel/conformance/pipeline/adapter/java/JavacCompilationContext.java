@@ -32,6 +32,7 @@ final class JavacCompilationContext implements AutoCloseable {
     private final List<String> options;
     private final List<ObservationDiagnostic> diagnostics;
     private final Path temporaryDirectory;
+    private boolean retainedForScope;
 
     private JavacCompilationContext(
             boolean complete,
@@ -53,6 +54,13 @@ final class JavacCompilationContext implements AutoCloseable {
             JavaCompilationContext context,
             Map<String, List<Path>> filesByContext,
             JavaDependencyInputs inputs) throws IOException {
+        JavaDependencyInputs actual = inputs == null ? JavaDependencyInputs.none() : inputs;
+        return JavacSourceWorld.prepare(root, context, filesByContext, actual,
+                () -> prepareFresh(root, context, filesByContext, actual));
+    }
+
+    private static JavacCompilationContext prepareFresh(Path root, JavaCompilationContext context,
+            Map<String,List<Path>> filesByContext, JavaDependencyInputs inputs) throws IOException {
         JavaDependencyInputs actual = inputs == null ? JavaDependencyInputs.none() : inputs;
         Path temporary = Files.createTempDirectory("metamodel-conformance-javac-context-");
         Path emptyClasspath = Files.createDirectory(temporary.resolve("empty-classpath"));
@@ -134,6 +142,12 @@ final class JavacCompilationContext implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        if (!retainedForScope) dispose();
+    }
+
+    void retainForScope() { retainedForScope = true; }
+
+    void dispose() throws IOException {
         if (!Files.exists(temporaryDirectory)) {
             return;
         }

@@ -23,6 +23,10 @@ final class CppNativeCorrespondenceReceipt {
     }
     static Result project(Path root,String selectionId,CppNativeBatchReceipt.Result batch,Map<String,Frame> frames,
             Map<String,List<String>> owners) throws IOException,ObservationException {
+        return project(root,selectionId,batch,frames,owners,null);
+    }
+    static Result project(Path root,String selectionId,CppNativeBatchReceipt.Result batch,Map<String,Frame> frames,
+            Map<String,List<String>> owners,Map<String,String> selectionByContext) throws IOException,ObservationException {
         var bodies=new TreeMap<String,MethodBodyObservation>();var bindings=new ArrayList<ImplementationBindingObservation>();
         var nativeBindings=new ArrayList<NativeEvidence.BodyBinding>();var matches=new ArrayList<Match>();
         var diagnostics=new ArrayList<ObservationDiagnostic>();var receiptRows=new ArrayList<String>();
@@ -37,6 +41,12 @@ final class CppNativeCorrespondenceReceipt {
             row.put("targetNativeIdentity",query.targetUsr());row.put("nativeStatus",query.status().name());
             row.put("nativeReason",query.reason());row.put("projectionStatus","NOT_A_FOREIGN_MATCH");
             if(query.status()==CppNativeBatchReceipt.Status.MATCHED) {
+                if(selectionByContext!=null) {
+                    String sourceSelection=selectionByContext.get(query.sourceContextId());
+                    require(sourceSelection!=null && sourceSelection.equals(selectionByContext.get(query.targetContextId())),
+                            "foreign correspondence crosses declared build selections");
+                    row.put("selectionId",sourceSelection);
+                }
                 row.put("sourceContext",query.sourceContextId());row.put("sourceMember",source==null?"":source);row.put("sourceNativeIdentity",query.sourceUsr());
                 String unavailable=null;
                 if(source==null || target==null || sourceOwner==null || targetOwner==null

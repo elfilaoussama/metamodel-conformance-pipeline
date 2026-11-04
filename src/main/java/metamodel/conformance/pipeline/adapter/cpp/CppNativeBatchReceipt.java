@@ -23,19 +23,38 @@ final class CppNativeBatchReceipt {
     }
 
     static Result read(Path receipt,Path projectRoot,List<String> expectedContexts) throws IOException,ObservationException {
+        return read(receipt,projectRoot,expectedContexts,null);
+    }
+
+    /** Group identities come from the request's qualified population, never from
+     * native declaration names or physical source paths. */
+    static Result read(Path receipt,Path projectRoot,Map<String,String> expectedContextGroups)
+            throws IOException,ObservationException {
+        return read(receipt,projectRoot,new ArrayList<>(expectedContextGroups.keySet()),
+                new LinkedHashMap<>(expectedContextGroups));
+    }
+
+    private static Result read(Path receipt,Path projectRoot,List<String> expectedContexts,
+            Map<String,String> expectedContextGroups) throws IOException,ObservationException {
         try {
+            boolean grouped=expectedContextGroups!=null;
             require(!expectedContexts.isEmpty() && new HashSet<>(expectedContexts).size()==expectedContexts.size(),"empty/duplicate selected contexts");
+            if(grouped)for(String group:expectedContextGroups.values())
+                require(group!=null && group.matches("[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}"),"invalid expected correspondence group");
             JsonNode root=JSON.readTree(receipt.toFile());
             fields(root,Set.of("format","projectRoot","jobs","correspondenceQueries","metrics"));
-            require(text(root,"format").equals("cpp-retained-batch-v1"),"unsupported native batch format");
+            require(text(root,"format").equals(grouped?"cpp-retained-batch-v2":"cpp-retained-batch-v1"),"unsupported native batch format");
             require(text(root,"projectRoot").equals(projectRoot.toRealPath().toString()),"native batch project root mismatch");
             Path directory=receipt.toRealPath().getParent();
             var jobs=new ArrayList<Job>();var successful=new HashSet<String>();
             JsonNode rows=array(root,"jobs");require(rows.size()==expectedContexts.size(),"selected job population mismatch");
             for(int index=0;index<rows.size();index++) {
                 JsonNode row=rows.get(index);
-                fields(row,Set.of("contextId","astPath","inputPath","errorPath","exitCode","frontendInvocations","observationMicros"));
+                var jobFields=new HashSet<>(Set.of("contextId","astPath","inputPath","errorPath","exitCode","frontendInvocations","observationMicros"));
+                if(grouped)jobFields.add("correspondenceGroupId");
+                fields(row,jobFields);
                 String context=text(row,"contextId");require(context.equals(expectedContexts.get(index)),"selected job identity/order mismatch");
+                if(grouped)require(text(row,"correspondenceGroupId").equals(expectedContextGroups.get(context)),"selected job correspondence group mismatch");
                 long exit=number(row,"exitCode"),calls=number(row,"frontendInvocations");
                 require(exit<=1 && calls<=1 && (exit!=0 || calls==1),"invalid frontend outcome/invocation count");
                 String prefix="job-"+index;
@@ -53,10 +72,19 @@ final class CppNativeBatchReceipt {
                 Status status=Status.valueOf(text(row,"status"));String usr=string(row,"targetUsr");
                 if(status!=Status.UNSUPPORTED)require(usr.startsWith("c:"),"query lacks native declaration identity");
                 Set<String> allowed=new HashSet<>(Set.of("targetContextId","targetCanonicalAstId","targetOwnerAstId","targetUsr","status"));
+                if(grouped) {
+                    allowed.add("targetCorrespondenceGroupId");
+                    require(text(row,"targetCorrespondenceGroupId").equals(expectedContextGroups.get(context)),"receiver correspondence group mismatch");
+                }
                 String origin="",canonical="",definition="",sourceOwner="",sourceUsr="",reason="";
                 if(status==Status.MATCHED) {
                     allowed.addAll(Set.of("sourceContextId","sourceCanonicalAstId","sourceDefinitionAstId","sourceOwnerAstId","sourceUsr"));
                     origin=text(row,"sourceContextId");require(successful.contains(origin) && !origin.equals(context),"invalid originating compiler context");
+                    if(grouped) {
+                        allowed.add("sourceCorrespondenceGroupId");
+                        require(text(row,"sourceCorrespondenceGroupId").equals(expectedContextGroups.get(origin)),"origin correspondence group mismatch");
+                        require(expectedContextGroups.get(origin).equals(expectedContextGroups.get(context)),"cross-group native correspondence");
+                    }
                     canonical=astId(row,"sourceCanonicalAstId");definition=astId(row,"sourceDefinitionAstId");sourceOwner=astId(row,"sourceOwnerAstId");
                     sourceUsr=text(row,"sourceUsr");require(sourceUsr.equals(usr),"native declaration identities disagree");matched++;
                 } else if(status==Status.IMPORT_REJECTED) {allowed.add("reason");reason=text(row,"reason");}

@@ -37,7 +37,13 @@ final class NativeEvidenceXmiCodec {
         Class<?> raw = recordClass(type);
         EObject object = schema.ePackage().getEFactoryInstance().create(schema.classifier(name(type)));
         for (RecordComponent component : raw.getRecordComponents()) {
-            if (raw==NativeEvidence.Bundle.class && !schema.version().equals("16")
+            if (raw == NativeEvidence.Bundle.class && component.getName().equals("languageModes")
+                    && !schema.version().equals("17")) {
+                if (!((NativeEvidence.Bundle) record).languageModes().isEmpty())
+                    throw new IOException("legacy schema cannot retain typed language modes");
+                continue;
+            }
+            if (raw==NativeEvidence.Bundle.class && !java.util.Set.of("16","17").contains(schema.version())
                     && (component.getName().equals("buildSelections") || component.getName().equals("definitionCorrespondences"))) {
                 NativeEvidence.Bundle bundle=(NativeEvidence.Bundle)record;
                 if(!bundle.buildSelections().isEmpty() || !bundle.definitionCorrespondences().isEmpty())
@@ -92,7 +98,11 @@ final class NativeEvidenceXmiCodec {
         for (int i = 0; i < components.length; i++) {
             RecordComponent component = components[i];
             Type fieldType = resolve(component.getGenericType(), type);
-            if(raw==NativeEvidence.Bundle.class && !schema.version().equals("16")
+            if (raw == NativeEvidence.Bundle.class && component.getName().equals("languageModes")
+                    && !schema.version().equals("17")) {
+                constructorTypes[i] = component.getType(); values[i] = List.of(); continue;
+            }
+            if(raw==NativeEvidence.Bundle.class && !java.util.Set.of("16","17").contains(schema.version())
                     && (component.getName().equals("buildSelections") || component.getName().equals("definitionCorrespondences"))) {
                 constructorTypes[i]=component.getType();values[i]=List.of();continue;
             }

@@ -11,6 +11,9 @@ if [[ ! -d "$source_root" || -L "$source_root" ]]; then
 fi
 source_root="$(cd "$source_root" && pwd -P)"
 mkdir -p "$(dirname "$output_file")"; : > "$output_file"
+# A failed later module must not leave earlier contexts looking like a complete
+# provider result. Logs/cache remain available for diagnosis.
+trap 'provider_status=$?; : > "$output_file"; exit "$provider_status"' ERR
 
 mapfile -d '' poms < <(find "$source_root" -type f -name pom.xml \
   -not -path '*/.git/*' -not -path '*/target/*' -print0 | sort -z)
@@ -131,6 +134,7 @@ if plugins is not None:
         if text(plugin,'artifactId')!='maven-compiler-plugin': continue
         compiler_cfg=child(plugin,'configuration')
         executions=child(plugin,'executions')
+        observed_goals=set()
         if executions is not None:
             for execution in executions:
                 if local(execution.tag)!='execution': continue
@@ -139,9 +143,27 @@ if plugins is not None:
                     (item.text or '').strip() for item in goals_node if local(item.tag)=='goal'
                 ]
                 cfg=child(execution,'configuration')
+                for goal in ('compile','testCompile'):
+                    if goal in goals:
+                        if goal in observed_goals:
+                            raise ValueError('multiple compiler executions for '+goal+
+                                ' require execution-specific source/options/output/classpath frames; refusing last-execution overwrite')
+                        observed_goals.add(goal)
                 if 'compile' in goals: compile_cfg=cfg
                 if 'testCompile' in goals: test_cfg=cfg
         break
+# Maven filters select explicit operands; javac can still parse an excluded
+# source to resolve another operand. This metadata-only corridor has no native
+# parsed-unit census and cannot claim complete ownership from restrictive filters.
+for cfg in (compiler_cfg,compile_cfg,test_cfg):
+    for name in ('includes','testIncludes','excludes','testExcludes'):
+        node=child(cfg,name)
+        if node is None: continue
+        patterns=[(item.text or '').strip() for item in node]
+        if patterns and ('excludes' in name.lower() or set(patterns)!={'**/*.java'}):
+            raise ValueError('declared Maven source filters require native parsed-source population; '
+                             'explicit selectors do not prove source non-consumption')
+
 def first(*values): return next((v for v in values if v), '')
 def setting(execution_cfg, name, *property_names):
     return first(text(execution_cfg,name), text(compiler_cfg,name), *(prop(p) for p in property_names))

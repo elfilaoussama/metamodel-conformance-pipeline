@@ -11,8 +11,8 @@ import org.eclipse.emf.ecore.xmi.impl.EcoreResourceFactoryImpl;
 import java.net.URL;
 
 final class ObservationSchema {
-    static final String VERSION = "16";
-    static final String NS_URI = "urn:metamodel-conformance:observation:16";
+    static final String VERSION = "17";
+    static final String NS_URI = "urn:metamodel-conformance:observation:17";
 
     private final EPackage ePackage;
 
@@ -25,7 +25,7 @@ final class ObservationSchema {
     }
 
     static ObservationSchema load(String version) {
-        if (!java.util.Set.of("14","15",VERSION).contains(version)) {
+        if (!java.util.Set.of("14","15","16",VERSION).contains(version)) {
             throw new IllegalArgumentException("unsupported observation schema: " + version);
         }
         EcorePackage.eINSTANCE.eClass();

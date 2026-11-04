@@ -1,3 +1,7 @@
 target/
-*.class
-__pycache__/
+build/
+.idea/
+.vscode/
+*.iml
+*.log
+.DS_Store

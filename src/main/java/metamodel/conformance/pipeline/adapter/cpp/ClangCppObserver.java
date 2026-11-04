@@ -75,8 +75,8 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.20.0";
-    private static final String PROFILE_ID = "contextual-native-projection-v12";
+    public static final String ADAPTER_VERSION = "0.25.0";
+    private static final String PROFILE_ID = "contextual-native-projection-v13";
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -138,6 +138,9 @@ public final class ClangCppObserver implements SourceObserver {
 
     @Override
     public Observation observe(Path sourceRoot, Set<String> externalParents) throws ObservationException {
+        var nativePlan=dependencyInputs.nativePlan();
+        if(nativePlan!=null && nativeBatchHelper==null)
+            throw new ObservationException("native invocation plans require the grouped native batch helper");
         try {
             Path root = validateRoot(sourceRoot);
             dependencyInputs.validateExecutionLayout(root);
@@ -153,6 +156,8 @@ public final class ClangCppObserver implements SourceObserver {
             }
 
             ClangIdentity clang = clangIdentity();
+            if(nativePlan!=null && !clang.version().startsWith("14."))
+                throw new ObservationException("native invocation plans require the qualified Clang 14 language-mode decoder");
             String clangHash = recordPhysicalHash(clang.executable(), physicalHashes);
             dependencyInputs.validateCompilerIdentity(new CppDependencyInputs.CompilerIdentity(
                     clangHash, Hashing.sha256(clang.versionOutput()), clang.target()));
@@ -166,9 +171,12 @@ public final class ClangCppObserver implements SourceObserver {
             boolean observationIncomplete = false;
             Map<String, Draft> byDefinitionKey = new HashMap<>();
             Map<String, String> sourceByContext = new java.util.TreeMap<>();
+            Map<String,CppDependencyInputs.CppCompileContext> declaredByContext=new java.util.TreeMap<>();
+            Map<String,CppNativeInvocationPlan.Invocation> plannedByContext=new java.util.TreeMap<>();
             Map<String, Set<Path>> associatedInputs = new java.util.TreeMap<>();
             List<NativeEvidence.Invocation> nativeInvocations = new ArrayList<>();
             Map<String, NativeEvidence.Invocation> invocationByContext = new HashMap<>();
+            Map<String, NativeEvidence.LanguageMode> languageModes = new java.util.TreeMap<>();
             Map<String, NativeEvidence.Input> tracedInputs = new java.util.TreeMap<>();
             List<NativeEvidence.Lookup> nativeLookups = new ArrayList<>();
             Map<String,CppNativeLookupReceipt.Result> lookupCensuses = new HashMap<>();
@@ -187,23 +195,41 @@ public final class ClangCppObserver implements SourceObserver {
             if(targetSelection!=null && initialUnits.size()!=selectedSourcePaths.size())
                 throw new ObservationException("selected compiled source is absent from the supported source population");
             boolean allUnitsDeclared = (targetSelection==null ? !translationUnits.isEmpty() : !initialUnits.isEmpty())
-                    && initialUnits.stream().allMatch(file ->
-                    dependencyInputs.contextForSourcePath(relativePath(root, file)) != null);
+                    && (nativePlan!=null || initialUnits.stream().allMatch(file ->
+                    dependencyInputs.contextForSourcePath(relativePath(root, file)) != null));
 
-            Map<Path,String> initialContexts=new java.util.LinkedHashMap<>();
-            for(Path file:initialUnits) {
+            List<AnalysisJob> initialJobs=new ArrayList<>();
+            if(nativePlan!=null) {
+                for(var invocation:nativePlan.invocations().values()) {
+                    Path file=root.resolve(invocation.context().sourcePath()).normalize();
+                    String contextId=recordCompilationContext(root,file,unitsByPath,clangHash,invocation.context(),invocation);
+                    if(sourceByContext.putIfAbsent(contextId,relativePath(root,file))!=null)
+                        throw new ObservationException("duplicate planned C++ context");
+                    declaredByContext.put(contextId,invocation.context());plannedByContext.put(contextId,invocation);
+                    initialJobs.add(new AnalysisJob(file,contextId,invocation.context(),invocation));
+                }
+            } else for(Path file:initialUnits) {
+                var declared=dependencyInputs.contextForSourcePath(relativePath(root,file));
                 String contextId = recordCompilationContext(root, file, unitsByPath, clangHash);
                 sourceByContext.put(contextId, relativePath(root, file));
-                initialContexts.put(file,contextId);
+                if(declared!=null)declaredByContext.put(contextId,declared);
+                initialJobs.add(new AnalysisJob(file,contextId,declared,null));
             }
-            BatchAnalysis batch=nativeBatchHelper==null?null:analyzeBatch(root,initialContexts,clang,clangHash);
-            for (Path file : initialUnits) {
-                String contextId=initialContexts.get(file);
-                AnalysisResult result = batch==null?analyzeUnit(root, file, contextId, clang, clangHash):batch.results().get(file);
+            BatchAnalysis batch=nativeBatchHelper==null?null:analyzeBatch(root,initialJobs,clang,clangHash);
+            for (var job : initialJobs) {
+                Path file=job.source();String contextId=job.contextId();
+                AnalysisResult result = batch==null?analyzeUnit(root, file, contextId, clang, clangHash):batch.results().get(contextId);
+                if(job.invocation()!=null) {
+                    if(result.trace()==null || result.trace().languageMode()==null)
+                        throw new ObservationException("planned C++ invocation lacks measured language mode: "+job.invocation().id());
+                    var expected=job.invocation().compilerDefault()?NativeEvidence.StandardSelection.COMPILER_DEFAULT:NativeEvidence.StandardSelection.EXPLICIT_OPTION;
+                    if(result.trace().languageMode().standardSelection()!=expected)
+                        throw new ObservationException("planned C++ language-mode selection differs");
+                }
                 Set<Path> associated = new HashSet<>(result.dependencies());
                 associated.add(file);
                 associatedInputs.put(contextId, associated);
-                retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
+                retainTrace(result, nativeInvocations, invocationByContext, languageModes, tracedInputs, physicalHashes);
                 retainMethodFacts(contextId,result,methodCensuses);
                 retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainImplementationFacts(root, relativePath(root,file), contextId, result, implementationCensuses);
@@ -227,7 +253,7 @@ public final class ClangCppObserver implements SourceObserver {
                 Set<Path> associated = new HashSet<>(result.dependencies());
                 associated.add(header);
                 associatedInputs.put(contextId, associated);
-                retainTrace(result, nativeInvocations, invocationByContext, tracedInputs, physicalHashes);
+                retainTrace(result, nativeInvocations, invocationByContext, languageModes, tracedInputs, physicalHashes);
                 retainMethodFacts(contextId,result,methodCensuses);
                 retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainImplementationFacts(root, relativePath(root,header), contextId, result, implementationCensuses);
@@ -410,7 +436,11 @@ public final class ClangCppObserver implements SourceObserver {
                         memberKeysByOwner.getOrDefault(draft.id(), List.of())));
             }
 
-            boolean hierarchyIncomplete = observationIncomplete || conditionalIncomplete || !unresolved.isEmpty();
+            boolean selectedNativeHierarchyComplete=nativePlan!=null && allUnitsDeclared && !observationIncomplete
+                    && CppNativeHierarchyAdmission.complete(sourceByContext.keySet(),invocationByContext.keySet(),
+                        drafts.stream().collect(java.util.stream.Collectors.toMap(Draft::id,Draft::contextId)),compilerBases);
+            boolean hierarchyIncomplete = observationIncomplete
+                    || (conditionalIncomplete && !selectedNativeHierarchyComplete) || !unresolved.isEmpty();
             boolean localEvidenceIncomplete = observationIncomplete || (conditionalIncomplete && !allUnitsDeclared);
 
             Map<String,List<String>> declarationOwners = new HashMap<>();
@@ -450,7 +480,7 @@ public final class ClangCppObserver implements SourceObserver {
                 return fact==null ? s : new NativeEvidence.Signature(s.contextId(),s.memberKey(),s.parameters(),s.receiverQualifiers(),fact.returnType());
             }).toList();
 
-            String evidencePath = relativePath(root, files.get(0));
+            String evidencePath = relativePath(root, initialUnits.isEmpty()?files.get(0):initialUnits.get(0));
             diagnostics.add(new ObservationDiagnostic(
                     DiagnosticKind.EVIDENCE_INCOMPLETE,
                     evidencePath,
@@ -560,6 +590,24 @@ public final class ClangCppObserver implements SourceObserver {
             }
             boolean localDefinitionsComplete=CppSourceDefinitionCoverage.complete(members,methodFacts,
                     methodPopulationComplete && noParseError,methodBodies,sourceBindings,bodiesComplete);
+            List<NativeEvidence.BuildSelection> buildSelections=new ArrayList<>();
+            Map<String,String> selectionByContext=new java.util.TreeMap<>();
+            if(nativePlan!=null)for(var world:nativePlan.worlds().values()) {
+                var selected=CppConfiguredTargetSelection.select(dependencyInputs.configuredBuildModel(),world.configuration(),Set.of(world.targetId()));
+                String unit="cpp-configured-build/world/"+world.id();
+                String hash=Hashing.sha256(canonicalWorldIdentity(Map.of("world",world,"bindingSha256",nativePlan.bindingSha256())));
+                putUnit(unitsByPath,new SourceUnit(Language.CPP,unit+"/binding",hash));
+                putUnit(unitsByPath,new SourceUnit(Language.CPP,unit,selected.sha256()));
+                List<String> contexts=plannedByContext.entrySet().stream().filter(e->e.getValue().worldId().equals(world.id())).map(Map.Entry::getKey).sorted().toList();
+                buildSelections.add(new NativeEvidence.BuildSelection(selected.sha256(),"cpp-configured-build/cmake-codemodel-v2",selected.modelSha256(),
+                        unit,world.configuration(),List.of(world.targetId()),contexts));
+                for(String context:contexts)selectionByContext.put(context,selected.sha256());
+            } else if(targetSelection!=null) {
+                buildSelections.add(new NativeEvidence.BuildSelection(targetSelection.sha256(),"cpp-configured-build/cmake-codemodel-v2",targetSelection.modelSha256(),
+                        "cpp-configured-build/direct-target-population-v1",targetSelection.configuration(),
+                        targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).toList(),List.copyOf(sourceByContext.keySet())));
+                for(String context:sourceByContext.keySet())selectionByContext.put(context,targetSelection.sha256());
+            }
             CppNativeCorrespondenceReceipt.Result foreign=null;
             String correspondenceUnit="cpp-native-correspondence/selected-contexts-v1";
             if(batch!=null) {
@@ -569,7 +617,7 @@ public final class ClangCppObserver implements SourceObserver {
                     frames.put(context,new CppNativeCorrespondenceReceipt.Frame(result.collector().nativeDeclarationKeys,
                             result.trace().implementationFacts(),implementationCensuses.get(context)));
                 }
-                foreign=CppNativeCorrespondenceReceipt.project(root,targetSelection.sha256(),batch.receipt(),frames,declarationOwners);
+                foreign=CppNativeCorrespondenceReceipt.project(root,targetSelection.sha256(),batch.receipt(),frames,declarationOwners,selectionByContext);
                 methodBodies.addAll(foreign.bodies());sourceBindings.addAll(foreign.bindings());nativeBodyBindings.addAll(foreign.nativeBindings());
                 diagnostics.addAll(foreign.diagnostics());
                 unitsByPath.put(correspondenceUnit,new SourceUnit(Language.CPP,correspondenceUnit,Hashing.sha256(foreign.canonicalReceipt())));
@@ -589,13 +637,14 @@ public final class ClangCppObserver implements SourceObserver {
             String adapterVersion = ADAPTER_VERSION
                     + "/clang-" + canonicalToken(clang.version())
                     + "/" + canonicalToken(clang.target())
-                    + "/" + PROFILE_ID + (nativeBatchHelper!=null?"/retained-batch-v1":nativeHelper == null ? "" : "/same-pass-inputs-v1");
+                    + "/" + PROFILE_ID + (nativeBatchHelper!=null?(nativePlan==null?"/retained-batch-v1":"/retained-world-batch-v2"):nativeHelper == null ? "" : "/same-pass-inputs-v1");
             // This is the recorded configuration/byte subset, not a claim of closed
             // native runtime, filesystem metadata, clock or negative-probe inputs.
             String recordedInputs = JSON.writeValueAsString(unitsByPath.values().stream()
                     .sorted(Comparator.comparing(SourceUnit::path)).toList());
             List<NativeEvidence.RoleReceipt> inputRoles = CppInputRoles.retain(
-                    root, physicalHashes, unitsByPath, sourceByContext, associatedInputs, dependencyInputs);
+                    root, physicalHashes, unitsByPath, sourceByContext, associatedInputs, dependencyInputs,
+                    nativePlan==null?null:declaredByContext);
             Map<String, List<NativeEvidence.RoleReceipt>> rolesByContext = inputRoles.stream()
                     .collect(java.util.stream.Collectors.groupingBy(NativeEvidence.RoleReceipt::contextId));
             String recordedInputsDigest = Hashing.sha256(recordedInputs);
@@ -603,21 +652,29 @@ public final class ClangCppObserver implements SourceObserver {
             for (var context : sourceByContext.entrySet()) {
                 List<Draft> contextual = byContext.getOrDefault(context.getKey(), List.of());
                 domains.add(new NativeEvidence.Domain(context.getKey(), Language.CPP,
-                        dependencyInputs.contextForSourcePath(context.getValue()) == null
+                        !declaredByContext.containsKey(context.getKey())
                                 ? NativeEvidence.MeasurementMode.SOURCE_ONLY : NativeEvidence.MeasurementMode.SELECTED_BUILD,
                         NativeEvidence.View.SOURCE_DECLARATIONS,
                         Hashing.sha256(context.getKey() + "\0physical-input-roles-v1\0" + recordedInputsDigest
                                 + "\0" + JSON.writeValueAsString(rolesByContext.getOrDefault(context.getKey(), List.of()))
                                 + (invocationByContext.containsKey(context.getKey()) ? "\0" + JSON.writer()
                                     .with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
-                                    .writeValueAsString(invocationByContext.get(context.getKey())) : "")),
+                                    .writeValueAsString(invocationByContext.get(context.getKey())) : "")
+                                + (languageModes.containsKey(context.getKey()) ? "\0cpp-language-mode-v1\0"
+                                    + JSON.writeValueAsString(languageModes.get(context.getKey())) : "")),
                         "Clang invocation for " + context.getValue()
                                 + (invocationByContext.containsKey(context.getKey())
                                     ? "; same-pass source-buffer hashes, file metadata, loaded images and actual builtin literals"
                                     : "; recorded configuration/compiler/byte subset")
                                 + "; full environment/filesystem probe and role closure unverified"
                                 + (localDefinitionsComplete ? "; complete same-invocation source-definition incidence; no link-closure claim" : "")
-                                + (targetSelection==null?"":"; explicit direct-target population (not link closure): configuration="
+                                + (nativePlan!=null?"; native participation world="+plannedByContext.get(context.getKey()).worldId()
+                                    +"; targetId="+plannedByContext.get(context.getKey()).targetId()
+                                    +"; commandId="+plannedByContext.get(context.getKey()).commandId()
+                                    +"; invocationId="+plannedByContext.get(context.getKey()).id()
+                                    +"; membershipBindingSha256="+nativePlan.bindingSha256()
+                                    +"; selectionSha256="+selectionByContext.get(context.getKey())
+                                    :targetSelection==null?"":"; explicit direct-target population (not link closure): configuration="
                                     +JSON.writeValueAsString(targetSelection.configuration())+"; targetIds="
                                     +JSON.writeValueAsString(targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).toList())
                                     +"; selectionSha256="+targetSelection.sha256()),
@@ -627,14 +684,14 @@ public final class ClangCppObserver implements SourceObserver {
             List<NativeEvidence.DefinitionCorrespondence> correspondences=new ArrayList<>();
             if(foreign!=null) {
                 Map<String,NativeEvidence.Domain> indexed=new HashMap<>();for(var domain:domains)indexed.put(domain.contextId(),domain);
-                for(var match:foreign.matches())correspondences.add(new NativeEvidence.DefinitionCorrespondence(targetSelection.sha256(),
+                for(var match:foreign.matches())correspondences.add(new NativeEvidence.DefinitionCorrespondence(selectionByContext.get(match.targetContext()),
                         match.sourceContext(),match.sourceMember(),indexed.get(match.sourceContext()).inputIdentitySha256(),
                         match.targetContext(),match.targetMember(),indexed.get(match.targetContext()).inputIdentitySha256(),
                         match.usr(),match.usr(),NativeEvidence.CorrespondenceMechanism.CPP_GUARDED_IMPORT,correspondenceUnit,
                         unitsByPath.get(correspondenceUnit).sha256()));
             }
             return new Observation(
-                    targetSelection==null?"15":"16",
+                    languageModes.isEmpty()?(targetSelection==null?"15":"16"):"17",
                     ADAPTER_ID,
                     adapterVersion,
                     List.copyOf(allowed),
@@ -650,11 +707,8 @@ public final class ClangCppObserver implements SourceObserver {
                     new NativeEvidence.Bundle(domains, inputRoles, nativeInvocations, nativeBases,
                             nativeSignatures, nativeLookups, nativeBodyBindings, domains.stream()
                                     .map(domain -> ToolRuntimeEvidence.reported(domain.contextId(), toolPolicy)).toList(),
-                            targetSelection==null?List.of():List.of(new NativeEvidence.BuildSelection(
-                                    targetSelection.sha256(),"cpp-configured-build/cmake-codemodel-v2",targetSelection.modelSha256(),
-                                    "cpp-configured-build/direct-target-population-v1",targetSelection.configuration(),
-                                    targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).toList(),
-                                    domains.stream().map(NativeEvidence.Domain::contextId).toList())),correspondences));
+                            buildSelections,correspondences,
+                            List.copyOf(languageModes.values())));
         } catch (ObservationException exception) {
             throw exception;
         } catch (IOException | RuntimeException failure) {
@@ -773,6 +827,7 @@ public final class ClangCppObserver implements SourceObserver {
 
     private static void retainTrace(AnalysisResult result, List<NativeEvidence.Invocation> invocations,
                                     Map<String, NativeEvidence.Invocation> byContext,
+                                    Map<String, NativeEvidence.LanguageMode> languageModes,
                                     Map<String, NativeEvidence.Input> inputs, Map<Path, String> physicalHashes)
             throws IOException, ObservationException {
         if (result.trace() == null) return;
@@ -781,6 +836,11 @@ public final class ClangCppObserver implements SourceObserver {
             throw new ObservationException("duplicate same-pass C++ invocation context");
         }
         invocations.add(invocation);
+        if(result.trace().languageMode()!=null) {
+            var mode=result.trace().languageMode();
+            if(!mode.contextId().equals(invocation.contextId()) || languageModes.putIfAbsent(mode.contextId(),mode)!=null)
+                throw new ObservationException("duplicate or mismatched C++ language-mode context");
+        }
         for (NativeEvidence.Input input : result.trace().physicalInputs()) {
             Path physical = Path.of(input.path()).toRealPath();
             String previous = physicalHashes.putIfAbsent(physical, input.sha256());
@@ -819,14 +879,23 @@ public final class ClangCppObserver implements SourceObserver {
      * It is input evidence, not a source classifier or a semantic verdict. */
     private String recordCompilationContext(Path root, Path source, Map<String, SourceUnit> units, String compilerHash)
             throws IOException, ObservationException {
+        return recordCompilationContext(root,source,units,compilerHash,
+                dependencyInputs.contextForSourcePath(relativePath(root,source)),null);
+    }
+
+    private String recordCompilationContext(Path root,Path source,Map<String,SourceUnit> units,String compilerHash,
+            CppDependencyInputs.CppCompileContext declared,CppNativeInvocationPlan.Invocation invocation)
+            throws IOException,ObservationException {
         String relative = relativePath(root, source);
-        String path = "cpp-context/" + Hashing.sha256(relative);
-        var declared = dependencyInputs.contextForSourcePath(relative);
+        String path = "cpp-context/" + Hashing.sha256(invocation==null?relative:invocation.id());
         var execution=declared==null?null:declared.execution();
         String identity = JSON.writeValueAsString(new CompilationContextIdentity(
                 execution==null?"1":"2", relative, execution==null?".":execution.workingDirectory(),
                 declared != null,
-                clangArguments(Path.of("."), relative)));
+                declared==null?clangArguments(Path.of("."), relative):declared.arguments(Path.of("."))));
+        if(invocation!=null)identity=canonicalWorldIdentity(Map.of("context",JSON.readTree(identity),
+                "worldId",invocation.worldId(),"invocationId",invocation.id(),"commandId",invocation.commandId(),
+                "targetId",invocation.targetId(),"bindingSha256",dependencyInputs.nativePlan().bindingSha256()));
         putUnit(units, new SourceUnit(Language.CPP, path, Hashing.sha256(identity)));
         if (declared != null && declared.compiler() != null) {
             String compilerIdentity = JSON.writeValueAsString(declared.compiler());
@@ -840,6 +909,8 @@ public final class ClangCppObserver implements SourceObserver {
         var buildModel = dependencyInputs.configuredBuildModel();
         if (buildModel != null) putUnit(units, new SourceUnit(Language.CPP,
                 "cpp-configured-build/cmake-codemodel-v2", buildModel.sha256()));
+        if (dependencyInputs.capturedSpaceSha256()!=null) putUnit(units,new SourceUnit(Language.CPP,
+                "cpp-configured-build/captured-input-space-v1",dependencyInputs.capturedSpaceSha256()));
         var selected=dependencyInputs.targetSelection();
         if(selected!=null)putUnit(units,new SourceUnit(Language.CPP,
                 "cpp-configured-build/direct-target-population-v1",selected.sha256()));
@@ -853,33 +924,51 @@ public final class ClangCppObserver implements SourceObserver {
             String schemaVersion, String sourcePath, String workingDirectory,
             boolean declared, List<String> arguments) { }
 
+    // Map.of iteration order is deliberately unspecified across JVMs. Only the
+    // new native-world envelope uses this writer; preserve legacy identities.
+    static String canonicalWorldIdentity(Object value) throws com.fasterxml.jackson.core.JsonProcessingException {
+        return JSON.writer().with(com.fasterxml.jackson.databind.SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                .writeValueAsString(value);
+    }
+
+    private record AnalysisJob(Path source,String contextId,CppDependencyInputs.CppCompileContext declared,
+            CppNativeInvocationPlan.Invocation invocation) { }
     private record BatchCommand(Path source,String contextId,Path cwd,Path dependencies,
             List<String> compilerArgv,List<String> semanticArguments) { }
-    private record BatchAnalysis(Map<Path,AnalysisResult> results,CppNativeBatchReceipt.Result receipt) {
+    private record BatchAnalysis(Map<String,AnalysisResult> results,CppNativeBatchReceipt.Result receipt) {
         BatchAnalysis {results=Map.copyOf(results);}
     }
 
-    private BatchAnalysis analyzeBatch(Path root,Map<Path,String> contexts,ClangIdentity clang,String compilerHash)
+    private BatchAnalysis analyzeBatch(Path root,List<AnalysisJob> contexts,ClangIdentity clang,String compilerHash)
             throws IOException,ObservationException {
         Path scratch=Files.createTempDirectory("metamodel-clang-batch-").toRealPath();
         try {
             List<BatchCommand> commands=new ArrayList<>();List<Map<String,Object>> jobs=new ArrayList<>();
-            for(var context:contexts.entrySet()) {
-                Path source=context.getKey();var declared=dependencyInputs.contextForSourcePath(relativePath(root,source));
+            // Receipt order must follow request jobs, not sorted context hashes.
+            Map<String,String> groups=new java.util.LinkedHashMap<>();
+            for(var context:contexts) {
+                Path source=context.source();var declared=context.declared();
                 if(declared==null)throw new ObservationException("retained batch source lacks declared compilation context");
                 var execution=declared.execution();Path cwd=execution==null?root:Path.of(execution.workingDirectory());
-                List<String> semantic=new ArrayList<>(declaredClangArguments(root,source));
+                List<String> semantic=new ArrayList<>(declared.arguments(root));
                 semantic.addAll(List.of("-fsyntax-only","-fno-color-diagnostics","-Wno-pragma-once-outside-header",
                         "-x","c++","-Xclang","-ast-dump=json",execution==null?source.toString():execution.sourceOperand()));
                 Path dependencies=scratch.resolve("compiler-"+commands.size()+".d");
                 List<String> arguments=new ArrayList<>(semantic);
                 arguments.addAll(arguments.size()-3,List.of("-MD","-MF",dependencies.toString(),"-MT","observation"));
                 arguments.add(0,clangExecutable);
-                commands.add(new BatchCommand(source,context.getValue(),cwd,dependencies,List.copyOf(arguments),List.copyOf(semantic)));
-                jobs.add(Map.of("contextId",context.getValue(),"workingDirectory",cwd.toString(),"arguments",arguments));
+                commands.add(new BatchCommand(source,context.contextId(),cwd,dependencies,List.copyOf(arguments),List.copyOf(semantic)));
+                Map<String,Object> job=new java.util.TreeMap<>(Map.of("contextId",context.contextId(),"workingDirectory",cwd.toString(),"arguments",arguments));
+                if(context.invocation()!=null) {
+                    groups.put(context.contextId(),context.invocation().worldId());
+                    job.put("correspondenceGroupId",context.invocation().worldId());
+                }
+                jobs.add(job);
             }
             Path request=scratch.resolve("request.json"),output=scratch.resolve("result.json"),errors=scratch.resolve("worker.stderr");
-            JSON.writeValue(request.toFile(),Map.of("projectRoot",root.toString(),"jobs",jobs));
+            Map<String,Object> payload=new java.util.TreeMap<>(Map.of("projectRoot",root.toString(),"jobs",jobs));
+            if(!groups.isEmpty())payload.put("format","cpp-retained-batch-request-v2");
+            JSON.writeValue(request.toFile(),payload);
             ProcessBuilder builder=new ProcessBuilder(nativeBatchHelper.toString(),request.toString(),output.toString())
                     .directory(root.toFile()).redirectError(errors.toFile()).redirectOutput(scratch.resolve("worker.stdout").toFile());
             try(var lease=ToolProcessLease.start(builder,toolPolicy)) {
@@ -891,8 +980,9 @@ public final class ClangCppObserver implements SourceObserver {
                     Thread.currentThread().interrupt();throw new ObservationException("C++ retained batch interrupted",interrupted);
                 } catch(IOException failure){throw lease.classify(failure);}
             }
-            var receipt=CppNativeBatchReceipt.read(output,root,commands.stream().map(BatchCommand::contextId).toList());
-            Map<Path,AnalysisResult> results=new java.util.LinkedHashMap<>();
+            var receipt=groups.isEmpty()?CppNativeBatchReceipt.read(output,root,commands.stream().map(BatchCommand::contextId).toList())
+                    :CppNativeBatchReceipt.read(output,root,groups);
+            Map<String,AnalysisResult> results=new java.util.LinkedHashMap<>();
             for(int index=0;index<commands.size();index++) {
                 var command=commands.get(index);var job=receipt.jobs().get(index);
                 AstCollector collector=new AstCollector(root,command.cwd(),command.contextId(),new ArrayList<>());
@@ -908,7 +998,7 @@ public final class ClangCppObserver implements SourceObserver {
                     trace=CppNativeInputReceipt.read(job.inputPath(),new CppNativeInputReceipt.Context(command.contextId(),clangExecutable,
                             clang.version(),clang.target(),nativeBatchHelper,command.cwd(),command.source(),command.compilerArgv(),command.semanticArguments(),compilerHash));
                 }
-                results.put(command.source(),new AnalysisResult(job.exitCode(),Files.readString(job.errorPath(),StandardCharsets.UTF_8),
+                results.put(command.contextId(),new AnalysisResult(job.exitCode(),Files.readString(job.errorPath(),StandardCharsets.UTF_8),
                         collector,dependencies,dependencyError,malformed,trace));
             }
             return new BatchAnalysis(results,receipt);
@@ -1590,8 +1680,11 @@ public final class ClangCppObserver implements SourceObserver {
                 activeSink.access(access);
             }
 
-            if (file != null && "NamespaceDecl".equals(kind) && !name.isBlank()) {
-                childScope = append(scope, name);
+            if (file != null && "NamespaceDecl".equals(kind)) {
+                // Reopened unnamed namespace blocks share one lexical scope in
+                // this translation unit. Keep Clang's namespace component;
+                // source lines or filenames would invent distinct namespaces.
+                childScope = append(scope, name.isBlank() ? "(anonymous namespace)" : name);
             } else if (file != null && isFunctionLike(kind) && !name.isBlank()) {
                 int line = sourceLine(location, file);
                 childScope = append(scope, "<" + name + "@" + Math.max(1, line) + ">");

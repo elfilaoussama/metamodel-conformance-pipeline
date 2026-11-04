@@ -15,6 +15,9 @@ import javax.lang.model.element.Element;
 import javax.lang.model.element.ElementKind;
 import javax.lang.model.element.ExecutableElement;
 import javax.lang.model.element.TypeElement;
+import javax.lang.model.element.VariableElement;
+import javax.lang.model.type.TypeMirror;
+import javax.lang.model.util.ElementFilter;
 import javax.lang.model.util.Elements;
 import javax.lang.model.util.Types;
 import javax.tools.Diagnostic;
@@ -71,7 +74,7 @@ final class JavacInheritedMemberObserver {
                     root, compilationContext, grouping.filesByContext(), inputs)) {
                 result = context.complete()
                         ? observeCompilationContext(root, entry.getValue(), scopedClassifiers, scopedMembers,
-                                upstreamClassifiers, upstreamMembers, context.options())
+                                upstreamClassifiers, upstreamMembers, context)
                         : new Result(false, Map.of(), context.diagnostics());
             } catch (IOException | RuntimeException failure) {
                 result = Result.incomplete(relativePath(root, entry.getValue().get(0)),
@@ -110,26 +113,18 @@ final class JavacInheritedMemberObserver {
             List<MemberObservation> members,
             List<ClassifierObservation> productionClassifiers,
             List<MemberObservation> productionMembers,
-            List<String> compilerOptions) {
+            JavacCompilationContext compilationContext) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
             return Result.incomplete(relativePath(root, files.get(0)),
                     "JDK compiler is unavailable; inherited-member evidence was not observed");
         }
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
-                diagnostics, java.util.Locale.ROOT, java.nio.charset.StandardCharsets.UTF_8)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
-            JavacTask task = (JavacTask) compiler.getTask(
-                    null,
-                    fileManager,
-                    diagnostics,
-                    compilerOptions,
-                    null,
-                    sources);
-            List<CompilationUnitTree> parsed = new ArrayList<>();
-            task.parse().forEach(parsed::add);
-            task.analyze();
+        try (JavacSourceWorld world = JavacSourceWorld.open(root, files, compilationContext, compiler)) {
+            diagnostics = world.diagnostics();
+            JavacTask task = world.task();
+            List<CompilationUnitTree> parsed = world.parsed();
+            world.analyze();
             if (diagnostics.getDiagnostics().stream()
                     .anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR)) {
                 return new Result(false, Map.of(), evidenceDiagnostics(root, files, diagnostics));
@@ -191,9 +186,19 @@ final class JavacInheritedMemberObserver {
                         + classifier.qualifiedName() + " at line " + classifier.startLine());
             }
             LinkedHashSet<String> inherited = new LinkedHashSet<>();
+            List<VariableElement> hierarchyFields = new ArrayList<>();
+            collectHierarchyFields(type, types, new java.util.HashSet<>(), hierarchyFields);
             for (Element element : elements.getAllMembers(type)) {
                 MemberKind kind = memberKind(element.getKind());
                 if (kind == null) {
+                    continue;
+                }
+                // getAllMembers can retain hidden superclass fields. Their
+                // availability through a cast/super access is not inheritance.
+                // Include intermediate declarations, even private ones omitted
+                // from the final type's member enumeration.
+                if (element instanceof VariableElement && hierarchyFields.stream()
+                        .anyMatch(hider -> elements.hides(hider, element))) {
                     continue;
                 }
                 if (JavacImplicitMembers.isObjectLookupOnInterface(type, element, elements)) {
@@ -260,6 +265,17 @@ final class JavacInheritedMemberObserver {
                     classifier.id(), inherited.stream().sorted().toList());
         }
         return new Result(true, Map.copyOf(inheritedByClassifier), List.of());
+    }
+
+    private static void collectHierarchyFields(TypeElement type, Types types,
+            Set<TypeElement> visited, List<VariableElement> fields) {
+        if (!visited.add(type)) return;
+        fields.addAll(ElementFilter.fieldsIn(type.getEnclosedElements()));
+        for (TypeMirror parent : types.directSupertypes(type.asType())) {
+            if (types.asElement(parent) instanceof TypeElement ancestor) {
+                collectHierarchyFields(ancestor, types, visited, fields);
+            }
+        }
     }
 
     private static List<ClassifierObservation> concat(

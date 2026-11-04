@@ -1,5 +1,6 @@
 """Bounded Docker execution. Lifecycle facts never grant semantic capabilities."""
 import os
+import re
 import signal
 import subprocess
 import time
@@ -20,6 +21,12 @@ def _run_process(command,log,seconds):
                 except ProcessLookupError:pass
             process.wait()
             return dict(command=command,exit=124,seconds=round(time.monotonic()-before,3),timedOut=True)
+        except BaseException:
+            if process.poll() is None:
+                try:os.killpg(process.pid,signal.SIGKILL)
+                except ProcessLookupError:pass
+            process.wait()
+            raise
     return dict(command=command,exit=code,seconds=round(time.monotonic()-before,3))
 
 
@@ -46,9 +53,15 @@ def _remove_container(name,seconds=15):
     return dict(status='UNCONFIRMED',name=name,seconds=round(time.monotonic()-before,3),attempts=attempts)
 
 
-def run_stage(base,image,arguments,log,seconds):
-    name='conformance-provider-'+uuid.uuid4().hex
-    before=time.monotonic();result=_run_process(base+['--name',name,image]+arguments,log,seconds)
+def run_stage(base,image,arguments,log,seconds,*,container_name=None):
+    name=container_name or 'conformance-provider-'+uuid.uuid4().hex
+    if not re.fullmatch(r'conformance-provider-[0-9a-f]{32}',name) or '--name' in base:
+        raise ValueError('unique owned container name required')
+    before=time.monotonic()
+    try:result=_run_process(base+['--name',name,image]+arguments,log,seconds)
+    except BaseException:
+        _remove_container(name)
+        raise
     if result.get('timedOut'):
         # --rm may already be removing a completed container. Preserve124 either way.
         result['cleanup']=_remove_container(name)

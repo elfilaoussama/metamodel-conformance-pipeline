@@ -27,7 +27,7 @@ final class JavaContextualObservation {
     }
 
     static Observation mergeQualifiedFrames(Map<String, Observation> frames) {
-        return aggregate(frames, Map.of(), false);
+        return metamodel.conformance.pipeline.adapter.QualifiedObservationMerger.merge(frames);
     }
 
     private static Observation aggregate(Map<String, Observation> frames,

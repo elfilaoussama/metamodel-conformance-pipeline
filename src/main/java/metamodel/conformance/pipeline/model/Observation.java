@@ -59,11 +59,13 @@ public record Observation(
                 units, classifiers, members, methodBodies, implementationBindings,
                 unresolvedParents, diagnostics);
         nativeEvidence = nativeEvidence == null ? NativeEvidence.Bundle.empty() : nativeEvidence;
-        if (!nativeEvidence.reportedInputs().isEmpty() && !Set.of("15","16").contains(schemaVersion)) {
+        if (!nativeEvidence.reportedInputs().isEmpty() && !Set.of("15","16","17").contains(schemaVersion)) {
             throw new IllegalArgumentException("reported inventories require schema15 or newer");
         }
         if((!nativeEvidence.buildSelections().isEmpty() || !nativeEvidence.definitionCorrespondences().isEmpty())
-                && !schemaVersion.equals("16"))throw new IllegalArgumentException("cross-context provenance requires schema16");
+                && !Set.of("16","17").contains(schemaVersion))throw new IllegalArgumentException("cross-context provenance requires schema16 or newer");
+        if (!nativeEvidence.languageModes().isEmpty() && !schemaVersion.equals("17"))
+            throw new IllegalArgumentException("typed language modes require schema17");
         if (!nativeEvidence.domains().isEmpty()) validateNativePopulation(nativeEvidence, units, classifiers, members);
         if (!unresolvedParents.isEmpty() && completeEvidence.contains(EvidenceKind.HIERARCHY)) {
             throw new IllegalArgumentException("hierarchy evidence cannot be complete with unresolved parents");

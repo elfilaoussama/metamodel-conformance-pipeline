@@ -34,7 +34,7 @@ import java.util.TreeSet;
 /** Adds dependency bytecode evidence under exact build-observed compilation contexts. */
 public final class JavaDependencyAwareSourceObserver implements SourceObserver {
     public static final String ADAPTER_ID = JavaImplementationSourceObserver.ADAPTER_ID;
-    public static final String ADAPTER_VERSION = "1.28.0";
+    public static final String ADAPTER_VERSION = "1.33.0";
 
     private final JavaDependencyInputs dependencyInputs;
     private final SourceObserver delegate;
@@ -116,6 +116,15 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
     private record DecodedFrame(Observation observation, JavacDirectParentNames.Result declarations) { }
 
     private DecodedFrame decodeFrame(Path sourceRoot, Set<String> externalParents) throws ObservationException {
+        if (!decodeContextualFrames) return decodeFrameWithoutReuse(sourceRoot, externalParents);
+        try (var scope = JavacSourceWorld.scope()) {
+            return decodeFrameWithoutReuse(sourceRoot, externalParents);
+        } catch (IOException failure) {
+            throw new ObservationException("Java compiler-world input verification/cleanup failed", failure);
+        }
+    }
+
+    private DecodedFrame decodeFrameWithoutReuse(Path sourceRoot, Set<String> externalParents) throws ObservationException {
         Observation base = delegate.observe(sourceRoot, externalParents);
         try {
             Path root = sourceRoot.toRealPath(LinkOption.NOFOLLOW_LINKS);
@@ -316,7 +325,7 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
                                     root, entry.getValue(), scopedClassifiers, scopedMembers,
                                     upstreamClassifiers, upstreamMembers,
                                     contextSupport,
-                                    List.copyOf(contextSupportMembers.values()), javac.options())
+                                    List.copyOf(contextSupportMembers.values()), javac)
                             : JavacDependencyEvidenceObserver.Result.incomplete(javac.diagnostics());
                 }
                 dependencyEvidenceComplete &= observed.complete();
@@ -653,6 +662,9 @@ public final class JavaDependencyAwareSourceObserver implements SourceObserver {
         identity.put("module", context.moduleKey());
         identity.put("sources", context.sourceRoots());
         identity.put("generatedSources", context.generatedSourceRoots());
+        if (context.exactSourcePopulation() != null) {
+            identity.put("exactSourcePopulation", context.exactSourcePopulation().stream().sorted().toList());
+        }
         identity.put("excludedSources", inputs.excludedSources(context.id()).stream().sorted().toList());
         identity.put("declaredNoncompiledSources", inputs.noncompiledSources().stream().sorted().toList());
         identity.put("outputs", context.outputs().stream().map(Path::toString).toList());

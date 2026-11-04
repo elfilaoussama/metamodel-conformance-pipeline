@@ -69,7 +69,7 @@ final class JavacImplementationObserver {
                 } else {
                     result = observeCompilationContext(
                             root, entry.getValue(), scopedClassifiers, scopedMembers,
-                            context.options());
+                            context);
                 }
             } catch (IOException | RuntimeException failure) {
                 result = Result.incomplete(
@@ -130,7 +130,7 @@ final class JavacImplementationObserver {
             List<Path> files,
             List<ClassifierObservation> classifiers,
             List<MemberObservation> members,
-            List<String> compilerOptions) {
+            JavacCompilationContext compilationContext) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
             return Result.incomplete(relativePath(root, files.get(0)),
@@ -138,21 +138,12 @@ final class JavacImplementationObserver {
         }
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
         JavacMethodBodyCensus census = JavacMethodBodyCensus.unavailable();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
-                diagnostics, java.util.Locale.ROOT, java.nio.charset.StandardCharsets.UTF_8)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
-            JavacTask task = (JavacTask) compiler.getTask(
-                    null,
-                    fileManager,
-                    diagnostics,
-                    compilerOptions,
-                    null,
-                    sources);
-            List<CompilationUnitTree> parsed = new ArrayList<>();
-            task.parse().forEach(parsed::add);
-            census = JavacMethodBodyCensus.capture(root, files, parsed, Trees.instance(task),
-                    diagnostics.getDiagnostics().stream().anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR));
-            task.analyze();
+        try (JavacSourceWorld world = JavacSourceWorld.open(root, files, compilationContext, compiler)) {
+            diagnostics = world.diagnostics();
+            JavacTask task = world.task();
+            List<CompilationUnitTree> parsed = world.parsed();
+            census = world.census();
+            world.analyze();
             if (diagnostics.getDiagnostics().stream()
                     .anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR)) {
                 return new Result(false, Map.of(), Map.of(),

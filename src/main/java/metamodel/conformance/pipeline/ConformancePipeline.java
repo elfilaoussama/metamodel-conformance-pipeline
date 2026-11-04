@@ -13,6 +13,8 @@ import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.util.ArtifactLimits;
 import metamodel.conformance.pipeline.util.AtomicFiles;
 import metamodel.conformance.pipeline.util.Hashing;
+import metamodel.conformance.pipeline.invariant.InvariantProfile;
+import metamodel.conformance.pipeline.alloy.AlloyExecutionConfig;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -31,13 +33,21 @@ public final class ConformancePipeline {
     private final AlloyInvariantEvaluator runner;
 
     public ConformancePipeline(SourceObserver observer) {
-        this(observer, new ExactAlloyEncoder(), new AlloyInvariantEvaluator());
+        this(observer, InvariantProfile.load());
+    }
+
+    public ConformancePipeline(SourceObserver observer, InvariantProfile profile) {
+        this(observer, new ExactAlloyEncoder(profile),
+                new AlloyInvariantEvaluator(AlloyExecutionConfig.frozen(), profile));
     }
 
     ConformancePipeline(SourceObserver observer, ExactAlloyEncoder encoder, AlloyInvariantEvaluator runner) {
         this.observer = observer;
         this.encoder = encoder;
         this.runner = runner;
+        if (!encoder.profileIdentity().equals(runner.profileIdentity())) {
+            throw new IllegalArgumentException("encoder and evaluator invariant profiles differ");
+        }
     }
 
     public PipelineResult analyze(Path sourceRoot, Path outputDirectory, Set<String> externalParents)
@@ -69,6 +79,7 @@ public final class ConformancePipeline {
                 Hashing.sha256(observationPath),
                 ALLOY_FILE,
                 Hashing.sha256(alloyPath),
+                runner.profileIdentity(),
                 runner.executionConfig(),
                 observation.diagnostics(),
                 decisions);

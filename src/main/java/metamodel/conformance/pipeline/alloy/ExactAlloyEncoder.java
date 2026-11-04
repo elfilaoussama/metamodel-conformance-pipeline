@@ -11,10 +11,8 @@ import metamodel.conformance.pipeline.model.MethodAbstraction;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.model.SourceUnit;
 import metamodel.conformance.pipeline.util.Hashing;
+import metamodel.conformance.pipeline.invariant.InvariantProfile;
 
-import java.io.IOException;
-import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -26,6 +24,15 @@ import java.util.stream.Stream;
 
 public final class ExactAlloyEncoder {
     private static final int SIGNATURE_CHUNK_SIZE = 128;
+    private final InvariantProfile profile;
+
+    public ExactAlloyEncoder() { this(InvariantProfile.load()); }
+
+    public ExactAlloyEncoder(InvariantProfile profile) {
+        this.profile = java.util.Objects.requireNonNull(profile, "invariant profile");
+    }
+
+    public InvariantProfile.Identity profileIdentity() { return profile.identity(); }
 
     public String encode(Observation observation) {
         Map<String, String> nameAtoms = tokens(observation.members().stream()
@@ -128,7 +135,7 @@ public final class ExactAlloyEncoder {
         exactField(alloy, "implementer", bindingAtoms, implementerEdges(observation));
         exactField(alloy, "target", bindingAtoms, targetEdges(observation));
         exactField(alloy, "body", bindingAtoms, bodyEdges(observation));
-        alloy.append(loadRules()).append('\n');
+        alloy.append(profile.alloyRules()).append('\n');
         alloy.append("run ObservationConsistency ")
                 .append(scope(observation, nameAtoms.size(), typeAtoms.size(), packageAtoms.size(), positionCount))
                 .append('\n');
@@ -316,12 +323,4 @@ public final class ExactAlloyEncoder {
                 + " TypeToken, exactly " + packages + " PackageToken, exactly " + positions + " PositionToken";
     }
 
-    private static String loadRules() {
-        try (InputStream input = ExactAlloyEncoder.class.getResourceAsStream("/alloy/invariants.als")) {
-            if (input == null) throw new IllegalStateException("bundled Alloy invariants are missing");
-            return new String(input.readAllBytes(), StandardCharsets.UTF_8);
-        } catch (IOException failure) {
-            throw new IllegalStateException("cannot load Alloy invariants", failure);
-        }
-    }
 }

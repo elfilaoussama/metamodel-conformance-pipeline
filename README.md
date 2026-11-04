@@ -1,142 +1,95 @@
-# Conformance pipeline: production source candidate
+# Metamodel Conformance Pipeline
 
-This branch distributes implementation and runtime providers only. Regression
-tests, experiment fixtures and generated research evidence remain in the local
-validated development history, as requested. It is a candidate distribution,
-not a claim of full research readiness or a promotion of main.
+A Java/Python/C++ source-observation and formal-conformance engine. Language
+observers record facts and evidence in a shared, versioned EMF model. Registered
+Alloy rules evaluate those facts and return source-linked witnesses.
 
-Build on Linux with JDK 17 and Maven: `mvn package`.
-Run `java -jar target/metamodel-conformance-pipeline-next-0.15.0-rc.50.jar --help`
-for supported commands. The Maven/Gradle/CMake/Python provider scripts are in
-`scripts/`; retain the manifest's accompanying cache while observing a project.
-Providers require their documented build tools and container runtime.
+This distribution is the validated **0.15.0-rc.64** engineering checkpoint.
+It replaces the earlier multi-module prototype. It is a release candidate;
+whole-project semantic completeness and publication readiness remain open.
+The unfinished native-Java rc65 route is not included.
 
-Producer rc.33 passed 413 tests in a fresh local build. Three tiny paired
-C++ families retain all 17 formal relations and all 11 complete decision/witness
-sets with native controls and replay. Context-qualified physical input roles
-are retained without guessing header ownership or generation. Source-only roles
-remain unknown; TARGET records only the explicitly declared context operand.
-Build-backed C++ corridors now use the recorded immutable provider image and
-configured filesystem layout. Supply CPP_OBSERVER_JAVA_HOME as an existing Linux
-Java installation compatible with the provider image. Missing runtime/legacy
-recipe cases fail explicitly. Local provider/corridor and deadline controls pass.
-The frozen JAR SHA256 is
-`d186c777a55681a830c7dcc35418e87a58cfb7533a49f2448cb7c31a9bce61f6`.
-Python remains isolated/no-site. P0, schemas, registry and unrelated packaged
-payloads are unchanged. Full input provenance and research readiness remain open.
-No new evidence completeness capabilities were enabled. Unknown or unsupported
-semantics remain explicit; capsule replay verifies recorded observations, not
-the fidelity of arbitrary source code.
+```text
+source + declared build inputs -> language observer -> canonical observation.xmi
+    -> rule registry + Alloy model -> decisions + witnesses -> replay capsule
+```
 
-The optional C++ same-pass helper source is
-`src/main/resources/native/cpp-observation-helper.cpp`. It requires compatible
-Clang/LLVM 14 development libraries and a separately built native executable;
-enable it with `-Dmetamodel.conformance.cpp.nativeHelper=/absolute/helper/path`
-before `-jar`. The ordinary backend does not provide that tracing evidence.
+## Build and quick start
 
-Provider script follow-up: optional CPP_OBSERVER_NATIVE_HELPER forwards a
-compatible same-pass helper into the C++ provider image; invalid configured
-helpers fail without fallback. Generated Java output repeat checks now bind
-relative file paths and bytes through a shared digest. Four tiny real-provider
-generator fixtures pass. These script gates do not certify whole environment
-closure or scientific study readiness.
+Use JDK 17 and Maven 3.9+. Check that `JAVA_HOME` points to JDK 17.
 
-Python resolved-environment corridors require PYTHON_OBSERVER_JAVA_HOME as an
-existing compatible Linux Java home. Provider installation/inventory use one
-immutable image; lock, manifest and runtime receipts are retained. The runner
-checks the actual interpreter before observation and reconciles observer bytes
-before replay. These measurements remain SOURCE_ONLY; dependency metadata does
-not certify imported type graphs. No-lock fallback remains diagnostic. C++ and
-Python now share bounded container execution and forced deadline cleanup.
-Small actual locked-corridor and missing-runtime controls pass; full research
-readiness remains open.
+```bash
+mvn package
+PIPELINE_JAR=target/metamodel-conformance-pipeline-next-0.15.0-rc.64.jar
+mkdir -p build/example-source
+printf '%s\n' 'class Example { int value; }' > build/example-source/Example.java
+java -jar "$PIPELINE_JAR" --help
+java -jar "$PIPELINE_JAR" analyze \
+  --source build/example-source --output build/example-result
+java -jar "$PIPELINE_JAR" verify-capsule \
+  --capsule build/example-result/verification-capsule.json
+```
 
-rc34 rejects intermediate as well as final artifact symlinks and checks actual
-capsule-directory containment. The producer passes 413 regression tests. This
-fix does not certify safety against concurrent hostile filesystem replacement
-or independent source provenance; full research readiness remains open.
+This public source distribution omits regression tests and research artifacts at
+the project owner's request. A successful `mvn package` here establishes a build,
+not a test-suite pass. The exact rc64 development checkpoint passed 679 tests
+with zero failures, errors or skips, plus controlled reference/replay and rule
+identity checks; those controls and receipts are retained in local development.
 
-rc35 preserves declaration owners of reached binding target members during
-projection, repairing a reproduced false-conformance case. All 422 regression
-tests pass. Source fidelity and full research readiness remain separate gates.
+## Results and scope
 
-rc36 matches ordered overload signatures and exact method-body source offsets.
-All 423 regression tests pass; the original same-line fixture passes native
-checks, full-witness comparison and replay. Full research readiness remains open.
+| Decision | Meaning |
+|---|---|
+| `CONFORMANT` | Required evidence is available and the selected rule has no violation witnesses. |
+| `NON_CONFORMANT` | The selected rule has one or more violation witnesses. |
+| `NOT_EVALUATED` | Required evidence is unavailable or evaluation failed. |
 
-rc37 adds independently checked guarded Python C3 lookup and inherited-member
-projection. Dynamic namespace, metaclass and unsupported synthesized/execution
-cases remain unevaluated. Implicit plain-function __new__ staticness is preserved.
-All 433 integration tests pass; full research readiness remains open.
+Conformance is relative to the declared source/build population and selected
+rule profile. A successful capsule replay checks the recorded observation and
+formal result; it does not independently prove that an arbitrary repository was
+faithfully extracted. Unsupported language features and unresolved dependencies
+remain explicit. A source-only run does not establish full build ownership.
 
-rc40 admits compiler-selected C++ inherited membership for explicitly complete
-contextual lookup populations. Ambiguous, dependent and unsupported scopes stay
-unevaluated. Fixed P0 remains unchanged; language/policy disagreements remain
-findings. Validated with 457 integration tests, seventeen small native/provider/
-formal/replay controls and a seeded overlap. Full research readiness remains open.
+Java uses Spoon and javac evidence; Python uses guarded source/native observation;
+C++ build-backed observation requires a compatible Clang helper and qualified
+compilation context. Some provider/recovery tools require Linux and Docker.
+Use each tool's documented arguments and qualified toolchain profile. Merely
+installing a newer compiler does not qualify a new observation world.
 
-rc41 bounds launched C++/Python tool subprocesses during streaming reads and waits.
-Timeouts and interruption are execution failures, never semantic findings.
-Configured policy is retained separately from semantic capabilities in schema15.
-Validated with 467 integration tests and eight small semantic preservation controls
-plus four hanging-tool controls. Full stage deadlines, OS containment and complete
-research readiness remain open.
+## Replaceable rules
 
-rc42 retains explicit method-body syntax independently of successful Java analysis.
-Interface Object lookup carriers do not become inherited source declarations or override ancestors.
-Explicit superinterface declarations and normal class/Object inheritance remain observed.
-Validated with 477 current regression cases across a focused package and bounded Maven shards,
-twelve small native/source/reference/replay cases (including a repeat) and two model-fault controls.
-Controls use serialized analysis with identity-bound JVM class metadata sharing; native compiler, reference and replay remain separate.
-Cold-process startup exceeded its limit on one case; general runtime and three-language F3/F4 research readiness remain open.
+The bundled eleven-rule profile is a regression/research baseline. Observers do
+not contain rule verdict logic. Conditions over existing facts belong in the
+registry and Alloy resources; additional concepts require a versioned observation
+extension. New profiles need positive, negative and unknown controls, and their
+partition assumptions must be validated.
 
-rc43 retains Python class-method source suites independently of runtime binding.
-Guarded vanilla classes admit explicit implementation bindings and concrete-class evidence.
-Compiler scope errors retain positive spans while withholding completeness; target code is not executed by extraction.
-Validated with 486 current regression cases and twelve small native/full-reference/replay cases.
-Legal abstract/static callable bodies and unknown transformations remain distinct from fixed-P0 findings.
-ABC/custom-metaclass binding, C++ cross-TU closure and full research-release readiness remain open.
+Capsule format **8** binds the exact registry and Alloy-rule bytes and the formal
+engine profile. Replay rejects changed profiles before evaluating artifacts.
+Older v7 capsules require their original producer; this release does not silently
+upgrade them. Completed artifacts are published with the capsule written last.
 
-rc44 captures configured CMake File API target facts in ordered-v5 manifests.
-The configured-model digest participates in C++ compiler-world identity; exact generated capture bytes are checked before selected-build execution.
-Declared target dependencies and link fragments do not certify implementation or consumed-linker-input closure.
-Validated with 492 current JVM tests, fourteen script controls, three small actual-provider/native/full-reference/replay cases and a complete typed repeat with source timestamps preserved.
-A paired accepted/candidate check preserves existing source facts and all eleven decision statuses.
-C++ cross-TU body/binding admission and the full research-release gates remain open.
+See [the invariant contract](docs/invariant-pipeline.md) and
+[the observation architecture decision](docs/decisions/0001-observation-contract.md).
 
-rc45 retains native C++ source bodies independently from declaration correspondence.
-Positive same-invocation canonical bindings and native classifier abstraction are retained; complete selected-program implementation bindings remain unavailable.
-Body spans use consumed source bytes; macro spans and dependent abstraction stay unknown.
-Validated with 500 current JVM tests and thirteen small full-reference/replay controls.
-Whole research-release gates remain open.
+## Provider and reproduction tools
 
-rc46 supports an explicit configured C++ target source population.
-Pass an optional JSON file with configuration and targetNames as the third resolver argument.
-Dependency edges do not select sources automatically; excluded translation units and headers do not acquire fallback compiler worlds.
-Selection is retained in provenance and context identity. This is direct source membership, not transitive link closure or cross-TU binding completeness.
-Validated with 513 current JVM tests, 23 script controls, three actual-provider/native/full-reference/replay selected cases, a typed repeat and accepted/candidate legacy preservation.
-Whole research-release gates remain open.
+- `scripts/resolve-java-dependencies.sh`, `resolve-maven-dependencies.sh` and
+  `resolve-gradle-dependencies.sh`: declared Java compilation contexts.
+- `scripts/resolve-cpp-dependencies.sh` and `run-cpp-selected-build.py`:
+  explicitly selected CMake/Clang contexts.
+- `scripts/resolve-python-dependencies.sh` and `run-python-resolved-environment.py`:
+  locked Python environment corridors with explicit source-only boundaries.
+- [Sequential batches](scripts/batch/README.md): bounded execution and opt-in recovery.
+- `scripts/recorded-input-archive.py` and `reproduction-bundle.py`: integrity-checked
+  declared input retention/restoration, distinct from universal input-consumption proof.
+- [Maven cache profiles](scripts/maven-cache/README.md) and
+  `scripts/maven-frames/`: version-qualified native metadata/input capture.
 
-rc47 adds optional retained-context C++ definition correspondence under an explicit direct-target source population.
-Use --native-batch-helper with an executable built against the matching Clang14 frontend; the source worker is bundled at src/main/resources/native/cpp-batch-observation-helper.cpp beside its shared headers. The runner records its hash and RETAINED_BATCH_V1 profile. It cannot combine with --native-helper or fall back to another mode.
-Native linkage, structural/type/body, ABI record-layout and import-identity guards qualify positive original source/receiving declaration relationships. Schema16 retains both contexts, input identities and the explicit selection; schemas14/15 remain readable. Pointer addresses and timing metrics are excluded from semantic receipt identity.
-Validated with 542 applicable current JVM tests, 12 repaired native controls, 14 runner controls and seven small actual-provider/native/raw-XMI/full-reference/replay engine runs, including exact typed repeat, competing definitions, packing rejection and accepted/current single-unit preservation.
-A retained failing packing control motivated the native layout guard. These finite controls are not a general ODR proof, transitive link closure or complete implementation population. Whole research-release gates remain open.
+Provider receipts, source re-observation and formal replay establish different
+properties. Do not treat a retained input bundle as complete compiler-consumption
+proof or a zero-exit provider run as semantic completeness.
 
-rc48 adds guarded native Python class abstraction through inert namespace construction under the selected runtime type/ABCMeta. Captured module, class and method bodies, defaults and annotations are never executed. Standard descriptor combinations and internally closed inheritance are checked independently from fixed P0; unsupported dynamic and external-base cases remain unavailable. Class methods retain UNKNOWN common instance/static scope.
-Validated with 551 applicable current JVM tests, 18 bridge/native controls and eleven small native/raw-XMI/full-reference/replay engine runs, including typed repeat and accepted/current vanilla preservation. A legal Python abstract method with a body may disagree with the frozen policy; that result is retained rather than changing P0. Whole research-release gates remain open.
+## License
 
-rc49 retains compiler-owned C++ virtual override edges and canonical return types, joins out-of-line method occurrences through native canonical declaration identity, and qualifies source-definition incidence only for positively closed measured method/body populations. Unknown definitions, dependent types and cross-context/link boundaries remain explicit. Owner validation reuses the declaration index. Fixed P0, the evaluator, Java/Python and dependency bytes are preserved.
-Validated with all 571 current JVM regression tests, 26 script controls, 13 identity-bound native controls and 16 tiny full-stage/reference/replay engine runs, including typed repeat and accepted/current historical-helper preservation. Legal pure virtual methods with bodies and covariant returns can disagree with the frozen profile; such findings are retained. C++ analysis and replay start fresh JVMs within one owned container; setup and cleanup remain charged to the original stage budgets. Timeout124 and unconfirmed cleanup remain failures. Whole research-release gates remain open.
-
-rc50 observes guarded Python source-method ancestor slot replacement through native inert class MRO/dictionaries, distinct from fixed-P0 parameter/scope candidates. Return annotations remain SOURCE_ANNOTATION metadata; common runtime return types are unavailable and strict return equality stays NOT_EVALUATED. Unsupported ancestor targets, attribute interposition, dynamic class behavior and classmethod common scope remain explicit. No arbitrary captured source suites, defaults, annotations or method bodies execute during observation.
-Validated with584 current JDK17 tests (167 focused plus417 fresh integration, all on the same406-input source snapshot),14 native method controls,16 rerun ABC controls,14 bridge controls,14 independent structural/body source audits and17 full-stage/reference/replay runs. Fixed P0, evaluator, Java/C++ and dependency bytes are preserved. These are finite source-only controls; build/environment closure, held-out study and research release remain open.
-
-The recorded-input-archive.py utility retains only file bytes matching recorded XMI14/15/16 digests, behind explicit source/path mappings. It verifies its own content objects and restores recorded subtrees; opaque, missing, changed and unmapped inputs remain explicit. Partial restoration requires an explicit option and reports every omission. Source reproduction and complete consumption are never inferred from archive integrity. Archive-layout symlinks are rejected. Optional storage budgets are operational; no truncated complete result is produced.
-Validated with18 artifact controls,9 actual CLI operations,3 retained-language artifact cases and6 fresh original/restored source-only analyses, each full-reference-compared and capsule-replayed. The existing584 JVM qualification applies to the exact unchanged rc50 engine/core inputs. Complete provider/native-helper/environment/metadata reproduction, recovery and research release remain open.
-
-Linux sequential batches support opt-in --resumable and --resume. Durable atomic receipts bind prepared authoritative observations and completed artifacts; inherited process leases prevent duplicate workers. Resume revalidates inputs and rejects changed/corrupt results. Cumulative retries stay finite across restarts. Sequential operation remains the default; independent capsule replay remains separate.
-Validated with19 process controls and a final271-second three-language small-project campaign including preparation loss, supervisor SIGKILL, ordinary references/replays, stale-input rejection and cleanup. Host power loss was not directly tested. This is not a repository-scale runtime or publication-readiness claim.
-
-The Linux/Docker reproduction-bundle.py tool captures explicit declared mounts, immutable image exports and controller bytes; restores metadata, declared symlinks and complete distinct hardlink groups; and runs bounded networkless observe/reference/replay recipes. Unsupported external or duplicate-view alias groups remain explicit. Integrity is not universal input-consumption certification.
-Validated with34 script controls, three baseline/restored language profiles and a nonempty locked Python distribution: all17 fixed-P0 relations and11 full decisions/witnesses preserved, with fresh references/replays and original source pathnames absent. Exact producer and operational byte/memory/time policies are externally bound. This does not establish a fresh producer build, arbitrary runtime/link closure, held-out accuracy or publication readiness.
+[MIT](LICENSE). Existing repository history and license are preserved.

@@ -312,7 +312,8 @@ final class JavaDependencySymbols {
         if (member.getModifiers().contains(Modifier.PRIVATE)) {
             return Inheritability.NOT_INHERITABLE;
         }
-        if (owner.getKind().isInterface() && member.getModifiers().contains(Modifier.STATIC)) {
+        if (owner.getKind().isInterface() && member.getKind() == ElementKind.METHOD
+                && member.getModifiers().contains(Modifier.STATIC)) {
             return Inheritability.NOT_INHERITABLE;
         }
         return Inheritability.INHERITABLE;

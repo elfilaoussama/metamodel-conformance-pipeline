@@ -54,11 +54,13 @@ public final class ObservationXmiReader {
         ObservationSchema schema = ObservationSchema.load();
         ObservationSchema legacySchema = ObservationSchema.load("14");
         ObservationSchema reportedSchema = ObservationSchema.load("15");
+        ObservationSchema configuredSchema = ObservationSchema.load("16");
         EPackage ePackage = schema.ePackage();
         ResourceSetImpl resourceSet = new ResourceSetImpl();
         resourceSet.getPackageRegistry().put(ObservationSchema.NS_URI, ePackage);
         resourceSet.getPackageRegistry().put(legacySchema.ePackage().getNsURI(), legacySchema.ePackage());
         resourceSet.getPackageRegistry().put(reportedSchema.ePackage().getNsURI(), reportedSchema.ePackage());
+        resourceSet.getPackageRegistry().put(configuredSchema.ePackage().getNsURI(), configuredSchema.ePackage());
         resourceSet.getResourceFactoryRegistry().getExtensionToFactoryMap().put("xmi", new XMIResourceFactoryImpl());
         Resource resource = resourceSet.getResource(URI.createFileURI(input.toString()), true);
         if (resource.getContents().size() != 1) {
@@ -67,6 +69,7 @@ public final class ObservationXmiReader {
         EObject root = resource.getContents().get(0);
         if (root.eClass().getEPackage() == legacySchema.ePackage()) schema = legacySchema;
         if (root.eClass().getEPackage() == reportedSchema.ePackage()) schema = reportedSchema;
+        if (root.eClass().getEPackage() == configuredSchema.ePackage()) schema = configuredSchema;
         if (!"ObservationSet".equals(root.eClass().getName())) {
             throw new IOException("unexpected observation root: " + root.eClass().getName());
         }

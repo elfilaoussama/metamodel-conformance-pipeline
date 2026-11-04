@@ -15,6 +15,13 @@ final class CppInputRoles {
     static List<NativeEvidence.RoleReceipt> retain(Path root, Map<Path, String> physicalHashes,
             Map<String, SourceUnit> units, Map<String, String> sourceByContext,
             Map<String, java.util.Set<Path>> associatedInputs, CppDependencyInputs inputs) {
+        return retain(root, physicalHashes, units, sourceByContext, associatedInputs, inputs, null);
+    }
+
+    static List<NativeEvidence.RoleReceipt> retain(Path root, Map<Path, String> physicalHashes,
+            Map<String, SourceUnit> units, Map<String, String> sourceByContext,
+            Map<String, java.util.Set<Path>> associatedInputs, CppDependencyInputs inputs,
+            Map<String, CppDependencyInputs.CppCompileContext> declaredByContext) {
         var roles = new ArrayList<NativeEvidence.RoleReceipt>();
         for (var context : new TreeMap<>(sourceByContext).entrySet()) {
             Map<String, String> project = new TreeMap<>();
@@ -24,7 +31,10 @@ final class CppInputRoles {
                 SourceUnit unit = units.get(relative);
                 if (unit != null && unit.sha256().equals(physicalHashes.get(physical))) project.put(relative, unit.sha256());
             }
-            boolean declared = inputs.contextForSourcePath(context.getValue()) != null;
+            boolean declared = declaredByContext == null
+                    ? inputs.contextForSourcePath(context.getValue()) != null
+                    : declaredByContext.containsKey(context.getKey())
+                        && declaredByContext.get(context.getKey()).sourcePath().equals(context.getValue());
             for (var input : project.entrySet()) {
                 boolean operand = declared && input.getKey().equals(context.getValue());
                 roles.add(new NativeEvidence.RoleReceipt(context.getKey(), input.getKey(), input.getValue(),

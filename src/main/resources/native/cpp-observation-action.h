@@ -1,6 +1,8 @@
 #pragma once
 // Clang 14 AST/input transport. No conformance rules or P0 judgments live here.
 #include <clang/Basic/FileManager.h>
+#include <clang/Basic/LangOptions.h>
+#include <clang/Basic/LangStandard.h>
 #include <clang/Basic/SourceManager.h>
 #include <clang/Basic/TargetInfo.h>
 #include <clang/Basic/Version.h>
@@ -87,6 +89,26 @@ static int mappedImage(dl_phdr_info *info, size_t, void *data) {
     }
     return 0;
 }
+// Candidate diagnostic only: direct same-pass frontend state, never macro inference.
+// This is a named subset of LangOptions, not complete semantic/environment closure.
+static llvm::json::Object capturedLanguageMode(const clang::LangOptions &options) {
+    const bool specified = options.LangStd != clang::LangStandard::lang_unspecified;
+    const char *name = specified
+        ? clang::LangStandard::getLangStandardForKind(options.LangStd).getName() : "";
+    return llvm::json::Object{
+        {"format", "cpp-native-language-mode-v1"},
+        {"scope", "CLANG14_LANGOPTIONS_NAMED_SUBSET"},
+        {"standardKnown", specified}, {"standard", name},
+        {"standardKind", static_cast<int64_t>(options.LangStd)},
+        {"GNUMode", static_cast<bool>(options.GNUMode)},
+        {"GNUKeywords", static_cast<bool>(options.GNUKeywords)},
+        {"CPlusPlus", static_cast<bool>(options.CPlusPlus)},
+        {"CPlusPlus11", static_cast<bool>(options.CPlusPlus11)},
+        {"CPlusPlus14", static_cast<bool>(options.CPlusPlus14)},
+        {"CPlusPlus17", static_cast<bool>(options.CPlusPlus17)},
+        {"CPlusPlus20", static_cast<bool>(options.CPlusPlus20)},
+        {"CPlusPlus2b", static_cast<bool>(options.CPlusPlus2b)}};
+}
 class Observation : public clang::ASTDumpAction {
     llvm::json::Array events, literals;
     std::map<std::string, llvm::json::Object> files;
@@ -172,6 +194,7 @@ protected:
         if (error) { llvm::errs() << error.message() << "\n"; return; }
         sink << llvm::json::Value(llvm::json::Object{{"format", "cpp-same-pass-inputs-v1"},
             {"compilerVersion", clang::getClangFullVersion()},
+            {"languageMode", capturedLanguageMode(compiler.getLangOpts())},
             {"target", compiler.getTarget().getTriple().str()}, {"arguments", std::move(argv)},
             {"consumedFiles", std::move(consumed)}, {"physicalImages", std::move(images)},
             {"physicalImagesComplete", imagesComplete},

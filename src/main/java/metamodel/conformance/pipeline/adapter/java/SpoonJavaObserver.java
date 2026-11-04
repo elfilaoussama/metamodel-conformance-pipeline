@@ -50,7 +50,7 @@ import java.util.stream.Stream;
 
 public final class SpoonJavaObserver implements SourceObserver {
     public static final String ADAPTER_ID = "spoon-java";
-    public static final String ADAPTER_VERSION = "0.14.0";
+    public static final String ADAPTER_VERSION = "0.17.0";
     private static final Set<String> PLATFORM_ROOTS = Set.of(
             "java.lang.Object",
             "java.lang.Record",
@@ -556,7 +556,8 @@ public final class SpoonJavaObserver implements SourceObserver {
         if (member.hasModifier(ModifierKind.PRIVATE)) {
             return Inheritability.NOT_INHERITABLE;
         }
-        if (owner instanceof CtInterface<?> && member.hasModifier(ModifierKind.STATIC)) {
+        if (owner instanceof CtInterface<?> && member instanceof CtMethod<?>
+                && member.hasModifier(ModifierKind.STATIC)) {
             return Inheritability.NOT_INHERITABLE;
         }
         return Inheritability.INHERITABLE;

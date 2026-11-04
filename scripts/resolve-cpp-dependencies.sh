@@ -5,6 +5,9 @@
 #
 # usage: resolve-cpp-dependencies.sh source-root output-manifest [target-selection.json]
 # env:   CPP_PROVIDER_IMAGE (default silkeh/clang:14, clang 14 + cmake)
+#        CPP_CAPTURED_INPUT_SPACE=1 opts into retained source/build roots (ordered-v6)
+#        CPP_NATIVE_MEMBERSHIP_NINJA=/absolute/executable opts into Ninja1.10.1
+#        native participation (ordered-v7); requires captured roots and selection
 set -euo pipefail
 
 if [[ $# -lt 2 || $# -gt 3 ]]; then
@@ -16,6 +19,21 @@ output_file="$2"
 mkdir -p "$(dirname "$output_file")"
 : > "$output_file"
 rm -f -- "${output_file}.provenance.json"
+capture_space="${CPP_CAPTURED_INPUT_SPACE:-0}"
+[[ "$capture_space" == 0 || "$capture_space" == 1 ]] || { echo "CPP_CAPTURED_INPUT_SPACE must be0 or1" >&2; exit 64; }
+[[ "$capture_space" == 0 || $# -eq 3 ]] || { echo "captured input space requires explicit target selection" >&2; exit 64; }
+native_ninja="${CPP_NATIVE_MEMBERSHIP_NINJA:-}"
+native_mounts=()
+if [[ -n "$native_ninja" ]]; then
+  [[ "$capture_space" == 1 && $# -eq 3 ]] || { echo "native membership requires captured input space and explicit target selection" >&2; exit 64; }
+  [[ "$native_ninja" == /* && -f "$native_ninja" && -x "$native_ninja" && ! -L "$native_ninja" ]] \
+    || { echo "native Ninja must be an absolute regular executable" >&2; exit 66; }
+  native_ninja="$(realpath -e "$native_ninja")"
+  [[ "$native_ninja" != *,* && "$native_ninja" != *$'\n'* && "$native_ninja" != *$'\r'* ]] \
+    || { echo "unsupported native Ninja mount path" >&2; exit 64; }
+  [[ -f "$3" && ! -L "$3" ]] || { echo "target selection must be a regular file" >&2; exit 66; }
+  native_mounts=(--mount "type=bind,src=$native_ninja,dst=/provider-tools/ninja,readonly")
+fi
 if [[ ! -d "$source_root" || -L "$source_root" ]]; then
   echo "source root is not a regular directory: $source_root" >&2
   exit 66
@@ -59,6 +77,9 @@ container_tmp="$container_out/tmp"
 # clang++. Actual compiler identity is captured below; compatibility with the
 # observing compiler must be checked before source observation.
 compile_flags=(-DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_BUILD_TYPE= -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang)
+if [[ -n "$native_ninja" ]]; then
+  compile_flags+=(-G Ninja -DCMAKE_MAKE_PROGRAM=/provider-tools/ninja)
+fi
 
 # Ask the actual configured generator for target/source/link facts. A fresh
 # resolution cache gives one reply index; no build-file text parsing is used.
@@ -71,6 +92,7 @@ docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
   --mount "type=bind,src=$source_root,dst=$container_source,readonly" \
   --mount "type=bind,src=$worktree_root,dst=$container_worktree" \
   --mount "type=bind,src=$resolution_root,dst=$container_out" \
+  "${native_mounts[@]}" \
   -e HOME="$container_home" \
   -e TMPDIR="$container_tmp" \
   -w "$container_worktree" "$resolver_image_id" \
@@ -91,11 +113,42 @@ docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-
 
 python3 "$(dirname "$0")/cpp-cmake-model.py" "$resolution_root/build/.cmake/api/v1/reply" \
   "$resolution_root/configured-build-model.json"
+if [[ -n "$native_ninja" ]]; then
+  scripts_root="$(realpath -e "$(dirname "$0")")"
+  docker run --rm --network=none --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+    --tmpfs /tmp:rw,nosuid,nodev,noexec \
+    --user "$(id -u):$(id -g)" \
+    --mount "type=bind,src=$worktree_root,dst=$container_worktree,readonly" \
+    --mount "type=bind,src=$resolution_root,dst=$container_out" \
+    --mount "type=bind,src=$scripts_root,dst=/provider-scripts,readonly" \
+    "${native_mounts[@]}" \
+    -e PYTHONDONTWRITEBYTECODE=1 \
+    -w "$container_worktree" "$resolver_image_id" \
+    python3 /provider-scripts/capture-cpp-ninja-membership.py \
+      --build-directory "$container_out/build" \
+      --configured-model "$container_out/configured-build-model.json" \
+      --compile-commands "$container_out/build/compile_commands.json" \
+      --ninja /provider-tools/ninja --output "$container_out/native-membership-capture"
+fi
 manifest_arguments=("$compile_commands" "$output_file" "$worktree_root"
   "$resolution_root/compiler-identity.json" "$container_worktree" "$resolution_root/configured-build-model.json")
 if [[ $# -eq 3 ]]; then
   [[ -f "$3" && ! -L "$3" ]] || { echo "target selection must be a regular file" >&2; exit 66; }
   manifest_arguments+=("$3")
+fi
+if [[ "$capture_space" == 1 ]]; then
+  python3 - "$resolution_root/captured-input-space-spec.json" "$worktree_root" "$resolution_root/build" "$container_worktree" "$container_out/build" <<'PYSPACE'
+import json,sys
+from pathlib import Path
+output,source,build,logical_source,logical_build=sys.argv[1:]
+Path(output).write_text(json.dumps(dict(format='cpp-captured-input-space-v1',observationRoot='/workspace',roots=[
+    dict(id='configured-source',path=logical_source,kind='SOURCE',retainedPath=source),
+    dict(id='configured-build',path=logical_build,kind='BUILD',retainedPath=build)]),indent=2)+'\n')
+PYSPACE
+  manifest_arguments+=(--input-space-spec "$resolution_root/captured-input-space-spec.json")
+fi
+if [[ -n "$native_ninja" ]]; then
+  manifest_arguments+=(--native-membership-capture "$resolution_root/native-membership-capture")
 fi
 python3 "$(dirname "$0")/cpp-context-manifest.py" "${manifest_arguments[@]}"
 
@@ -114,6 +167,8 @@ data['providerExecution'] = dict(recipeVersion=1, imageId=image,
     originalSourceRoot=str(Path(source).resolve()), cacheRoot=str(Path(cache).resolve()),
     configuredSourceRoot='/workspace/worktree', originalSourceMount='/workspace/source',
     cacheMount='/workspace/out')
+if data.get('transportVersion') in ('ordered-v6','ordered-v7'):
+    data['providerExecution'].update(recipeVersion=2,observationRoot=data['capturedInputSpace']['observationRoot'])
 path.write_text(json.dumps(data, indent=2) + '\n')
 PYEXECUTION
 

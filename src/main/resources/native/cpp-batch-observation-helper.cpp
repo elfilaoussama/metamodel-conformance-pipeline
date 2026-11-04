@@ -53,7 +53,7 @@ public:
 };
 class RetainedJob final:public clang::tooling::ToolAction {
 public:
-    std::string context,cwd,astPath,inputPath,errorPath;
+    std::string context,correspondenceGroup,cwd,astPath,inputPath,errorPath;
     std::vector<std::string> arguments;
     bool written=false,success=false;
     unsigned frontendInvocations=0;
@@ -127,6 +127,16 @@ static bool ownerBodiesAgree(clang::CXXRecordDecl *source,clang::CXXRecordDecl *
     return true;
 }
 struct Definition {size_t job;clang::CXXMethodDecl *method;};
+// Opaque caller-declared program population identity, never derived from paths or USRs.
+static bool validCorrespondenceGroup(llvm::StringRef value) {
+    if(value.empty() || value.size()>256)return false;
+    auto alphanumeric=[](unsigned char c) {
+        return (c>='A' && c<='Z') || (c>='a' && c<='z') || (c>='0' && c<='9');
+    };
+    if(!alphanumeric(static_cast<unsigned char>(value.front())))return false;
+    for(unsigned char c:value)if(!alphanumeric(c) && c!='_' && c!='.' && c!=':' && c!='-')return false;
+    return true;
+}
 static bool nativeLayoutsAgree(clang::CXXRecordDecl *source,clang::CXXRecordDecl *target,
                                clang::ASTContext &from,clang::ASTContext &to) {
     if(!source || !target || source->isInvalidDecl() || target->isInvalidDecl()
@@ -164,7 +174,12 @@ int main(int argc,char **argv) {
     if(argc!=3)return 64;
     auto input=llvm::MemoryBuffer::getFile(argv[1]);if(!input)return 66;
     auto parsed=llvm::json::parse((*input)->getBuffer());if(!parsed){llvm::consumeError(parsed.takeError());return 65;}
-    auto *request=parsed->getAsObject();if(!request || request->size()!=2)return 65;
+    auto *request=parsed->getAsObject();if(!request)return 65;
+    bool grouped=false;
+    if(auto format=request->getString("format")) {
+        if(*format!="cpp-retained-batch-request-v2" || request->size()!=3)return 65;
+        grouped=true;
+    } else if(request->size()!=2 || request->get("format"))return 65;
     auto root=request->getString("projectRoot");auto *rows=request->getArray("jobs");
     if(!root || !rows || rows->empty())return 65;
     llvm::SmallString<256> realRoot;if(llvm::sys::fs::real_path(*root,realRoot) || realRoot!=*root)return 65;
@@ -174,11 +189,14 @@ int main(int argc,char **argv) {
     std::vector<std::unique_ptr<RetainedJob>> jobs;std::set<std::string> contexts;
     llvm::json::Array results,queries;
     for(auto &value:*rows) {
-        auto *row=value.getAsObject();if(!row || row->size()!=3)return 65;
+        auto *row=value.getAsObject();if(!row || row->size()!=(grouped?4:3))return 65;
         auto context=row->getString("contextId"),cwd=row->getString("workingDirectory");auto *arguments=row->getArray("arguments");
         if(!context || context->empty() || !contexts.insert(context->str()).second || !cwd || !arguments || arguments->empty())return 65;
+        auto group=row->getString("correspondenceGroupId");
+        if(grouped && (!group || !validCorrespondenceGroup(*group)))return 65;
         llvm::SmallString<256> realCwd;if(llvm::sys::fs::real_path(*cwd,realCwd) || realCwd!=*cwd)return 65;
         auto job=std::make_unique<RetainedJob>();job->context=context->str();job->cwd=cwd->str();
+        if(grouped)job->correspondenceGroup=group->str();
         std::string prefix=directory.str().str()+"/job-"+std::to_string(jobs.size());
         job->astPath=prefix+".ast.json";job->inputPath=prefix+".inputs.json";job->errorPath=prefix+".stderr";
         for(auto &argument:*arguments) {
@@ -193,13 +211,16 @@ int main(int argc,char **argv) {
             clang::tooling::ToolInvocation invocation(job->arguments,job.get(),files.get(),std::make_shared<clang::PCHContainerOperations>());
             job->success=invocation.run();
         }
-        results.push_back(llvm::json::Object{{"contextId",job->context},{"astPath",job->astPath},{"inputPath",job->inputPath},
+        llvm::json::Object result{{"contextId",job->context},{"astPath",job->astPath},{"inputPath",job->inputPath},
             {"errorPath",job->errorPath},{"exitCode",job->success?0:1},
-            {"frontendInvocations",static_cast<int64_t>(job->frontendInvocations)},{"observationMicros",elapsedMicros(jobStarted)}});
+            {"frontendInvocations",static_cast<int64_t>(job->frontendInvocations)},{"observationMicros",elapsedMicros(jobStarted)}};
+        if(grouped)result["correspondenceGroupId"]=job->correspondenceGroup;
+        results.push_back(std::move(result));
         jobs.push_back(std::move(job));
     }
     auto indexStarted=BatchClock::now();
-    std::vector<std::unique_ptr<ProjectMethods>> populations;std::map<std::string,std::vector<Definition>> definitions;
+    std::vector<std::unique_ptr<ProjectMethods>> populations;
+    std::map<std::pair<std::string,std::string>,std::vector<Definition>> definitions;
     for(size_t index=0;index<jobs.size();++index) {
         std::unique_ptr<ProjectMethods> population;
         if(jobs[index]->success) {
@@ -210,7 +231,7 @@ int main(int argc,char **argv) {
                 // equal in different TUs. Native linkage must independently
                 // permit cross-context identity before indexing a definition.
                 if(!method->isExternallyVisible() || !method->getParent()->isExternallyVisible())continue;
-                auto id=nativeUsr(method);if(!id.empty())definitions[id].push_back({index,method});
+                auto id=nativeUsr(method);if(!id.empty())definitions[{jobs[index]->correspondenceGroup,id}].push_back({index,method});
             }
         }
         populations.push_back(std::move(population));
@@ -221,6 +242,7 @@ int main(int argc,char **argv) {
         auto *target=entry.first;std::string id=nativeUsr(target);
         llvm::json::Object query{{"targetContextId",jobs[index]->context},{"targetCanonicalAstId",nativeId(target)},
             {"targetOwnerAstId",nativeId(target->getParent()->getDefinition())},{"targetUsr",id}};
+        if(grouped)query["targetCorrespondenceGroupId"]=jobs[index]->correspondenceGroup;
         if(id.empty() || target->isInvalidDecl() || target->getParent()->isDependentContext()
                 || target->getType()->isDependentType() || target->getReturnType()->isUndeducedType()
                 || target->isDeleted() || target->isDefaulted())
@@ -228,11 +250,13 @@ int main(int argc,char **argv) {
         else if(populations[index]->originalBodies.at(target))query["status"]="ALREADY_DEFINED";
         else if(!target->isExternallyVisible() || !target->getParent()->isExternallyVisible())query["status"]="CONTEXT_LOCAL";
         else {
-            auto candidates=definitions.find(id);
+            auto candidates=definitions.find({jobs[index]->correspondenceGroup,id});
             if(candidates==definitions.end())query["status"]="NO_DEFINITION_IN_SELECTED_POPULATION";
             else if(candidates->second.size()!=1)query["status"]="AMBIGUOUS";
             else {
                 auto candidate=candidates->second.front();auto *source=candidate.method;
+                // Defense in depth: no native equivalence check or import may cross groups.
+                if(jobs[candidate.job]->correspondenceGroup!=jobs[index]->correspondenceGroup)return 65;
                 auto &from=jobs[candidate.job]->unit->getASTContext(),&to=jobs[index]->unit->getASTContext();
                 llvm::DenseSet<std::pair<clang::Decl*,clang::Decl*>> cache;
                 clang::StructuralEquivalenceContext eq(from,to,cache,clang::StructuralEquivalenceKind::Default,false,false,true);
@@ -264,6 +288,7 @@ int main(int argc,char **argv) {
                                 query["status"]="IMPORT_BODY_REJECTED";queries.push_back(std::move(query));continue;
                             }
                             query["status"]="MATCHED";query["sourceContextId"]=jobs[candidate.job]->context;
+                            if(grouped)query["sourceCorrespondenceGroupId"]=jobs[candidate.job]->correspondenceGroup;
                             query["sourceCanonicalAstId"]=nativeId(source->getCanonicalDecl());query["sourceDefinitionAstId"]=nativeId(source);
                             query["sourceOwnerAstId"]=nativeId(source->getParent()->getDefinition());query["sourceUsr"]=nativeUsr(source);
                         }
@@ -274,7 +299,7 @@ int main(int argc,char **argv) {
         queries.push_back(std::move(query));
     }
     std::error_code error;llvm::raw_fd_ostream sink(output,error,llvm::sys::fs::OF_Text);if(error)return 73;
-    sink<<llvm::json::Value(llvm::json::Object{{"format","cpp-retained-batch-v1"},{"projectRoot",root->str()},
+    sink<<llvm::json::Value(llvm::json::Object{{"format",grouped?"cpp-retained-batch-v2":"cpp-retained-batch-v1"},{"projectRoot",root->str()},
         {"jobs",std::move(results)},{"correspondenceQueries",std::move(queries)},
         {"metrics",llvm::json::Object{{"definitionIndexMicros",indexMicros},{"correspondenceMicros",elapsedMicros(queryStarted)},
             {"importAttempts",importAttempts},{"totalMicros",elapsedMicros(batchStarted)}}}})<<"\n";

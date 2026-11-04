@@ -10,6 +10,8 @@ import javax.tools.StandardJavaFileManager;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.Reader;
+import java.io.StringReader;
 import java.net.URI;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -20,11 +22,15 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
-/** Records the class-file bytes actually read by this javac task, not lookup candidates. */
+/** Records class bytes and implicit source content actually read, not lookup candidates. */
 final class JavacBinaryInputs extends ForwardingJavaFileManager<StandardJavaFileManager> {
     record Read(String binaryName, String moduleName, URI uri, String sha256) { }
     private record Loaded(Read receipt, JavaFileObject original) { }
+    private record TextRead(URI uri, boolean ignoreErrors, boolean characterContent, String sha256) { }
+    private record LoadedText(TextRead receipt, JavaFileObject original) { }
     private final Map<Read, Loaded> loaded = new LinkedHashMap<>();
+    private final Map<Read, Loaded> sourceBytes = new LinkedHashMap<>();
+    private final Map<TextRead, LoadedText> sourceText = new LinkedHashMap<>();
     private final Set<String> sourceReads = new java.util.HashSet<>();
     private final Map<Location, Location> moduleLocations = new java.util.IdentityHashMap<>();
 
@@ -148,6 +154,25 @@ final class JavacBinaryInputs extends ForwardingJavaFileManager<StandardJavaFile
                 throw new IOException("compiler class input changed during observation: " + input.receipt().uri());
             }
         }
+        for (Loaded input : sourceBytes.values()) {
+            byte[] current;
+            try (InputStream stream = input.original().openInputStream()) { current = stream.readAllBytes(); }
+            if (!digest(current).equals(input.receipt().sha256()))
+                throw new IOException("compiler source bytes changed during observation: " + input.receipt().uri());
+        }
+        for (LoadedText input : sourceText.values()) {
+            String current;
+            // The supported standard manager caches getCharContent. Its successful
+            // character-content API can return replacement text with diagnostics,
+            // whereas reader(false) throws. Compare that text via reader(true),
+            // preserving the actual decoder without repeating compiler diagnostics.
+            try (Reader reader = input.original().openReader(
+                    input.receipt().characterContent() || input.receipt().ignoreErrors())) {
+                current = readCharacters(reader);
+            }
+            if (!digestCharacters(current).equals(input.receipt().sha256()))
+                throw new IOException("compiler source characters changed during observation: " + input.receipt().uri());
+        }
     }
 
     private final class Captured extends ForwardingJavaFileObject<JavaFileObject> {
@@ -172,13 +197,29 @@ final class JavacBinaryInputs extends ForwardingJavaFileManager<StandardJavaFile
         private final String binaryName;
         SourceAccess(JavaFileObject file, String binaryName) { super(file); this.binaryName = binaryName; }
         @Override public CharSequence getCharContent(boolean ignoreErrors) throws IOException {
-            sourceReads.add(binaryName); return fileObject.getCharContent(ignoreErrors);
+            sourceReads.add(binaryName);
+            String content = fileObject.getCharContent(ignoreErrors).toString();
+            captureText(content, ignoreErrors, true);
+            return content;
         }
         @Override public InputStream openInputStream() throws IOException {
-            sourceReads.add(binaryName); return fileObject.openInputStream();
+            sourceReads.add(binaryName);
+            byte[] content;
+            try (InputStream stream = fileObject.openInputStream()) { content = stream.readAllBytes(); }
+            Read receipt = new Read(binaryName, "", fileObject.toUri(), digest(content));
+            sourceBytes.putIfAbsent(receipt, new Loaded(receipt, fileObject));
+            return new ByteArrayInputStream(content);
         }
-        @Override public java.io.Reader openReader(boolean ignoreErrors) throws IOException {
-            sourceReads.add(binaryName); return fileObject.openReader(ignoreErrors);
+        @Override public Reader openReader(boolean ignoreErrors) throws IOException {
+            sourceReads.add(binaryName);
+            String content;
+            try (Reader reader = fileObject.openReader(ignoreErrors)) { content = readCharacters(reader); }
+            captureText(content, ignoreErrors, false);
+            return new StringReader(content);
+        }
+        private void captureText(String content, boolean ignoreErrors, boolean characterContent) {
+            TextRead receipt = new TextRead(fileObject.toUri(), ignoreErrors, characterContent, digestCharacters(content));
+            sourceText.putIfAbsent(receipt, new LoadedText(receipt, fileObject));
         }
         JavaFileObject original() { return fileObject; }
     }
@@ -193,5 +234,23 @@ final class JavacBinaryInputs extends ForwardingJavaFileManager<StandardJavaFile
     private static String digest(byte[] bytes) {
         try { return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes)); }
         catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
+    }
+    private static String readCharacters(Reader reader) throws IOException {
+        StringBuilder content = new StringBuilder();
+        char[] buffer = new char[8192];
+        for (int count; (count = reader.read(buffer)) != -1;) content.append(buffer, 0, count);
+        return content.toString();
+    }
+    private static String digestCharacters(String content) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            // Hash exact code units, including unpaired surrogates; no re-encoding.
+            for (int i = 0; i < content.length(); i++) {
+                char unit = content.charAt(i);
+                digest.update((byte) (unit >>> 8));
+                digest.update((byte) unit);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException impossible) { throw new IllegalStateException(impossible); }
     }
 }

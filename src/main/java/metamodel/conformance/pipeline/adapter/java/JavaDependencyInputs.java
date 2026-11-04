@@ -58,6 +58,15 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
             }
         }
         for (JavaCompilationContext context : ordered) {
+            if (context.exactSourcePopulation() != null) {
+                for (String path : context.exactSourcePopulation()) {
+                    if ((noncompiledSources != null && noncompiledSources.contains(path))
+                            || (excludedByContext != null && excludedByContext
+                                    .getOrDefault(context.id(), Set.of()).contains(path))) {
+                        throw new IllegalArgumentException("exact source member has contradictory role: " + path);
+                    }
+                }
+            }
             for (String upstream : context.upstreamContextIds()) {
                 if (!indexed.containsKey(upstream)) {
                     throw new IllegalArgumentException(
@@ -119,7 +128,7 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                 .anyMatch(kind -> Set.of("context", "source", "generated-source", "classpath",
                         "module-path", "processor-path", "upgrade-module-path", "platform-path",
                         "patch-module", "output", "upstream", "exclude", "noncompiled",
-                        "compiler-arg").contains(kind));
+                        "compiler-arg", "source-population", "source-member").contains(kind));
         return typed ? parseTyped(lines) : parseLegacy(lines);
     }
 
@@ -177,7 +186,8 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
         if (!owners.isEmpty()) {
             return owners;
         }
-        if (contexts.size() == 1 && GLOBAL_CONTEXT.equals(contexts.get(0).id())) {
+        if (contexts.size() == 1 && GLOBAL_CONTEXT.equals(contexts.get(0).id())
+                && contexts.get(0).exactSourcePopulation() == null) {
             return contexts;
         }
         return List.of();
@@ -263,7 +273,8 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
     }
 
     public boolean scoped() {
-        return !contexts.isEmpty() && !(contexts.size() == 1 && GLOBAL_CONTEXT.equals(contexts.get(0).id()));
+        return !contexts.isEmpty() && !(contexts.size() == 1 && GLOBAL_CONTEXT.equals(contexts.get(0).id())
+                && contexts.get(0).exactSourcePopulation() == null);
     }
 
     @Override
@@ -359,6 +370,22 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
                         String root = JavaCompilationContext.canonicalRelativePath(fields[2], fields[0]);
                         ("source".equals(fields[0]) ? context.sources : context.generatedSources).add(root);
                     }
+                    case "source-population" -> {
+                        requireFields(fields, 3);
+                        MutableContext context = requireContext(contexts, fields[1]);
+                        if (!"exact".equals(fields[2]) || context.exactPopulation) {
+                            throw new IllegalArgumentException("invalid/duplicate source population declaration");
+                        }
+                        context.exactPopulation = true;
+                    }
+                    case "source-member" -> {
+                        requireFields(fields, 3);
+                        MutableContext context = requireContext(contexts, fields[1]);
+                        if (!context.sourceMembers.add(JavaCompilationContext.canonicalRelativePath(
+                                fields[2], "exact source member"))) {
+                            throw new IllegalArgumentException("duplicate exact source member");
+                        }
+                    }
                     case "classpath", "module-path", "processor-path", "upgrade-module-path",
                             "platform-path" -> {
                         requireFields(fields, 3);
@@ -402,7 +429,11 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
         ArrayList<JavaCompilationContext> built = new ArrayList<>();
         LinkedHashMap<String, Set<String>> excluded = new LinkedHashMap<>();
         for (MutableContext context : contexts.values()) {
-            built.add(context.build());
+            try {
+                built.add(context.build());
+            } catch (IllegalArgumentException failure) {
+                throw new IOException("invalid source population/context: " + failure.getMessage(), failure);
+            }
             if (!context.excludedSources.isEmpty()) {
                 excluded.put(context.id, Set.copyOf(context.excludedSources));
             }
@@ -483,6 +514,8 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
         private final List<String> generatedSources = new ArrayList<>();
         private final List<String> compilerArgs = new ArrayList<>();
         private final Set<String> excludedSources = new LinkedHashSet<>();
+        private boolean exactPopulation;
+        private final Set<String> sourceMembers = new LinkedHashSet<>();
         private final Map<PathKey, List<Path>> paths = new LinkedHashMap<>();
         private final List<Path> outputs = new ArrayList<>();
         private final Set<String> upstream = new LinkedHashSet<>();
@@ -504,13 +537,17 @@ public final class JavaDependencyInputs extends AbstractList<Path> implements Ra
         }
 
         private JavaCompilationContext build() {
+            if (!exactPopulation && !sourceMembers.isEmpty()) {
+                throw new IllegalArgumentException("source members require an explicit exact population");
+            }
             List<JavaResolutionPath> resolutionPaths = paths.entrySet().stream()
                     .map(entry -> new JavaResolutionPath(
                             entry.getKey().role(), entry.getKey().qualifier(), entry.getValue()))
                     .toList();
             return new JavaCompilationContext(
                     id, module, sources, generatedSources, resolutionPaths, outputs, upstream,
-                    new JavaCompilerSemantics(source, target, release, preview, platform, compilerArgs));
+                    new JavaCompilerSemantics(source, target, release, preview, platform, compilerArgs),
+                    exactPopulation ? sourceMembers : null);
         }
     }
 

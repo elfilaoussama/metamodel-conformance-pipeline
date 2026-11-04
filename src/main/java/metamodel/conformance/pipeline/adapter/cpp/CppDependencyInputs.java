@@ -21,6 +21,8 @@ public final class CppDependencyInputs {
     private final Map<String, CppCompileContext> contextsBySourcePath;
     private final CppConfiguredBuildModel configuredBuildModel;
     private final CppConfiguredTargetSelection targetSelection;
+    private final CppInputSpace inputSpace;
+    private final CppNativeInvocationPlan nativePlan;
 
     private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath, CppConfiguredBuildModel configuredBuildModel) {
         this(contextsBySourcePath,configuredBuildModel,null);
@@ -28,9 +30,21 @@ public final class CppDependencyInputs {
 
     private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath,
             CppConfiguredBuildModel configuredBuildModel,CppConfiguredTargetSelection targetSelection) {
+        this(contextsBySourcePath,configuredBuildModel,targetSelection,null);
+    }
+
+    private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath,
+            CppConfiguredBuildModel configuredBuildModel,CppConfiguredTargetSelection targetSelection,CppInputSpace inputSpace) {
+        this(contextsBySourcePath,configuredBuildModel,targetSelection,inputSpace,null);
+    }
+    private CppDependencyInputs(Map<String, CppCompileContext> contextsBySourcePath,
+            CppConfiguredBuildModel configuredBuildModel,CppConfiguredTargetSelection targetSelection,
+            CppInputSpace inputSpace,CppNativeInvocationPlan nativePlan) {
         this.contextsBySourcePath = Map.copyOf(contextsBySourcePath);
         this.configuredBuildModel = configuredBuildModel;
         this.targetSelection=targetSelection;
+        this.inputSpace=inputSpace;
+        this.nativePlan=nativePlan;
     }
 
     public static CppDependencyInputs none() {
@@ -40,7 +54,13 @@ public final class CppDependencyInputs {
     public static CppDependencyInputs fromManifest(Path manifest) {
         Map<String, CppCompileContext> contextsBySourcePath = new LinkedHashMap<>();
         CppConfiguredBuildModel configuredModel = null;
+        CppInputSpace inputSpace = null;
         String selection=null;
+        String nativeBinding=null;
+        List<String> nativeWorlds=new ArrayList<>();
+        Map<String,String> nativeInvocations=new LinkedHashMap<>();
+        Set<String> nativeContextIds=new java.util.HashSet<>();
+        Map<String,CppCompileContext> allContexts=new LinkedHashMap<>();
         try {
             List<String> lines = Files.readAllLines(manifest, StandardCharsets.UTF_8);
             int lineNumber = 0;
@@ -54,6 +74,28 @@ public final class CppDependencyInputs {
                 String kind = fields[0];
                 try {
                     switch (kind) {
+                        case "native-membership" -> {
+                            requireFields(fields,3);
+                            if(nativeBinding!=null || !fields[1].equals("cpp-native-membership-binding-v1"))
+                                throw new IllegalArgumentException("exactly one supported native membership binding required");
+                            nativeBinding=fields[2];
+                        }
+                        case "native-world" -> {
+                            requireFields(fields,3);
+                            if(!fields[1].equals("cpp-native-world-v1"))throw new IllegalArgumentException("unsupported native world");
+                            nativeWorlds.add(fields[2]);
+                        }
+                        case "native-invocation" -> {
+                            requireFields(fields,3);requireContextId(fields[1]);
+                            if(nativeInvocations.putIfAbsent(fields[1],fields[2])!=null)
+                                throw new IllegalArgumentException("duplicate native invocation");
+                        }
+                        case "input-space" -> {
+                            requireFields(fields,3);
+                            if(inputSpace!=null || !fields[1].equals(CppInputSpace.FORMAT))
+                                throw new IllegalArgumentException("exactly one supported captured input space required");
+                            inputSpace=CppInputSpace.parse(fields[2]);
+                        }
                         case "build-selection" -> {
                             requireFields(fields,3);
                             if(selection!=null || !fields[1].equals("direct-targets-v1"))
@@ -72,12 +114,14 @@ public final class CppDependencyInputs {
                             if (contextsById.containsKey(fields[1])) {
                                 throw new IllegalArgumentException("duplicate context row: " + fields[1]);
                             }
-                            if (!List.of(".", "ordered-v2", "ordered-v3", "ordered-v4", "ordered-v5").contains(fields[2])) {
+                            if (!List.of(".", "ordered-v2", "ordered-v3", "ordered-v4", "ordered-v5", "ordered-v6", "ordered-v7").contains(fields[2])) {
                                 throw new IllegalArgumentException("unsupported context version");
                             }
                             contextsById.put(fields[1], new Builder(!fields[2].equals("."),
-                                    List.of("ordered-v3","ordered-v4","ordered-v5").contains(fields[2]),
-                                    List.of("ordered-v4","ordered-v5").contains(fields[2]), fields[2].equals("ordered-v5")));
+                                    List.of("ordered-v3","ordered-v4","ordered-v5","ordered-v6","ordered-v7").contains(fields[2]),
+                                    List.of("ordered-v4","ordered-v5","ordered-v6","ordered-v7").contains(fields[2]),
+                                    List.of("ordered-v5","ordered-v6","ordered-v7").contains(fields[2]),List.of("ordered-v6","ordered-v7").contains(fields[2])));
+                            if(fields[2].equals("ordered-v7"))nativeContextIds.add(fields[1]);
                         }
                         case "source" -> {
                             requireFields(fields, 3);
@@ -135,6 +179,8 @@ public final class CppDependencyInputs {
             }
             for (Map.Entry<String, Builder> entry : contextsById.entrySet()) {
                 Builder builder = entry.getValue();
+                if (builder.spaceRequired != (inputSpace != null))
+                    throw new IllegalArgumentException("ordered-v6 requires captured roots and cannot mix legacy contexts");
                 if (builder.modelRequired != (configuredModel != null))
                     throw new IllegalArgumentException("ordered-v5 requires one configured build model and cannot mix legacy contexts");
                 if (builder.sealed && builder.compiler == null) {
@@ -143,24 +189,40 @@ public final class CppDependencyInputs {
                 if (builder.layoutRequired && builder.execution == null) {
                     throw new IllegalArgumentException("ordered-v4 context requires execution layout");
                 }
-                if (builder.ordered && builder.operations.stream().noneMatch(op -> op.kind().equals("std"))) {
+                if (builder.ordered && !nativeContextIds.contains(entry.getKey()) && builder.operations.stream().noneMatch(op -> op.kind().equals("std"))) {
                     throw new IllegalArgumentException("ordered context requires an explicit language standard");
                 }
                 if (builder.sourcePath == null) {
                     throw new IllegalArgumentException(
                             "C++ manifest context has no source path: " + entry.getKey());
                 }
-                if (configuredModel != null && (!configuredModel.declaresSource(builder.sourcePath)
-                        || !configuredModel.sourceRoot().toString().equals(builder.execution.sourceRoot())
+                Path declaredSource=Path.of(builder.execution==null?".":builder.execution.sourceRoot()).resolve(builder.sourcePath);
+                String modelSource=inputSpace==null?builder.sourcePath:
+                        configuredModel.sourceRoot().relativize(declaredSource).toString().replace('\\','/');
+                Path modelSourceRoot=configuredModel==null?null:configuredModel.sourceRoot();
+                Path modelBuildRoot=configuredModel==null?null:configuredModel.buildRoot();
+                if (inputSpace != null && (!inputSpace.observationRoot().toString().equals(builder.execution.sourceRoot())
+                        || !inputSpace.bindingSha256().equals(builder.execution.treeSha256())
+                        || !inputSpace.contains(declaredSource)
+                        || inputSpace.roots().stream().noneMatch(root -> root.kind()==CppInputSpace.Kind.SOURCE
+                                && root.path().equals(modelSourceRoot))
+                        || inputSpace.roots().stream().noneMatch(root -> root.kind()==CppInputSpace.Kind.BUILD
+                                && root.path().equals(modelBuildRoot))))
+                    throw new IllegalArgumentException("configured build/source roots differ from captured input space");
+                if (configuredModel != null && (!configuredModel.declaresSource(modelSource)
+                        || (inputSpace==null && !configuredModel.sourceRoot().toString().equals(builder.execution.sourceRoot()))
                         || !Path.of(builder.execution.workingDirectory()).startsWith(configuredModel.buildRoot())))
                     throw new IllegalArgumentException("configured target model does not cover the declared source/layout");
                 if (!builder.ordered && builder.operations.stream().filter(op -> op.kind().equals("std")).count() > 1) {
                     throw new IllegalArgumentException(
                             "C++ manifest context declares more than one language standard: " + entry.getKey());
                 }
-                CppCompileContext previous = contextsBySourcePath.putIfAbsent(builder.sourcePath, new CppCompileContext(
+                CppCompileContext compiled = new CppCompileContext(
                         builder.sourcePath,
-                        builder.ordered, List.copyOf(builder.operations), builder.compiler, builder.execution));
+                        builder.ordered, List.copyOf(builder.operations), builder.compiler, builder.execution);
+                allContexts.put(entry.getKey(),compiled);
+                CppCompileContext previous = nativeContextIds.contains(entry.getKey())?null:
+                        contextsBySourcePath.putIfAbsent(builder.sourcePath,compiled);
                 if (previous != null) {
                     throw new IllegalArgumentException(
                             "multiple C++ contexts for one source path are unsupported: " + builder.sourcePath);
@@ -169,45 +231,87 @@ public final class CppDependencyInputs {
         } catch (IOException failure) {
             throw new UncheckedIOException("C++ dependency manifest is not readable: " + manifest, failure);
         }
-        if (configuredModel != null && contextsBySourcePath.isEmpty())
+        if (configuredModel != null && allContexts.isEmpty())
             throw new IllegalArgumentException("configured build model without compile contexts");
-        CppDependencyInputs result=new CppDependencyInputs(contextsBySourcePath,configuredModel);
+        if (inputSpace!=null && allContexts.isEmpty())
+            throw new IllegalArgumentException("captured input space without compile contexts");
+        if (inputSpace!=null && selection==null)
+            throw new IllegalArgumentException("captured input space requires explicit configured target selection");
+        CppDependencyInputs result=new CppDependencyInputs(contextsBySourcePath,configuredModel,null,inputSpace);
+        if(!nativeContextIds.isEmpty()) {
+            if(nativeBinding==null || nativeWorlds.isEmpty() || selection==null
+                    || !nativeContextIds.equals(allContexts.keySet()))
+                throw new IllegalArgumentException("ordered-v7 requires complete unmixed native world evidence");
+            var selected=result.readSelection(selection);
+            var plan=CppNativeInvocationPlan.parse(nativeBinding,nativeWorlds,nativeInvocations,
+                    configuredModel,selected,allContexts,result::sourcePath);
+            return new CppDependencyInputs(Map.of(),configuredModel,selected,inputSpace,plan);
+        }
+        if(nativeBinding!=null || !nativeWorlds.isEmpty() || !nativeInvocations.isEmpty())
+            throw new IllegalArgumentException("native world evidence requires ordered-v7 contexts");
         return selection==null?result:result.selectTargets(selection);
     }
 
     public boolean isEmpty() {
-        return contextsBySourcePath.isEmpty();
+        return nativePlan==null?contextsBySourcePath.isEmpty():nativePlan.invocations().isEmpty();
     }
 
     public CppConfiguredBuildModel configuredBuildModel() { return configuredBuildModel; }
     public CppConfiguredTargetSelection targetSelection() { return targetSelection; }
+    public CppNativeInvocationPlan nativePlan() { return nativePlan; }
+    private List<CppCompileContext> contexts() {
+        return nativePlan==null?List.copyOf(contextsBySourcePath.values()):
+                nativePlan.invocations().values().stream().map(CppNativeInvocationPlan.Invocation::context).toList();
+    }
+    String capturedSpaceSha256() { return inputSpace==null?null:inputSpace.bindingSha256(); }
 
     /** Selection is a measurement population, not inferred transitive link closure. */
     public CppDependencyInputs selectTargets(String configuration,Set<String> ids) {
+        if(nativePlan!=null) {
+            if(!targetSelection.configuration().equals(configuration)
+                    || !targetSelection.targets().stream().map(CppConfiguredTargetSelection.Target::id).collect(java.util.stream.Collectors.toSet()).equals(ids))
+                throw new IllegalArgumentException("native invocation plan requires its recorded target population");
+            return this;
+        }
         if(configuredBuildModel==null)throw new IllegalArgumentException("target selection requires a configured build model");
         var selected=CppConfiguredTargetSelection.select(configuredBuildModel,configuration,ids);
+        return applySelection(selected);
+    }
+    private CppDependencyInputs applySelection(CppConfiguredTargetSelection selected) {
         Set<String> sources=new java.util.HashSet<>();
         for(var target:selected.targets())for(var source:target.sources())if(source.compiled()) {
-            if(!source.language().equals("CXX") || !source.path().startsWith(configuredBuildModel.sourceRoot()))
+            if(!source.language().equals("CXX") || !(inputSpace==null?
+                    source.path().startsWith(configuredBuildModel.sourceRoot()):inputSpace.contains(source.path())))
                 throw new IllegalArgumentException("selected C++ source language/layout unsupported");
-            String relative=configuredBuildModel.sourceRoot().relativize(source.path()).toString().replace('\\','/');
+            String relative=sourcePath(source.path());
             if(!contextsBySourcePath.containsKey(relative))
                 throw new IllegalArgumentException("selected compiled source has no attested compile context: "+relative);
             sources.add(relative);
         }
         if(sources.isEmpty())throw new IllegalArgumentException("selected population has no compiled C++ sources");
-        return new CppDependencyInputs(contextsBySourcePath,configuredBuildModel,selected);
+        return new CppDependencyInputs(contextsBySourcePath,configuredBuildModel,selected,inputSpace);
     }
 
     public Set<String> selectedSourcePaths() {
+        if(nativePlan!=null)return nativePlan.invocations().values().stream().map(i->i.context().sourcePath())
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
         if(targetSelection==null)return Set.of();
         var result=new java.util.TreeSet<String>();
         for(var target:targetSelection.targets())for(var source:target.sources())if(source.compiled())
-            result.add(configuredBuildModel.sourceRoot().relativize(source.path()).toString().replace('\\','/'));
+            result.add(sourcePath(source.path()));
         return Set.copyOf(result);
     }
 
+    private String sourcePath(Path path) {
+        return inputSpace==null?configuredBuildModel.sourceRoot().relativize(path).toString().replace('\\','/'):
+                inputSpace.relativePath(path);
+    }
+
     private CppDependencyInputs selectTargets(String value) {
+        return applySelection(readSelection(value));
+    }
+    private CppConfiguredTargetSelection readSelection(String value) {
+        if(configuredBuildModel==null)throw new IllegalArgumentException("target selection requires a configured build model");
         try {
             var mapper=new ObjectMapper().enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
                     .enable(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_TRAILING_TOKENS);
@@ -217,7 +321,7 @@ public final class CppDependencyInputs {
             Set<String> ids=new java.util.HashSet<>();
             for(var id:node.get("targetIds"))if(!id.isTextual() || !ids.add(id.textValue()))
                 throw new IllegalArgumentException("target IDs must be textual and unique");
-            return selectTargets(node.get("configuration").textValue(),ids);
+            return CppConfiguredTargetSelection.select(configuredBuildModel,node.get("configuration").textValue(),ids);
         } catch(IOException invalid) {throw new IllegalArgumentException("invalid target population JSON",invalid);}
     }
 
@@ -226,11 +330,16 @@ public final class CppDependencyInputs {
      * resolver declared no facts for it.
      */
     public CppCompileContext contextForSourcePath(String relativeSourcePath) {
+        if(nativePlan!=null) {
+            var matches=contexts().stream().filter(c->c.sourcePath().equals(relativeSourcePath)).toList();
+            if(matches.size()>1)throw new IllegalArgumentException("configured source requires an explicit invocation identity");
+            return matches.isEmpty()?null:matches.get(0);
+        }
         return contextsBySourcePath.get(relativeSourcePath);
     }
 
     public void validateCompilerIdentity(CompilerIdentity actual) {
-        for (CppCompileContext context : contextsBySourcePath.values()) {
+        for (CppCompileContext context : contexts()) {
             if (context.compiler() != null && !context.compiler().equals(actual)) {
                 throw new IllegalArgumentException("declared compiler is incompatible with observing compiler for "
                         + context.sourcePath());
@@ -239,8 +348,9 @@ public final class CppDependencyInputs {
     }
 
     public void validateExecutionLayout(Path root) throws IOException {
+        if (inputSpace!=null) inputSpace.validate(root);
         String digest=null;
-        for (CppCompileContext context:contextsBySourcePath.values()) {
+        for (CppCompileContext context:contexts()) {
             ExecutionLayout layout=context.execution();
             if (layout==null) continue;
             if (!root.toString().equals(layout.sourceRoot())) {
@@ -260,11 +370,13 @@ public final class CppDependencyInputs {
                 if (operation.kind().endsWith("include")) {
                     Path include=Path.of(operation.value());
                     include=(include.isAbsolute()?include:cwd.resolve(include)).normalize();
-                    if (!include.startsWith(root) || !Files.isDirectory(include) || !include.equals(include.toRealPath())) {
+                    if (!(inputSpace==null?include.startsWith(root):inputSpace.contains(include))
+                            || !Files.isDirectory(include) || !include.equals(include.toRealPath())) {
                         throw new IllegalArgumentException("configured include is unavailable, aliased or outside the input tree");
                     }
                 }
             }
+            if (inputSpace!=null) continue; // Each declared tree is checked independently above.
             if (digest==null) digest=CppInputTree.digest(root);
             if (!digest.equals(layout.treeSha256())) {
                 throw new IllegalArgumentException("configured input tree differs from provider receipt");
@@ -373,12 +485,14 @@ public final class CppDependencyInputs {
         private final boolean sealed;
         private final boolean layoutRequired;
         private final boolean modelRequired;
+        private final boolean spaceRequired;
         private CompilerIdentity compiler;
         private ExecutionLayout execution;
         private final List<CompileOperation> operations = new ArrayList<>();
-        private Builder(boolean ordered, boolean sealed, boolean layoutRequired, boolean modelRequired) {
+        private Builder(boolean ordered, boolean sealed, boolean layoutRequired, boolean modelRequired,boolean spaceRequired) {
             this.ordered = ordered; this.sealed = sealed; this.layoutRequired=layoutRequired;
             this.modelRequired = modelRequired;
+            this.spaceRequired = spaceRequired;
         }
     }
     private static void requireFields(String[] fields, int count) {

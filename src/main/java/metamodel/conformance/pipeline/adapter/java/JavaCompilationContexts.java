@@ -19,6 +19,14 @@ final class JavaCompilationContexts {
         if (contexts.isEmpty()) {
             contexts = List.of(sourceOnlyContext());
         }
+        Set<String> present = files.stream().map(file -> relativePath(root, file))
+                .collect(java.util.stream.Collectors.toSet());
+        for (JavaCompilationContext context : actual.contexts()) {
+            if (context.exactSourcePopulation() != null
+                    && !present.containsAll(context.exactSourcePopulation())) {
+                throw new IllegalArgumentException("exact source population has unavailable files: " + context.id());
+            }
+        }
         LinkedHashMap<String, List<Path>> grouped = new LinkedHashMap<>();
         contexts.stream().sorted(Comparator.comparing(JavaCompilationContext::id))
                 .forEach(context -> grouped.put(context.id(), new ArrayList<>()));

@@ -3,6 +3,7 @@ package metamodel.conformance.pipeline.capsule;
 import metamodel.conformance.pipeline.decision.Decision;
 import metamodel.conformance.pipeline.alloy.AlloyExecutionConfig;
 import metamodel.conformance.pipeline.model.ObservationDiagnostic;
+import metamodel.conformance.pipeline.invariant.InvariantProfile;
 
 import java.util.List;
 
@@ -18,11 +19,12 @@ public record VerificationCapsule(
         String observationSha256,
         String alloyPath,
         String alloySha256,
+        InvariantProfile.Identity invariantProfile,
         AlloyExecutionConfig alloyExecution,
         List<ObservationDiagnostic> observationDiagnostics,
         List<Decision> decisions) {
 
-    public static final String FORMAT_VERSION = "7";
+    public static final String FORMAT_VERSION = "8";
 
     public VerificationCapsule {
         observationDiagnostics = observationDiagnostics == null

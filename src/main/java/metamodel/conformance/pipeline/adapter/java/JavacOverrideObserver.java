@@ -78,7 +78,7 @@ final class JavacOverrideObserver {
                     root, compilationContext, grouping.filesByContext(), inputs)) {
                 result = context.complete()
                         ? observeCompilationContext(root, entry.getValue(), scopedClassifiers, scopedMembers,
-                                upstreamClassifiers, upstreamMembers, context.options())
+                                upstreamClassifiers, upstreamMembers, context)
                         : new Result(false, Map.of(), Map.of(), context.diagnostics());
             } catch (IOException | RuntimeException failure) {
                 result = Result.incomplete(relativePath(root, entry.getValue().get(0)),
@@ -126,26 +126,18 @@ final class JavacOverrideObserver {
             List<MemberObservation> members,
             List<ClassifierObservation> productionClassifiers,
             List<MemberObservation> productionMembers,
-            List<String> compilerOptions) {
+            JavacCompilationContext compilationContext) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
             return Result.incomplete(relativePath(root, files.get(0)),
                     "JDK compiler is unavailable; override/return-type evidence was not observed");
         }
         DiagnosticCollector<JavaFileObject> diagnostics = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
-                diagnostics, java.util.Locale.ROOT, java.nio.charset.StandardCharsets.UTF_8)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
-            JavacTask task = (JavacTask) compiler.getTask(
-                    null,
-                    fileManager,
-                    diagnostics,
-                    compilerOptions,
-                    null,
-                    sources);
-            List<CompilationUnitTree> parsed = new ArrayList<>();
-            task.parse().forEach(parsed::add);
-            task.analyze();
+        try (JavacSourceWorld world = JavacSourceWorld.open(root, files, compilationContext, compiler)) {
+            diagnostics = world.diagnostics();
+            JavacTask task = world.task();
+            List<CompilationUnitTree> parsed = world.parsed();
+            world.analyze();
             if (diagnostics.getDiagnostics().stream()
                     .anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR)) {
                 return new Result(false, Map.of(), Map.of(),

@@ -16,7 +16,15 @@ record JavaCompilationContext(
         List<JavaResolutionPath> resolutionPaths,
         List<Path> outputs,
         Set<String> upstreamContextIds,
-        JavaCompilerSemantics compilerSemantics) {
+        JavaCompilerSemantics compilerSemantics,
+        Set<String> exactSourcePopulation) {
+    JavaCompilationContext(String id, String moduleKey, List<String> sourceRoots,
+            List<String> generatedSourceRoots, List<JavaResolutionPath> resolutionPaths,
+            List<Path> outputs, Set<String> upstreamContextIds, JavaCompilerSemantics compilerSemantics) {
+        this(id, moduleKey, sourceRoots, generatedSourceRoots, resolutionPaths, outputs,
+                upstreamContextIds, compilerSemantics, null);
+    }
+
     JavaCompilationContext {
         id = requireToken(id, "compilation context id");
         moduleKey = canonicalModuleKey(moduleKey);
@@ -55,6 +63,20 @@ record JavaCompilationContext(
         }
         upstreamContextIds = Set.copyOf(upstream);
         compilerSemantics = compilerSemantics == null ? JavaCompilerSemantics.unknown() : compilerSemantics;
+        // null preserves the legacy root-wide contract; an empty set is an explicitly
+        // empty observed population and must never fall back to root-wide ownership.
+        if (exactSourcePopulation != null) {
+            LinkedHashSet<String> population = new LinkedHashSet<>();
+            for (String path : exactSourcePopulation) {
+                String canonical = canonicalRelativePath(path, "exact source member");
+                if (sourceRoots.stream().noneMatch(root -> contains(root, canonical))
+                        && generatedSourceRoots.stream().noneMatch(root -> contains(root, canonical))) {
+                    throw new IllegalArgumentException("exact source member outside declared roots: " + canonical);
+                }
+                population.add(canonical);
+            }
+            exactSourcePopulation = Set.copyOf(population);
+        }
     }
 
     List<String> allSourceRoots() {
@@ -72,7 +94,8 @@ record JavaCompilationContext(
 
     boolean ownsSourcePath(String sourcePath) {
         String canonical = canonicalRelativePath(sourcePath, "source path");
-        return allSourceRoots().stream().anyMatch(root -> contains(root, canonical));
+        return (exactSourcePopulation == null || exactSourcePopulation.contains(canonical))
+                && allSourceRoots().stream().anyMatch(root -> contains(root, canonical));
     }
 
     private static boolean contains(String root, String path) {

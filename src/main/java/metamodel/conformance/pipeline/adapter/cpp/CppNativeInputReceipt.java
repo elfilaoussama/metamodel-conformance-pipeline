@@ -26,7 +26,8 @@ final class CppNativeInputReceipt {
     private static final Pattern VERSION = Pattern.compile("(?:clang version|version)\\s+([0-9]+(?:\\.[0-9]+){0,2})");
 
     record Result(NativeEvidence.Invocation invocation, List<NativeEvidence.Input> physicalInputs,
-                  JsonNode memberLookup, JsonNode implementationFacts, JsonNode methodSemantics) { }
+                  JsonNode memberLookup, JsonNode implementationFacts, JsonNode methodSemantics,
+                  NativeEvidence.LanguageMode languageMode) { }
     record Context(String contextId, String compilerExecutable, String compilerVersion, String target,
                    Path helper, Path workingDirectory, Path mainSource, List<String> actualCompilerArgv,
                    List<String> semanticCompilerArguments, String compilerSha256) {
@@ -60,6 +61,11 @@ final class CppNativeInputReceipt {
                 argv.add(argument.asText());
             }
             if (!argv.equals(actualCompilerArgv)) throw new IllegalArgumentException("receipt compiler argv differs from executed argv");
+            NativeEvidence.LanguageMode languageMode=null;
+            if(root.has("languageMode")) {
+                if(!compilerVersion.startsWith("14."))throw new IllegalArgumentException("language-mode scope requires qualified Clang14 frontend");
+                languageMode=CppNativeLanguageMode.read(root.get("languageMode"),contextId,semanticCompilerArguments);
+            }
 
             List<NativeEvidence.Input> files = inputs(array(root, "consumedFiles"));
             List<NativeEvidence.Input> images = inputs(array(root, "physicalImages"));
@@ -113,7 +119,7 @@ final class CppNativeInputReceipt {
             return new Result(new NativeEvidence.Invocation(contextId, compilerExecutable,
                     workingDirectory.toString(), semanticCompilerArguments, toolIdentity,
                     NativeEvidence.Evidence.known(physical), NativeEvidence.Evidence.known(macros)), physical,
-                    root.get("memberLookup"), root.get("implementationFacts"), root.get("methodSemantics"));
+                    root.get("memberLookup"), root.get("implementationFacts"), root.get("methodSemantics"),languageMode);
         } catch (IllegalArgumentException invalid) {
             throw new ObservationException("invalid C++ same-pass input receipt: " + invalid.getMessage(), invalid);
         }

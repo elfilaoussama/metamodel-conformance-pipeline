@@ -16,11 +16,13 @@ import metamodel.conformance.pipeline.model.EvidenceKind;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.invariant.InvariantRegistry;
 import metamodel.conformance.pipeline.invariant.InvariantDefinition;
+import metamodel.conformance.pipeline.invariant.InvariantProfile;
 import metamodel.conformance.pipeline.emf.ObservationXmiWriter;
 import metamodel.conformance.pipeline.cli.PipelineCli;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.io.File;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.file.Files;
@@ -39,22 +41,30 @@ import java.util.stream.Collectors;
 
 public final class AlloyInvariantEvaluator {
     private final AlloyExecutionConfig executionConfig;
+    private final InvariantProfile profile;
 
     public AlloyInvariantEvaluator() {
         this(AlloyExecutionConfig.frozen());
     }
 
     public AlloyInvariantEvaluator(AlloyExecutionConfig executionConfig) {
+        this(executionConfig, InvariantProfile.load());
+    }
+
+    public AlloyInvariantEvaluator(AlloyExecutionConfig executionConfig, InvariantProfile profile) {
         executionConfig.requireSupported();
         this.executionConfig = executionConfig;
+        this.profile = java.util.Objects.requireNonNull(profile, "invariant profile");
     }
+
+    public InvariantProfile.Identity profileIdentity() { return profile.identity(); }
 
     public AlloyExecutionConfig executionConfig() {
         return executionConfig;
     }
 
     public List<Decision> evaluateAll(Observation observation, String alloyModel) {
-        InvariantRegistry registry = InvariantRegistry.load();
+        InvariantRegistry registry = profile.registry();
         Map<String, Decision> decisionsById = new LinkedHashMap<>();
         List<InvariantDefinition> evaluable = new ArrayList<>();
         for (InvariantDefinition definition : registry.all()) {
@@ -71,7 +81,7 @@ public final class AlloyInvariantEvaluator {
             return orderedDecisions(registry, decisionsById);
         }
 
-        ExactAlloyEncoder encoder = new ExactAlloyEncoder();
+        ExactAlloyEncoder encoder = new ExactAlloyEncoder(profile);
         try {
             if (!encoder.encode(observation).equals(alloyModel)) {
                 evaluable.forEach(definition -> decisionsById.put(definition.id(), notEvaluated(
@@ -202,11 +212,13 @@ public final class AlloyInvariantEvaluator {
             Path alloyPath = directory.resolve("repository-instance.als");
             new ObservationXmiWriter().write(observation, observationPath);
             Files.writeString(alloyPath, alloyModel);
+            Path profileDirectory = directory.resolve("profile");
+            profile.writeResources(profileDirectory);
             AlloyWorkUnitPlanner planner = new AlloyWorkUnitPlanner();
             for (InvariantDefinition definition : evaluable) {
                 List<Observation> units = planner.plan(observation, definition);
                 decisionsById.put(definition.id(), evaluateInWorkerProcesses(
-                        definition, units.size(), observationPath, alloyPath));
+                        definition, units.size(), observationPath, alloyPath, profileDirectory));
             }
         } catch (Exception failure) {
             evaluable.forEach(definition -> decisionsById.putIfAbsent(definition.id(), notEvaluated(
@@ -218,7 +230,8 @@ public final class AlloyInvariantEvaluator {
     }
 
     private Decision evaluateInWorkerProcesses(
-            InvariantDefinition definition, int unitCount, Path observationPath, Path alloyPath) throws Exception {
+            InvariantDefinition definition, int unitCount, Path observationPath, Path alloyPath,
+            Path profileDirectory) throws Exception {
         if (unitCount == 0) {
             return new Decision(DecisionStatus.CONFORMANT, definition.id(),
                     definition.conformanceMessage(), List.of());
@@ -231,7 +244,7 @@ public final class AlloyInvariantEvaluator {
                 final int first = index;
                 final int end = Math.min(unitCount, index + batchSize);
                 futures.add(executor.submit(() -> invokeWorker(
-                        definition.id(), first, end, observationPath, alloyPath)));
+                        definition.id(), first, end, observationPath, alloyPath, profileDirectory)));
             }
             List<WitnessTuple> witnesses = new ArrayList<>();
             for (Future<Decision> future : futures) {
@@ -249,15 +262,16 @@ public final class AlloyInvariantEvaluator {
         }
     }
 
-    private static Decision invokeWorker(String invariant, int first, int end,
-            Path observation, Path alloy) throws Exception {
+    private Decision invokeWorker(String invariant, int first, int end,
+            Path observation, Path alloy, Path profileDirectory) throws Exception {
         String java = Path.of(System.getProperty("java.home"), "bin", "java").toString();
         List<String> command = new ArrayList<>(List.of(java,
-                "-Dmetamodel.conformance.alloy.processes=1"));
+                "-Dmetamodel.conformance.alloy.processes=1",
+                "-D" + InvariantProfile.EXPECTED_IDENTITY_PROPERTY + "=" + profile.identity().token()));
         if (Boolean.getBoolean("metamodel.conformance.alloy.profile")) {
             command.add("-Dmetamodel.conformance.alloy.profile=true");
         }
-        command.addAll(List.of("-cp", System.getProperty("java.class.path"),
+        command.addAll(List.of("-cp", profileDirectory + File.pathSeparator + System.getProperty("java.class.path"),
                 PipelineCli.class.getName(), "evaluate-work-units",
                 "--observation", observation.toString(), "--alloy", alloy.toString(),
                 "--invariant", invariant, "--first-unit-index", Integer.toString(first),
@@ -321,13 +335,13 @@ public final class AlloyInvariantEvaluator {
     public Decision evaluateWorkUnits(
             Observation observation, String alloyModel, String invariantId,
             int firstUnitIndex, int endUnitIndex) {
-        InvariantDefinition definition = InvariantRegistry.load().require(invariantId);
+        InvariantDefinition definition = profile.registry().require(invariantId);
         Set<EvidenceKind> missing = missingEvidence(observation, definition);
         if (!missing.isEmpty()) {
             String names = missing.stream().map(Enum::name).sorted().collect(Collectors.joining(", "));
             return notEvaluated(definition, "Required evidence is incomplete: " + names);
         }
-        ExactAlloyEncoder encoder = new ExactAlloyEncoder();
+        ExactAlloyEncoder encoder = new ExactAlloyEncoder(profile);
         try {
             if (!encoder.encode(observation).equals(alloyModel)) {
                 return notEvaluated(definition, "The Alloy artifact does not match the canonical observation.");

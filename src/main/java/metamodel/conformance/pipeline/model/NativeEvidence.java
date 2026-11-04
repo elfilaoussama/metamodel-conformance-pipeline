@@ -10,7 +10,8 @@ import java.util.Set;
 /**
  * Typed native measurements, distinct from the fixed P0 projection.
  * These records carry observations, never P0 decisions or completeness claims.
- * Schema 14 preserves these records; adapter population is incremental and
+ * Schema 14 establishes the typed family; later fields require their declared schema versions.
+ * Adapter population is incremental and
  * absent receipts do not assert known-empty facts or grant completeness.
  */
 public final class NativeEvidence {
@@ -26,6 +27,34 @@ public final class NativeEvidence {
     public enum TypeMeaning { COMPILER_TYPE, SOURCE_ANNOTATION, PARAMETER_NAME_CONVENTION, UNRESOLVED_SPELLING }
     public enum LookupMechanism { DECLARED, JAVA_INHERITANCE, PYTHON_C3, CPP_SUBOBJECT }
     public enum CorrespondenceMechanism { CPP_GUARDED_IMPORT }
+    public enum StandardSelection { EXPLICIT_OPTION, COMPILER_DEFAULT }
+    public enum SwitchState { ENABLED, DISABLED }
+
+    public record LanguageOption(String name, SwitchState state) {
+        public LanguageOption {
+            name = text(name, "language option name");
+            state = Objects.requireNonNull(state, "language option state");
+        }
+    }
+
+    /** Same-invocation frontend state, not a complete language/environment certificate. */
+    public record LanguageMode(String contextId, String mechanism, String scope,
+                               StandardSelection standardSelection, Evidence<String> standard,
+                               Long compilerLocalStandardKind, List<LanguageOption> options) {
+        public LanguageMode {
+            contextId = text(contextId, "language mode context");
+            mechanism = text(mechanism, "language mode mechanism");
+            scope = text(scope, "language mode scope");
+            standardSelection = Objects.requireNonNull(standardSelection, "standard selection");
+            standard = scalar(standard, "language standard");
+            standard.values().forEach(value -> text(value, "language standard name"));
+            if (compilerLocalStandardKind == null || compilerLocalStandardKind < 0)
+                throw new IllegalArgumentException("compiler-local standard kind must be a nonnegative observed integer");
+            options = List.copyOf(Objects.requireNonNull(options, "language options"));
+            Set<String> names = new HashSet<>();
+            for (LanguageOption option : options) unique(names, option.name(), "duplicate language option name");
+        }
+    }
 
     /** Ordered evidence: a KNOWN empty sequence differs from unavailable evidence. */
     public record Evidence<T>(Knowledge knowledge, List<T> values, String reason) {
@@ -345,7 +374,16 @@ public final class NativeEvidence {
                          @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
                          List<BuildSelection> buildSelections,
                          @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
-                         List<DefinitionCorrespondence> definitionCorrespondences) {
+                         List<DefinitionCorrespondence> definitionCorrespondences,
+                         @com.fasterxml.jackson.annotation.JsonInclude(com.fasterxml.jackson.annotation.JsonInclude.Include.NON_EMPTY)
+                         List<LanguageMode> languageModes) {
+        public Bundle(List<Domain> domains, List<RoleReceipt> roles, List<Invocation> invocations,
+                      List<Bases> bases, List<Signature> signatures, List<Lookup> lookups,
+                      List<BodyBinding> bodyBindings, List<ReportedInputs> reportedInputs,
+                      List<BuildSelection> buildSelections, List<DefinitionCorrespondence> definitionCorrespondences) {
+            this(domains, roles, invocations, bases, signatures, lookups, bodyBindings,
+                    reportedInputs, buildSelections, definitionCorrespondences, List.of());
+        }
         public Bundle(List<Domain> domains, List<RoleReceipt> roles, List<Invocation> invocations,
                       List<Bases> bases, List<Signature> signatures, List<Lookup> lookups,
                       List<BodyBinding> bodyBindings) {
@@ -368,6 +406,7 @@ public final class NativeEvidence {
             reportedInputs = reportedInputs == null ? List.of() : List.copyOf(reportedInputs);
             buildSelections=buildSelections==null?List.of():List.copyOf(buildSelections);
             definitionCorrespondences=definitionCorrespondences==null?List.of():List.copyOf(definitionCorrespondences);
+            languageModes=languageModes==null?List.of():List.copyOf(languageModes);
             Map<String, DomainIndex> byContext = new HashMap<>();
             Set<String> contextualIds = new HashSet<>();
             for (Domain domain : domains) {
@@ -443,6 +482,15 @@ public final class NativeEvidence {
             bodyBindings.forEach(binding->bodies.put(List.of(binding.contextId(),binding.memberKey()),binding));
             Map<String,Invocation> invocationByContext=new HashMap<>();
             invocations.forEach(invocation->invocationByContext.put(invocation.contextId(),invocation));
+            for (LanguageMode mode : languageModes) {
+                Domain measured = domain(byContext, mode.contextId()).value();
+                Invocation invocation = invocationByContext.get(mode.contextId());
+                if (measured.language() != Language.CPP || invocation == null
+                        || invocation.consumedInputs().knowledge() != Knowledge.KNOWN
+                        || invocation.consumedInputs().values().isEmpty())
+                    throw new IllegalArgumentException("language mode requires a C++ domain and actual consumed-input invocation");
+                unique(occurrences, List.of("language-mode", mode.contextId()), "duplicate language mode context");
+            }
             Set<List<String>> importedTargets=new HashSet<>();
             for(DefinitionCorrespondence entry:definitionCorrespondences) {
                 BuildSelection selection=selections.get(entry.selectionId());

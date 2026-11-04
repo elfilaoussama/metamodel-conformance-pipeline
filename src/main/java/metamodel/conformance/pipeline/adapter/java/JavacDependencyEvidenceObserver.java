@@ -80,7 +80,7 @@ final class JavacDependencyEvidenceObserver {
                         ? observeCompilationContext(
                                 root, entry.getValue(), scopedClassifiers, scopedMembers,
                                 upstreamClassifiers, upstreamMembers, support.classifiers(),
-                                support.members(), context.options())
+                                support.members(), context)
                         : Result.incomplete(context.diagnostics());
             } catch (Exception failure) {
                 observed = Result.incomplete(List.of(new ObservationDiagnostic(
@@ -132,7 +132,7 @@ final class JavacDependencyEvidenceObserver {
             List<MemberObservation> productionMembers,
             List<ClassifierObservation> supportClassifiers,
             List<MemberObservation> supportMembers,
-            List<String> compilerOptions) {
+            JavacCompilationContext compilationContext) {
         JavaCompiler compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) {
             return Result.incomplete(List.of(new ObservationDiagnostic(
@@ -140,14 +140,11 @@ final class JavacDependencyEvidenceObserver {
                     relativePath(root, files.get(0)), 0, "JDK compiler is unavailable")));
         }
         DiagnosticCollector<JavaFileObject> collector = new DiagnosticCollector<>();
-        try (StandardJavaFileManager fileManager = compiler.getStandardFileManager(
-                collector, java.util.Locale.ROOT, java.nio.charset.StandardCharsets.UTF_8)) {
-            Iterable<? extends JavaFileObject> sources = fileManager.getJavaFileObjectsFromPaths(files);
-            JavacTask task = (JavacTask) compiler.getTask(
-                    null, fileManager, collector, compilerOptions, null, sources);
-            List<CompilationUnitTree> parsed = new ArrayList<>();
-            task.parse().forEach(parsed::add);
-            task.analyze();
+        try (JavacSourceWorld world = JavacSourceWorld.open(root, files, compilationContext, compiler)) {
+            collector = world.diagnostics();
+            JavacTask task = world.task();
+            List<CompilationUnitTree> parsed = world.parsed();
+            world.analyze();
             if (collector.getDiagnostics().stream().anyMatch(item -> item.getKind() == Diagnostic.Kind.ERROR)) {
                 return Result.incomplete(evidenceDiagnostics(root, files, collector));
             }

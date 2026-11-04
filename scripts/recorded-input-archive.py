@@ -24,7 +24,7 @@ def relative(value):
 
 def inventory(data):
     root=ET.fromstring(data);version=root.get('schemaVersion')
-    if version not in {'14','15','16'} or root.tag!='{urn:metamodel-conformance:observation:'+version+'}ObservationSet':
+    if version not in {'14','15','16','17'} or root.tag!='{urn:metamodel-conformance:observation:'+version+'}ObservationSet':
         raise ValueError('unsupported observation schema')
     files=[];unavailable=[]
     def visit(node,location,context=''):

@@ -62,13 +62,12 @@ final class JavacDirectParentNames {
             var collector = new DiagnosticCollector<JavaFileObject>();
             try (var context = JavacCompilationContext.prepare(root, grouping.context(entry.getKey()),
                     grouping.filesByContext(), inputs);
-                 var manager = compiler.getStandardFileManager(collector, Locale.ROOT, StandardCharsets.UTF_8)) {
+                 var world = context.complete() ? JavacSourceWorld.open(root, entry.getValue(), context, compiler) : null) {
                 if (!context.complete()) continue;
-                var task = (JavacTask) compiler.getTask(null, manager, collector, context.options(), null,
-                        manager.getJavaFileObjectsFromPaths(entry.getValue()));
-                var parsed = new ArrayList<com.sun.source.tree.CompilationUnitTree>();
-                task.parse().forEach(parsed::add);
-                task.analyze();
+                collector = world.diagnostics();
+                var task = world.task();
+                var parsed = world.parsed();
+                world.analyze();
                 if (collector.getDiagnostics().stream().anyMatch(d -> d.getKind() == Diagnostic.Kind.ERROR)) continue;
                 var trees = Trees.instance(task);
                 var elements = task.getElements();
