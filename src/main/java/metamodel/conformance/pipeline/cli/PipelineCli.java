@@ -73,22 +73,11 @@ public final class PipelineCli {
         ParsedOptions options = ParsedOptions.parse(
                 args,
                 Set.of("source", "output"),
-                Set.of("language", "dependency-manifest"),
+                Set.of("language", "dependency-manifest", "java-native-world", "java-native-build"),
                 Set.of("external-parent", "dependency-jar"));
         Path source = Path.of(options.one("source"));
         Path output = Path.of(options.one("output"));
-        List<Path> dependencyArchives = options.many("dependency-jar").stream().map(Path::of).toList();
-        String dependencyManifest = options.optional("dependency-manifest");
-        if (dependencyManifest != null && !dependencyArchives.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "--dependency-manifest and --dependency-jar cannot be combined");
-        }
-        Language language = SourceObserverFactory.parseLanguage(options.optional("language"));
-        SourceObserver observer = SourceObserverFactory.create(language,
-                dependencyManifest == null ? null : Path.of(dependencyManifest),
-                dependencyManifest == null
-                        ? JavaDependencyInputs.global(dependencyArchives)
-                        : JavaDependencyInputs.none());
+        SourceObserver observer = selectedObserver(options);
         PipelineResult result = new ConformancePipeline(observer)
                 .analyze(source, output, new HashSet<>(options.many("external-parent")));
         result.decisions().forEach(decision ->
@@ -145,23 +134,11 @@ public final class PipelineCli {
         ParsedOptions options = ParsedOptions.parse(
                 args,
                 Set.of("source", "output"),
-                Set.of("language", "dependency-manifest"),
+                Set.of("language", "dependency-manifest", "java-native-world", "java-native-build"),
                 Set.of("external-parent", "dependency-jar"));
         Path source = Path.of(options.one("source"));
         Path output = Path.of(options.one("output"));
-        List<Path> dependencyArchives = options.many("dependency-jar").stream().map(Path::of).toList();
-        String dependencyManifest = options.optional("dependency-manifest");
-        if (dependencyManifest != null && !dependencyArchives.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "--dependency-manifest and --dependency-jar cannot be combined");
-        }
-        JavaDependencyInputs dependencyInputs = dependencyManifest == null
-                ? JavaDependencyInputs.global(dependencyArchives)
-                : JavaDependencyInputs.none();
-        Language language = SourceObserverFactory.parseLanguage(options.optional("language"));
-        SourceObserver observer = SourceObserverFactory.create(language,
-                dependencyManifest == null ? null : Path.of(dependencyManifest),
-                dependencyInputs);
+        SourceObserver observer = selectedObserver(options);
         Observation observation = observer.observe(source, new HashSet<>(options.many("external-parent")));
         Files.createDirectories(output);
         Path observationPath = output.resolve("observation.xmi");
@@ -180,6 +157,22 @@ public final class PipelineCli {
                 + " MEMBERS=" + observation.members().size());
         System.out.println("OBSERVATION=" + observationPath);
         return observation.diagnostics().isEmpty() ? 0 : 3;
+    }
+
+    private static SourceObserver selectedObserver(ParsedOptions options)throws Exception {
+        List<Path> archives=options.many("dependency-jar").stream().map(Path::of).toList();
+        String manifest=options.optional("dependency-manifest"),nativeWorld=options.optional("java-native-world"),nativeBuild=options.optional("java-native-build");
+        if(manifest!=null && !archives.isEmpty())throw new IllegalArgumentException("--dependency-manifest and --dependency-jar cannot be combined");
+        Language language=SourceObserverFactory.parseLanguage(options.optional("language"));
+        if(nativeWorld!=null && nativeBuild!=null)throw new IllegalArgumentException("--java-native-world and --java-native-build cannot be combined");
+        if((nativeWorld!=null || nativeBuild!=null) && (language!=Language.JAVA || manifest!=null || !archives.isEmpty()))
+            throw new IllegalArgumentException("Explicit native Java profiles cannot be combined with other languages or dependency-provider inputs");
+        if(nativeBuild!=null) {
+            if(!options.many("external-parent").isEmpty())throw new IllegalArgumentException("Captured author-task facts cannot be extended by an external-parent allowlist");
+            return SourceObserverFactory.nativeJavaBuild(Path.of(nativeBuild));
+        }
+        if(nativeWorld!=null)return SourceObserverFactory.nativeJava(Path.of(nativeWorld));
+        return SourceObserverFactory.create(language,manifest==null?null:Path.of(manifest),manifest==null?JavaDependencyInputs.global(archives):JavaDependencyInputs.none());
     }
 
     private static int verifyCapsule(String[] args) {
@@ -239,6 +232,8 @@ public final class PipelineCli {
                           [--external-parent <qualified-name>]...
                           [--dependency-jar <path>]...
                           [--dependency-manifest <source-set-to-jar.tsv>]
+                          [--java-native-world <source-only-native-compiler.json>]
+                          [--java-native-build <recorded-author-task-bundle>]
                   observe --source <dir> --output <dir> [--language <java|python|cpp>]
                           [--external-parent <qualified-name>]...
                           [--dependency-jar <path>]...

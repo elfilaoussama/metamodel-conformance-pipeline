@@ -6,7 +6,7 @@
 
   <groupId>metamodel.conformance</groupId>
   <artifactId>metamodel-conformance-pipeline-next</artifactId>
-  <version>0.14.0</version>
+  <version>0.15.0</version>
   <name>Metamodel Conformance Pipeline Next</name>
 
   <properties>
@@ -29,6 +29,15 @@
 
   <build>
     <resources>
+      <resource>
+        <directory>scripts/maven-frames</directory><targetPath>java-native-build</targetPath><filtering>false</filtering>
+        <includes>
+          <include>frame_receipt.py</include><include>compiler_receipt.py</include>
+          <include>parser_receipt.py</include><include>retained_inputs.py</include>
+          <include>semantic_receipt.py</include><include>javac_response.py</include>
+          <include>native_context_bundle.py</include><include>native_source_bundle.py</include>
+        </includes>
+      </resource>
       <resource>
         <directory>src/main/resources</directory>
         <filtering>false</filtering>

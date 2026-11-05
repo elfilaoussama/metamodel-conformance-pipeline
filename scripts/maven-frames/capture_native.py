@@ -46,10 +46,12 @@ def checked_profile(profile):
  profile=regular_root(profile);p=profile/'profile.json'
  if p.is_symlink() or not p.is_file() or p.stat().st_size>1024*1024:raise FrameAdmissionError('regular bounded collector profile required')
  data=json.loads(p.read_text())
- expected={'CompilerFrames.java','CompilerBoundary.java','SourceMonitor.java','RetainedInputs.java','NativeSourceTrace.java'}
+ expected={'CompilerFrames.java','CompilerBoundary.java','SourceMonitor.java','RetainedInputs.java','NativeSourceTrace.java','CompilerToolchain.java'}
+ native=HERE.parents[1]/'src/main/resources/java-native'
+ resources={'NativeSemanticWorld.java','NativeTaskSemanticCapture.java','ConsumedSourceFileManager.java','ReturnedBufferStore.java','RouteTrace.java'};expected|=resources
  if data.get('format')!='native-maven-compiler-metadata-profile-v1' or data.get('status')!='BUILT_METADATA_COLLECTOR_ONLY' or set(data.get('sourceHashes',{}))!=expected:raise FrameAdmissionError('qualified collector profile required')
  for name in expected:
-  if digest(profile/name)!=data['sourceHashes'][name] or digest(HERE/name)!=data['sourceHashes'][name]:raise FrameAdmissionError('collector source profile mismatch')
+  if digest(profile/name)!=data['sourceHashes'][name] or digest((native if name in resources else HERE)/name)!=data['sourceHashes'][name]:raise FrameAdmissionError('collector source profile mismatch')
  for name,key in [('compiler-frames.jar','collectorJarSha256'),('source-trace.jar','sourcePluginJarSha256')]:
   p=profile/name
   if p.is_symlink() or not p.is_file() or digest(p)!=data.get(key):raise FrameAdmissionError('collector artifact profile mismatch')

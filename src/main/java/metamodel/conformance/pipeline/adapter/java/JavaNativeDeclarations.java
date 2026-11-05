@@ -14,6 +14,19 @@ final class JavaNativeDeclarations {
     static Observation populate(JavaCompilationContext context, JavaDependencyInputs inputs,
             Observation physical, JavacDirectParentNames.Result measured,
             JavaContextualObservation.DomainIdentity identity, boolean sourceOnly) {
+        return populate(context,inputs,physical,measured,identity,
+                sourceOnly?NativeEvidence.MeasurementMode.SOURCE_ONLY:NativeEvidence.MeasurementMode.SELECTED_BUILD,
+                sourceOnly?NativeEvidence.View.SOURCE_DECLARATIONS:NativeEvidence.View.EFFECTIVE_LOOKUP,
+                sourceOnly?"Source-only target population; project-build ownership is not claimed"
+                        :"Selected declared compilation root; generation remains unknown outside declared generated roots");
+    }
+
+    static Observation populate(JavaCompilationContext context, JavaDependencyInputs inputs,
+            Observation physical, JavacDirectParentNames.Result measured,
+            JavaContextualObservation.DomainIdentity identity, NativeEvidence.MeasurementMode mode,
+            NativeEvidence.View view,String targetProvenance) {
+        java.util.Objects.requireNonNull(mode);java.util.Objects.requireNonNull(view);
+        if(targetProvenance==null || targetProvenance.isBlank())throw new IllegalArgumentException("target source provenance required");
         String contextId = context.id();
         Observation qualified = JavaContextualObservation.qualify(contextId, physical);
         Set<String> classifiers = Set.copyOf(identity.classifierIds());
@@ -74,8 +87,7 @@ final class JavaNativeDeclarations {
                     provenance = "Provider-declared noncompiled source or selected-context exclusion";
                 } else if (context.ownsSourcePath(unit.path())) {
                     role = NativeEvidence.SourceRole.TARGET;
-                    provenance = sourceOnly ? "Source-only target population; project-build ownership is not claimed"
-                            : "Selected declared compilation root; generation remains unknown outside declared generated roots";
+                    provenance = targetProvenance;
                 } else {
                     role = NativeEvidence.SourceRole.UNKNOWN;
                     provenance = "Physical source is not assigned to this selected compilation context";
@@ -88,8 +100,7 @@ final class JavaNativeDeclarations {
             roles.add(new NativeEvidence.RoleReceipt(contextId, unit.path(), unit.sha256(), role, generation, provenance));
         }
         var domain = new NativeEvidence.Domain(contextId, Language.JAVA,
-                sourceOnly ? NativeEvidence.MeasurementMode.SOURCE_ONLY : NativeEvidence.MeasurementMode.SELECTED_BUILD,
-                sourceOnly ? NativeEvidence.View.SOURCE_DECLARATIONS : NativeEvidence.View.EFFECTIVE_LOOKUP,
+                mode,view,
                 identity.sha256(), identity.provenance(),
                 identity.classifierIds().stream().map(id -> JavaContextualObservation.key(contextId, id)).toList(),
                 identity.memberKeys().stream().map(id -> JavaContextualObservation.key(contextId, id)).toList());

@@ -19,6 +19,17 @@ public final class SourceObserverFactory {
     private SourceObserverFactory() {
     }
 
+    /** Explicit selected-compiler source profile, separate from build-grounded admission. */
+    public static SourceObserver nativeJava(Path configuration) throws IOException {
+        return new metamodel.conformance.pipeline.adapter.java.NativeJavacSourceObserver(
+                metamodel.conformance.pipeline.adapter.java.JavaNativeConfiguration.read(configuration));
+    }
+
+    /** Guarded actual author-task source frames, distinct from a source-only selection. */
+    public static SourceObserver nativeJavaBuild(Path bundle) {
+        return new metamodel.conformance.pipeline.adapter.java.NativeJavacBuildObserver(bundle);
+    }
+
     public static Language parseLanguage(String value) {
         if (value == null || value.isBlank()) {
             return Language.JAVA;

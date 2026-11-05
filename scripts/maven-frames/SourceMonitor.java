@@ -19,6 +19,8 @@ final class SourceMonitor {
     private final String resetMethod;
     private final List<String> processorPath;
     private final String option;
+    private final CompilerToolchain toolchain;
+    private final Path semanticOutput;
 
     static void initialize(org.apache.maven.execution.MavenSession session)throws Exception {
         var p=session.getUserProperties();
@@ -41,7 +43,10 @@ final class SourceMonitor {
     @SuppressWarnings("unchecked")
     private SourceMonitor(MojoExecutionEvent event,long invocation,Object configuration)throws Exception {
         this.configuration=configuration;
-        if(!Boolean.FALSE.equals(invoke(configuration,"isFork")))throw new IllegalStateException("native parser monitor fork profile unqualified");
+        String runtimeProfile=event.getSession().getUserProperties().getProperty("conformance.compiler.runtimeProfile");
+        if(runtimeProfile!=null && !Set.of("observed-javac-v1","observed-javac-semantics-v1").contains(runtimeProfile))throw new IllegalStateException("unsupported native compiler runtime profile");
+        if(!Boolean.FALSE.equals(invoke(configuration,"isFork")) && runtimeProfile==null)throw new IllegalStateException("native parser monitor fork profile unqualified");
+        toolchain=runtimeProfile==null?null:CompilerToolchain.capture(configuration);
         Object modules=invoke(configuration,"getModulepathEntries");
         if(modules instanceof Collection<?> values && !values.isEmpty())throw new IllegalStateException("native parser monitor module-path profile unqualified");
         for(Method method:configuration.getClass().getMethods())if(method.getName().equals("getProcessorModulePathEntries")){
@@ -69,13 +74,17 @@ final class SourceMonitor {
         String token=Base64.getUrlEncoder().encodeToString(output.toString().getBytes(StandardCharsets.UTF_8));
         String retention=event.getSession().getUserProperties().getProperty("conformance.compiler.retainInputs","false");
         if(!Set.of("true","false").contains(retention))throw new IllegalStateException("retainInputs must be true or false");
+        if(toolchain!=null && !retention.equals("true"))throw new IllegalStateException("observed runtime profile requires retained inputs");
         RetainedInputs retained=retention.equals("true")?new RetainedInputs(output.resolveSibling("invocation-"+invocation+".inputs"),configuration):null;
         String retainedToken=retained==null?"":" "+Base64.getUrlEncoder().encodeToString(output.resolveSibling("invocation-"+invocation+".inputs").toString().getBytes(StandardCharsets.UTF_8));
-        option="-Xplugin:ConformanceSourceTrace "+token+" "+attempt+" "+invocation+retainedToken;
+        semanticOutput="observed-javac-semantics-v1".equals(runtimeProfile)?output.resolveSibling("invocation-"+invocation+".semantic.jsonl"):null;
+        option="-Xplugin:ConformanceSourceTrace "+token+" "+attempt+" "+invocation+retainedToken+(toolchain==null?"":" runtime-lifecycle-v1")+(semanticOutput==null?"":" "+Base64.getUrlEncoder().encodeToString(semanticOutput.toString().getBytes(StandardCharsets.UTF_8)));
         processorPath=new ArrayList<>((Collection<String>)(originalProcessorPath==null?invoke(configuration,"getClasspathEntries"):originalProcessorPath));
         processorPath.add(plugin.toString());
         identity=new LinkedHashMap<>();identity.put("format","native-javac-source-monitor-v1");identity.put("attempt",attempt);identity.put("invocation",invocation);identity.put("plugin",plugin.toString());identity.put("pluginSha256",CompilerFrames.artifact(plugin).get("sha256"));identity.put("output",output.toString());identity.put("addedCompilerArgument",option);identity.put("processorPath",processorPath);identity.put("consumptionCertified",false);
         if(retained!=null){identity.put("format","native-javac-source-monitor-v2");identity.put("retainedInputs",retained.receipt());}
+        if(toolchain!=null){identity.put("format","native-javac-source-monitor-v3");identity.put("toolchain",toolchain.descriptor());}
+        if(semanticOutput!=null){identity.put("format","native-javac-source-monitor-v4");identity.put("semanticOutput",semanticOutput.toString());}
         Object selected=invoke(configuration,"getSourceFiles");selectedNonempty=selected instanceof Collection<?> files && !files.isEmpty();
     }
     void activate()throws Exception {
@@ -98,6 +107,12 @@ final class SourceMonitor {
     Map<String,Object> receipt(boolean terminal)throws Exception {
         var result=new LinkedHashMap<String,Object>(identity);
         if(terminal){
+            if(toolchain!=null)toolchain.verifyUnchanged();
+            if(semanticOutput!=null){
+                if(Files.exists(semanticOutput,java.nio.file.LinkOption.NOFOLLOW_LINKS))result.put("semanticArtifact",CompilerFrames.artifact(semanticOutput));
+                else if(selectedNonempty)throw new IllegalStateException("native semantic task receipt missing for selected sources");
+                else result.put("semanticArtifact",null);
+            }
             if(Files.exists(output,java.nio.file.LinkOption.NOFOLLOW_LINKS))result.put("artifact",CompilerFrames.artifact(output));
             else if(selectedNonempty)throw new IllegalStateException("native parser task receipt missing for selected sources");
             else result.put("artifact",null);
