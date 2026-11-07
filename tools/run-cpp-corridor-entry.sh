@@ -28,7 +28,7 @@ if [[ $clone_exit -eq 0 ]]; then
 fi
 if [[ $clone_exit -eq 0 ]]; then
   resolution_exit=0
-  bash ./scripts/resolve-cpp-dependencies.sh "$source_root" "$manifest" >"$output_root/dependency-resolution.log" 2>&1 || resolution_exit=$?
+  bash ./tools/resolve-cpp-dependencies.sh "$source_root" "$manifest" >"$output_root/dependency-resolution.log" 2>&1 || resolution_exit=$?
   dependency_args=()
   if [[ $resolution_exit -eq 0 && -s "$manifest" ]]; then
     domain=SELECTED_BUILD; provider_status=RESOLVED

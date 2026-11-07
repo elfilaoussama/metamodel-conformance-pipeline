@@ -9,7 +9,7 @@ the engine. This is local candidate tooling, not a published pipeline release.
 From the repository root:
 
 ```bash
-python3 -B scripts/run-analysis-batch.py \
+python3 -B tools/run-analysis-batch.py \
   --jobs /absolute/path/jobs.json \
   --jar target/metamodel-conformance-pipeline-next-0.15.0.jar \
   --output /new/path/batch-run
@@ -99,8 +99,8 @@ and GC/RSS records support further diagnosis without altering the model.
 Tests:
 
 ```bash
-python3 -B scripts/batch/test_runner.py
-python3 -B scripts/batch/test_small_batch.py \
+python3 -B tools/batch/test_runner.py
+python3 -B tools/batch/test_small_batch.py \
   --jar /path/to/frozen-engine.jar \
   --baseline /path/to/normal-build-pilot \
   --output /new/path/controlled-batch-gate

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org"><body>
+<th:block th:fragment="overview">
+<section class="result-introduction"><p class="eyebrow">ANALYSIS FINDINGS</p><h2 th:text="${resultSummary.headline}"></h2><p><strong th:text="${resultSummary.evaluated + ' of ' + resultSummary.total + ' rules evaluated'}"></strong><span th:text="${' / ' + resultSummary.unknown + ' not evaluated'}"></span>. These are outcomes for the recorded formal profile and source scope.</p></section>
+<div class="result-dashboard">
+<section class="result-chart" aria-labelledby="outcomes-heading"><h3 id="outcomes-heading">Rule outcomes</h3><p class="field-help">All registered rules are included. Unknowns stay separate from conformance.</p>
+<svg class="outcome-chart" viewBox="0 0 600 48" role="img" aria-labelledby="outcome-chart-title"><title id="outcome-chart-title" th:text="${resultSummary.conformant + ' conformant, ' + resultSummary.violations + ' with violations, ' + resultSummary.unknown + ' not evaluated'}"></title><rect x="0" y="4" width="600" height="36" rx="4" fill="var(--line)"/><rect x="0" y="4" th:attr="width=${resultSummary.passWidth}" height="36" fill="var(--success)"/><rect th:attr="x=${resultSummary.passWidth},width=${resultSummary.violationWidth}" y="4" height="36" fill="var(--failure)"/><rect th:attr="x=${resultSummary.passWidth + resultSummary.violationWidth},width=${resultSummary.unknownWidth}" y="4" height="36" fill="var(--unknown)"/></svg>
+<div class="outcome-legend"><a th:href="@{/(run=${selected.id},tab='Decisions',decisionStatus='CONFORMANT')}" class="legend-conformant"><b th:text="${resultSummary.conformant}"></b> Conformant</a><a th:href="@{/(run=${selected.id},tab='Decisions',decisionStatus='NON_CONFORMANT')}" class="legend-violation"><b th:text="${resultSummary.violations}"></b> Violations found</a><a th:href="@{/(run=${selected.id},tab='Decisions',decisionStatus='NOT_EVALUATED')}" class="legend-unknown"><b th:text="${resultSummary.unknown}"></b> Not evaluated</a></div>
+<p class="result-note">Conformant means no violation was found for that rule in this recorded scope. It does not establish overall program correctness. <a href="/documentation/guides/interpret-results.md">Interpret decisions and denominators</a>.</p></section>
+<section class="result-chart" aria-labelledby="coverage-heading"><h3 id="coverage-heading">Evidence available for this profile</h3><strong class="coverage-number" th:text="${resultSummary.completeCategories + ' / ' + resultSummary.requiredCategories}"></strong><p>Required evidence categories marked complete</p><progress th:if="${resultSummary.requiredCategories > 0}" aria-label="Complete required evidence categories" th:max="${resultSummary.requiredCategories}" th:value="${resultSummary.completeCategories}"></progress><p class="field-help">Completeness claims come from the recorded observation. They are distinct from source fidelity and formal replay.</p><p><strong th:text="${resultSummary.witnessCount}"></strong> recorded violation witnesses</p><a th:href="@{/(run=${selected.id},tab='Evidence')}">Inspect evidence and diagnostics</a></section>
+</div>
+<section class="result-section" aria-labelledby="rule-matrix-heading"><div class="panel-heading"><div><h3 id="rule-matrix-heading">Which invariants passed or failed?</h3><p class="field-help">Each row links to the recorded explanation and witnesses. Evidence counts describe prerequisites, not a score.</p></div><a th:href="@{/(run=${selected.id},tab='Decisions')}">All decision details</a></div>
+<div class="table-scroll"><table class="rule-matrix"><thead><tr><th>Invariant</th><th>Recorded outcome</th><th>Required evidence</th><th>Witnesses</th></tr></thead><tbody><tr th:each="rule : ${resultSummary.rules}" th:attr="data-rule=${rule.id},data-status=${rule.status}"><td><a th:href="@{/(run=${selected.id},tab='Decisions')} + '#rule-' + ${rule.id}" th:text="${rule.title}"></a><small th:text="${rule.id}"></small></td><td><span class="outcome" th:classappend="${#strings.toLowerCase(rule.status)}" th:text="${rule.label}"></span></td><td><span th:text="${rule.requiredCount == 0 ? 'No prerequisites' : rule.completeCount + ' / ' + rule.requiredCount + ' categories complete'}"></span><details th:if="${!#lists.isEmpty(rule.missingEvidence)}"><summary>Missing evidence</summary><ul><li th:each="category : ${rule.missingEvidence}" th:text="${#strings.replace(category,'_',' ')}"></li></ul></details></td><td th:text="${rule.witnessCount}"></td></tr></tbody></table></div></section>
+<section class="result-section" aria-labelledby="model-chart-heading"><h3 id="model-chart-heading">What was observed?</h3><p class="field-help">Recorded model sizes. A zero count does not establish evidence completeness.</p><div class="model-count-chart"><div class="model-count-row" th:each="fact : ${resultSummary.facts}"><span th:text="${fact.name}"></span><svg viewBox="0 0 400 18" role="img" th:attr="aria-label=${fact.name + ': ' + fact.count}"><rect width="400" height="14" y="2" rx="3" fill="var(--line)"/><rect th:attr="width=${fact.width}" height="14" y="2" rx="3" fill="var(--accent)"/></svg><b th:text="${fact.count}"></b></div></div></section>
+<details class="result-technical"><summary>Measurement identity and verification history</summary>
+  <h2>Measurement identity</h2>
+  <dl class="identity">
+    <dt>Engine / schema</dt><dd th:text="${overview.capsule.toolVersion + ' / ' + overview.capsule.schemaVersion}"></dd>
+    <dt>Observer</dt><dd th:text="${overview.capsule.adapterId + ' · ' + overview.capsule.adapterVersion}"></dd>
+    <dt>Source-set hash</dt><dd><code th:text="${overview.capsule.sourceSetSha256}"></code></dd>
+    <dt>Registry hash</dt><dd><code th:text="${overview.capsule.invariantProfile.registrySha256}"></code></dd>
+    <dt>Rules hash</dt><dd><code th:text="${overview.capsule.invariantProfile.rulesSha256}"></code></dd>
+    <dt>Artifact inspection</dt><dd>Integrity checked · not independently replayed</dd>
+  </dl>
+  <h3>Separate replay attempts</h3><p class="muted" th:if="${#lists.isEmpty(overview.replayAttempts)}">Replay has not been requested.</p>
+  <p th:each="item : ${overview.replayAttempts}"><a th:href="@{/(run=${item.id})}" th:text="${item.label + ' · ' + item.state}"></a> : <span th:text="${item.message}"></span></p>
+  <h3>Evidence scope</h3><p>Available evidence: <span th:text="${#lists.isEmpty(overview.completeEvidence) ? 'No complete evidence categories claimed' : #strings.listJoin(overview.completeEvidence, ', ')}"></span></p>
+</details>
+</th:block>
+<th:block th:fragment="decisions">
+  <h2>Formal decisions <span class="muted" th:text="${'/ ' + #lists.size(overview.capsule.decisions) + ' registered rules'}"></span></h2>
+  <form class="filter-bar" method="get" action="/"><input type="hidden" name="run" th:value="${selected.id}"><input type="hidden" name="tab" value="Decisions"><div class="filter-field"><label for="decision-status">Show rule outcomes</label><select id="decision-status" name="decisionStatus"><option value="ALL" th:selected="${decisionStatus == 'ALL'}">All rules</option><option value="NON_CONFORMANT" th:selected="${decisionStatus == 'NON_CONFORMANT'}">Violations found</option><option value="NOT_EVALUATED" th:selected="${decisionStatus == 'NOT_EVALUATED'}">Not evaluated</option><option value="CONFORMANT" th:selected="${decisionStatus == 'CONFORMANT'}">Conformant</option></select></div><button>Apply outcome filter</button><a th:href="@{/(run=${selected.id},tab='Overview')}">Return to charts</a></form><p class="field-help" th:text="${#lists.size(displayDecisions) + ' matching rule decisions'}"></p>
+
+  <article class="decision" th:each="decision : ${displayDecisions}" th:id="${'rule-' + decision.invariantId}" th:attr="data-status=${decision.status}" th:with="rule=${rulesById[decision.invariantId]}">
+    <div><span class="outcome" th:classappend="${#strings.toLowerCase(decision.status)}" th:text="${decision.status}"></span><h3 th:text="${rule.title}"></h3><code th:text="${decision.invariantId}"></code></div>
+    <p th:text="${decision.message}"></p><p class="muted">Required evidence: <span th:text="${#strings.listJoin(rule.requiredEvidence, ', ')}"></span> · Specification: <span th:text="${rule.specificationTrace}"></span></p>
+    <div class="witness" th:each="witness,status : ${decision.witnesses}"><b th:text="${'Witness ' + status.count}"></b><a class="text-button" th:each="key : ${witness.technicalKeys}" th:href="@{/(run=${selected.id},tab='Decisions',entity=${key})}" th:text="${key}"></a></div>
+  </article>
+</th:block>
+<th:block th:fragment="model">
+  <div class="section-title"><h2 th:text="${'Observed ' + kind}"></h2>
+    <form method="get" action="/" th:if="${tab == 'Model'}"><input type="hidden" name="run" th:value="${selected.id}"><input type="hidden" name="tab" value="Model"><label>Collection <select name="kind"><option th:each="name : ${ {'classifiers','members','methodBodies','implementationBindings','units','diagnostics'} }" th:value="${name}" th:selected="${kind == name}" th:text="${name}"></option></select></label> <button>Show</button></form>
+  </div>
+  <div class="table-scroll"><table><thead><tr><th>Entity</th><th>Kind / scope</th><th>Source</th><th></th></tr></thead><tbody>
+    <tr th:each="row : ${rows}"><td><strong th:text="${row.name}"></strong><small th:text="${row.detail}"></small></td><td th:text="${row.kind}"></td><td><span th:text="${row.source}"></span><span th:if="${row.line > 0}" th:text="${':' + row.line}"></span></td><td>
+      <a class="button" th:if="${row.key != null}" th:href="@{/(run=${selected.id},tab=${tab},kind=${kind},offset=${page.offset},entity=${row.key})}">Inspect</a>
+      <a class="button" th:if="${row.key == null and row.source != null}" th:href="@{/(run=${selected.id},tab=${tab},kind=${kind},offset=${page.offset},source=${row.source})}">Inspect</a>
+    </td></tr>
+  </tbody></table></div>
+  <p class="muted" th:if="${page.total == 0}">No recorded entries. This count alone does not imply complete evidence.</p>
+  <nav class="pagination" aria-label="Model pagination"><span th:text="${page.offset + ' / ' + page.total + ' entries'}"></span><a th:if="${page.offset > 0}" th:href="@{/(run=${selected.id},tab=${tab},kind=${kind},offset=${page.offset - page.limit})}">Previous</a><a th:if="${page.offset + page.limit < page.total}" th:href="@{/(run=${selected.id},tab=${tab},kind=${kind},offset=${page.offset + page.limit})}">Next</a></nav>
+</th:block>
+<th:block th:fragment="evidence">
+  <h2>Evidence and diagnostics</h2><p class="notice">Known-empty facts differ from unavailable facts. Native world, provenance and unavailability reasons are preserved below.</p>
+  <h3>Observation diagnostics</h3><pre th:text="${diagnosticText}"></pre><h3>Contextual native evidence</h3><pre th:text="${evidenceText}"></pre>
+</th:block>
+<th:block th:fragment="artifacts">
+  <h2>Original artifacts</h2><p class="muted">Downloads retain the recorded bytes. Capsule replay is a separate job.</p>
+  <div class="artifact-list"><a th:each="name : ${ {'observation.xmi','repository-instance.als','verification-capsule.json','timing.json','inspection.log'} }" th:href="@{/api/v1/runs/{id}/artifacts/{name}(id=${selected.id},name=${name})}"><span th:text="${name}"></span><span>Download</span></a>
+    <a th:if="${selected.operation == 'ANALYZE'}" th:href="@{/api/v1/runs/{id}/artifacts/worker.log(id=${selected.id})}">worker.log <span>Download</span></a>
+  </div>
+</th:block>
+</body></html>

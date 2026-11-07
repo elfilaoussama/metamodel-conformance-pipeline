@@ -1,0 +1,5 @@
+<!doctype html><html xmlns:th="http://www.thymeleaf.org"><body>
+<section class="pipeline-map" th:fragment="map(current)" aria-label="Pipeline stages">
+<ol><li th:classappend="${current == 'source' or current == 'configure'} ? 'current'"><b>1</b><span>Set up<small>Choose code and analysis settings</small></span></li><li th:classappend="${current == 'acquire' or current == 'run' or current == 'replay'} ? 'current'"><b>2</b><span>Run<small>Follow the requested job</small></span></li><li th:classappend="${current == 'inspect'} ? 'current'"><b>3</b><span>Results<small>Understand findings and evidence</small></span></li></ol>
+<details class="pipeline-help"><summary>How it works</summary><p>Prepare your source and settings, start the requested job, then inspect its results. Analysis performs Observe &rarr; normalize &rarr; evaluate together. Source acquisition alone retains code without checking invariants. Verify result (replay) is an optional, separate check of recorded formal decisions. <a th:href="@{/documentation/explanation/architecture.md}">Read the pipeline architecture</a>.</p></details>
+</section></body></html>

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title th:text="${chapter.page.title + ' | Experiment Workspace'}">Documentation | Experiment Workspace</title>
+  <link rel="stylesheet" th:href="@{/workbench.css}">
+  <link rel="stylesheet" th:href="@{/documentation.css}">
+  <script th:src="@{/documentation-navigation.js}" defer></script>
+</head>
+<body><div class="app">
+  <aside th:replace="~{navigation :: main('documentation')}"></aside>
+  <main id="main-content" tabindex="-1">
+    <header class="top"><span>Documentation</span><a th:href="@{/workflow}">Open experiment workspace</a></header>
+    <div class="manual-layout">
+      <aside class="manual-sidebar">
+        <form class="manual-search" method="get" th:action="@{/documentation}" role="search">
+          <label for="manual-query">Search documentation</label>
+          <div><input id="manual-query" name="q" th:value="${q}" maxlength="120" placeholder="e.g. witnesses"><button type="submit">Search</button></div>
+        </form>
+        <details class="manual-navigation" open>
+          <summary>In this manual</summary>
+          <nav aria-label="Documentation chapters">
+            <th:block th:each="item, position : ${pages}">
+              <p class="manual-group" th:if="${position.index == 0 or pages[position.index - 1].group != item.group}" th:text="${item.group}"></p>
+              <a th:href="${item.path == 'README.md' ? '/documentation' : '/documentation/' + item.path}"
+                 th:attr="aria-current=${chapter.page.path == item.path ? 'page' : null}" th:text="${item.title}"></a>
+            </th:block>
+          </nav>
+        </details>
+        <p class="manual-version">Versioned with this application.<br>Scientific scope and limitations are stated explicitly.</p>
+      </aside>
+      <div class="manual-main">
+        <p class="manual-breadcrumb"><a th:href="@{/documentation}">Manual</a><span aria-hidden="true"> / </span><span th:text="${chapter.page.group}"></span></p>
+        <section th:if="${!q.isEmpty()}" class="manual-matches" aria-labelledby="matches-heading">
+          <h2 id="matches-heading" th:text="${'Search results for: ' + q}"></h2>
+          <p th:if="${#lists.isEmpty(matches)}">No chapters match. Try a concept such as evidence, replay or source.</p>
+          <ul><li th:each="match : ${matches}"><a th:href="${match.page.path == 'README.md' ? '/documentation' : '/documentation/' + match.page.path}" th:text="${match.page.title}"></a><span th:text="${' (' + match.page.group + ')'}"></span></li></ul>
+          <a th:href="@{/documentation}">Clear search</a>
+        </section>
+        <article class="manual-article" th:utext="${chapter.html}"></article>
+        <nav class="chapter-pagination" aria-label="Previous and next chapter">
+          <a th:if="${previous != null}" th:href="${previous.path == 'README.md' ? '/documentation' : '/documentation/' + previous.path}"><small>Previous</small><span th:text="${previous.title}"></span></a>
+          <a th:if="${next != null}" th:href="${'/documentation/' + next.path}"><small>Next</small><span th:text="${next.title}"></span></a>
+        </nav>
+      </div>
+      <nav class="manual-toc" aria-label="On this page" th:if="${!chapter.sections.isEmpty()}">
+        <strong>On this page</strong><a th:each="section : ${chapter.sections}" th:href="${'#' + section.id}" th:text="${section.title}"></a>
+      </nav>
+    </div>
+  </main>
+</div></body></html>

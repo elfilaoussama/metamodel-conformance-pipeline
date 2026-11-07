@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 830" role="img" aria-labelledby="title description">
+  <title id="title">Experiment Workspace and scientific engine architecture</title>
+  <desc id="description">A loopback Spring MVC interface records reviews and attempts in SQLite and dispatches isolated engine processes. Source inputs and build providers feed language observers, normalized observations and an evidence admission gate. A versioned registry and Alloy witness definitions feed formal evaluation. Outputs include decisions, witnesses, provenance and a capsule. Independent native source controls validate observation. Capsule replay checks formal decisions and does not re-observe source.</desc>
+  <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0 0 8 4 0 8z" fill="#526879"/></marker></defs>
+  <rect width="1040" height="830" fill="#fff"/>
+  <g font-family="system-ui, sans-serif" fill="#243442">
+    <text x="32" y="34" font-size="20" font-weight="600">Two modules, one traceable experiment</text>
+    <rect x="24" y="56" width="992" height="168" rx="4" fill="#f4f7fa" stroke="#bccbd6"/>
+    <text x="44" y="84" font-size="15" font-weight="600">EXPERIMENT WORKSPACE · local presentation and execution</text>
+    <rect x="44" y="104" width="290" height="92" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="60" y="131" font-size="16" font-weight="600">Spring MVC / Thymeleaf</text><text x="60" y="155" font-size="14">Configure · review · inspect</text><text x="60" y="178" font-size="13">Accessible forms and documentation</text>
+    <rect x="374" y="104" width="270" height="92" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="390" y="131" font-size="16" font-weight="600">SQLite catalog</text><text x="390" y="155" font-size="14">Selections · attempts · queue</text><text x="390" y="178" font-size="13">Recorded state, receipts and events</text>
+    <rect x="684" y="104" width="312" height="92" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="700" y="131" font-size="16" font-weight="600">Owned process dispatcher</text><text x="700" y="155" font-size="14">Separate engine / inspector JVMs</text><text x="700" y="178" font-size="13">Bounded slots and cancellation</text>
+    <g stroke="#526879" stroke-width="1.6" marker-end="url(#arrow)"><path d="M334 150h37"/><path d="M644 150h37"/><path d="M840 196v60"/></g>
+    <rect x="24" y="256" width="992" height="348" rx="4" fill="#f9fafb" stroke="#bccbd6"/>
+    <text x="44" y="286" font-size="15" font-weight="600">SCIENTIFIC ENGINE · typed contracts and formal evaluation</text>
+    <rect x="44" y="310" width="280" height="92" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="60" y="337" font-size="16" font-weight="600">Input worlds / providers</text><text x="60" y="361" font-size="14">Source · dependencies · toolchain</text><text x="60" y="384" font-size="13">Selected contexts and identities</text>
+    <rect x="368" y="310" width="280" height="92" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="384" y="337" font-size="16" font-weight="600">Language observation</text><text x="384" y="361" font-size="14">Java / Python / C++ facts</text><text x="384" y="384" font-size="13">Native evidence and diagnostics</text>
+    <rect x="692" y="310" width="304" height="92" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="708" y="337" font-size="16" font-weight="600">Normalized observation</text><text x="708" y="361" font-size="14">Versioned EMF/Ecore contract</text><text x="708" y="384" font-size="13">Context, provenance and completeness</text>
+    <rect x="692" y="458" width="304" height="114" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="708" y="485" font-size="16" font-weight="600">Evidence admission</text><text x="708" y="510" font-size="14">Check registered prerequisites</text><text x="708" y="535" font-size="13">Incomplete evidence stays unknown</text><text x="708" y="555" font-size="13">No guessed empty relations</text>
+    <rect x="368" y="458" width="280" height="114" rx="3" fill="#fff" stroke="#9baebb"/>
+    <text x="384" y="485" font-size="16" font-weight="600">Exact Alloy evaluation</text><text x="384" y="510" font-size="14">Official engine and witness relations</text><text x="384" y="535" font-size="13">Profile-qualified partitioning</text><text x="384" y="555" font-size="13">Decisions and complete tuples</text>
+    <rect x="44" y="458" width="280" height="114" rx="3" fill="#eaf1f7" stroke="#7595ad"/>
+    <text x="60" y="485" font-size="16" font-weight="600">Replaceable formal profile</text><text x="60" y="510" font-size="14">Registry + Alloy witness functions</text><text x="60" y="535" font-size="13">Theoretical conditions and requirements</text><text x="60" y="555" font-size="13">No observer verdict branches</text>
+    <g stroke="#526879" stroke-width="1.6" fill="none" marker-end="url(#arrow)"><path d="M324 356h41"/><path d="M648 356h41"/><path d="M844 402v53"/><path d="M692 515h-41"/><path d="M324 515h41"/><path d="M508 572v66"/></g>
+    <rect x="368" y="642" width="628" height="90" rx="3" fill="#fff" stroke="#7595ad"/>
+    <text x="384" y="669" font-size="16" font-weight="600">Retained artifacts and result inspection</text><text x="384" y="693" font-size="14">observation.xmi · exact Alloy instance · verification capsule</text><text x="384" y="715" font-size="13">Decisions · witnesses · input inventories · logs · timing</text>
+    <rect x="44" y="642" width="280" height="90" rx="3" fill="#fff" stroke="#9baebb" stroke-dasharray="5 4"/>
+    <text x="60" y="669" font-size="16" font-weight="600">Independent source controls</text><text x="60" y="693" font-size="14">Validate observer correspondence</text><text x="60" y="715" font-size="13">Separate from evaluator repeatability</text>
+    <text x="44" y="770" font-size="14" font-weight="600">Replay checks recorded formal decisions. Fresh source observation requires the declared input world.</text>
+    <text x="44" y="796" font-size="13">The diagram shows engine responsibilities. Current web execution is limited to the documented capability slice.</text>
+  </g>
+</svg>

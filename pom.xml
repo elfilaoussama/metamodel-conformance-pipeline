@@ -30,7 +30,7 @@
   <build>
     <resources>
       <resource>
-        <directory>scripts/maven-frames</directory><targetPath>java-native-build</targetPath><filtering>false</filtering>
+        <directory>tools/maven-frames</directory><targetPath>java-native-build</targetPath><filtering>false</filtering>
         <includes>
           <include>frame_receipt.py</include><include>compiler_receipt.py</include>
           <include>parser_receipt.py</include><include>retained_inputs.py</include>

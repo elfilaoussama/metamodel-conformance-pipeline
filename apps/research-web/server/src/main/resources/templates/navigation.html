@@ -1,0 +1,15 @@
+<!doctype html><html xmlns:th="http://www.thymeleaf.org"><body>
+<aside class="rail" th:fragment="main(active)">
+  <a class="skip-link" href="#main-content">Skip to content</a>
+  <h2 class="navigation-title"><a th:href="@{/workflow}">Experiment Workspace</a></h2><p class="navigation-subtitle">Source, conditions and evidence</p><p class="nav-section">Workspace</p>
+  <nav aria-label="Main navigation" class="main-navigation">
+    <a th:href="@{/workflow}" th:attr="aria-current=${active == 'workflow' ? 'page' : null}"><svg class="nav-symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v5H4zM4 15h6v5H4zM14 15h6v5h-6zM12 9v3M7 15v-3h10v3"/></svg><span>Pipeline</span></a>
+    <a th:href="@{/repositories}" th:attr="aria-current=${active == 'search' ? 'page' : null}"><svg class="nav-symbol" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></svg><span>GitHub search</span></a>
+    <a th:href="@{/runs}" th:attr="aria-current=${active == 'runs' ? 'page' : null}"><svg class="nav-symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16M4 12h16M4 19h16M8 3v4M15 10v4M10 17v4"/></svg><span>Runs</span></a>
+    <a th:href="@{/results}" th:attr="aria-current=${active == 'results' ? 'page' : null}"><svg class="nav-symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h10l4 4v14H5zM14 3v5h5M8 12h8M8 16h6"/></svg><span>Results</span></a>
+    <a th:href="@{/documentation}" th:attr="aria-current=${active == 'documentation' ? 'page' : null}"><svg class="nav-symbol" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h7l2 2 2-2h7v16h-7l-2 2-2-2H3zM12 6v16M6 8h3M15 8h3M6 12h3M15 12h3"/></svg><span>Documentation</span></a>
+  </nav>
+  <details class="secondary-tools"><summary>Other tools</summary><a th:href="@{/collections}">Saved studies</a><a th:href="@{/repositories(import=1)} + '#repository-import'">Direct GitHub import</a><a th:href="@{/(form='ANALYZE')}">Local analysis</a><a th:href="@{/(form='IMPORT')}">Import results</a></details>
+  <p class="rail-footer">Local scientific workspace<br>Jobs continue when the browser closes.</p>
+</aside>
+</body></html>

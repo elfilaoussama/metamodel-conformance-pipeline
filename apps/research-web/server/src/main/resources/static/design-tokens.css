@@ -1,0 +1,33 @@
+/* Local scientific workbench palette. Roles, rather than individual pages, own colors. */
+:root {
+  color-scheme: light;
+  --canvas: #f1f4f3;
+  --surface: #ffffff;
+  --surface-subtle: #f6f8f7;
+  --surface-selected: #e5f2ef;
+  --text: #1d3036;
+  --muted: #4e6469;
+  --line: #d9e2e0;
+  --line-strong: #a2b6b1;
+  --accent: #006b60;
+  --accent-strong: #004f48;
+  --accent-soft: #e5f2ef;
+  --focus: #007f73;
+  --nav-background: #192f37;
+  --nav-text: #e2edec;
+  --nav-muted: #b7cccb;
+  --nav-selected: #2b494e;
+  --nav-marker: #7ddbc5;
+  --success: #236645;
+  --success-soft: #e8f3ec;
+  --failure: #a03932;
+  --failure-soft: #fbefed;
+  --unknown: #795615;
+  --unknown-soft: #f7f0df;
+  --radius: 4px;
+  --motion-fast: 120ms;
+  --motion-standard: 180ms;
+  --motion-easing: cubic-bezier(.2,0,.38,.9);
+  --font-ui: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --font-data: "Cascadia Code", Consolas, ui-monospace, monospace;
+}

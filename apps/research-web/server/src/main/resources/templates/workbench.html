@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en" xmlns:th="http://www.thymeleaf.org">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Conformance analysis | Experiment Workspace</title>
+  <link rel="stylesheet" th:href="@{/workbench.css}">
+  <script th:src="@{/job-status.js}" defer></script>
+</head>
+<body th:attr="data-active=${active},data-run=${selected != null ? selected.id : ''},data-updated=${selected != null ? selected.updated : ''}">
+<div class="app">
+  <aside th:replace="~{navigation :: main(${active ? 'runs' : form == 'ANALYZE' ? 'workflow' : 'results'})}"></aside>
+  <main id="main-content" tabindex="-1">
+    <header class="top"><span>Conformance analysis</span><span class="scope-badge">Local · trusted operator</span></header>
+    <div class="workspace">
+      <section th:replace="~{pipeline-stages :: map(${selected == null ? 'configure' : selected.operation == 'REPLAY' ? 'replay' : selected.operation == 'GITHUB_IMPORT' ? 'acquire' : active ? 'run' : 'inspect'})}"></section>
+      <div class="activity-banner panel" th:if="${active}" role="status"><span class="activity-indicator" aria-hidden="true"></span><div><strong th:text="${selected.state == 'QUEUED' ? 'Queued : waiting for a compute slot' : selected.state == 'CANCELLING' ? 'Cancelling : waiting for owned processes to stop' : 'Work is running'}"></strong><p th:text="${selected.message}"></p><p class="status-meta">Recorded state: <b th:text="${selected.state}"></b>. Last update: <time th:datetime="${selected.updated}" th:text="${selected.updated}"></time>. <a href="/documentation/reference/operations.md#attempt-states">State meanings</a></p><small id="connection-state">Live status updates every 2 seconds. You can leave this page open.</small></div></div>
+      <p class="error" role="alert" th:if="${blocked}">Interrupted worker ownership needs local reconciliation. New launches are blocked.</p>
+      <section class="panel setup" th:if="${form != null}">
+        <div class="section-title"><h2 th:text="${form == 'IMPORT' ? 'Import a recorded analysis' : 'Configure a Java analysis'}"></h2><a th:href="@{/}">Close</a></div>
+        <p class="muted">Trusted input root: <code th:text="${inputRoot}"></code></p>
+        <form method="post" th:action="${form == 'IMPORT'} ? @{/ui/imports} : @{/ui/runs}">
+          <input type="hidden" name="_csrf" th:value="${csrf}"><input type="hidden" name="idempotencyKey" th:value="${requestKey}">
+          <label>Run label<input name="label" required maxlength="120"></label>
+          <label th:if="${form == 'IMPORT'}">Result directory<input name="result" required></label>
+          <label><span th:text="${form == 'IMPORT' ? 'Matching source directory (optional)' : 'Source directory'}"></span>
+            <input name="source" th:required="${form == 'ANALYZE'}">
+          </label>
+          <p class="notice" th:text="${form == 'IMPORT' ? 'Java, Python and C++ results from the matching engine/profile. Import checks integrity; it does not replay Alloy.' : 'Default Java observer; bundled rule profile; 120 s analysis budget. Source-only observation does not establish author-build ownership.'}"></p>
+          <button class="primary" type="submit" th:disabled="${blocked}" th:text="${form == 'IMPORT' ? 'Import and inspect' : 'Start analysis'}"></button>
+        </form>
+      </section>
+      <section class="empty-workspace" th:if="${selected == null and form == null}">
+        <h1>Conformance analysis</h1>
+        <p>Select a recorded run, start an analysis, or import results. Inspect source facts, evidence, formal decisions and witnesses before requesting a separate replay.</p>
+        <dl class="identity"><dt>Analysis currently available</dt><dd>Java, default source-only observation</dd><dt>Result inspection</dt><dd>Java, Python and C++ results from the matching engine</dd><dt>Formal conditions</dt><dd>Matching engine bundled profile</dd></dl>
+      </section>
+      <th:block th:if="${selected != null}">
+        <div class="run-heading">
+          <div><span class="eyebrow" th:text="${selected.operation + ' / ' + selected.id}"></span><h1 th:text="${selected.label}"></h1><p class="muted" th:text="${selected.message}"></p></div>
+          <div class="actions">
+            <span class="badge" th:classappend="${#strings.toLowerCase(selected.state)}" th:text="${selected.state}"></span>
+            <form th:if="${active}" method="post" th:action="@{/ui/runs/{id}/cancel(id=${selected.id})}"><input type="hidden" name="_csrf" th:value="${csrf}"><button th:disabled="${selected.state == 'CANCELLING'}">Cancel</button></form>
+            <form th:if="${overview != null}" method="post" th:action="@{/ui/runs/{id}/replay(id=${selected.id})}"><input type="hidden" name="_csrf" th:value="${csrf}"><input type="hidden" name="idempotencyKey" th:value="${requestKey}"><button title="Independently rerun the recorded formal checks; this does not re-extract source.">Verify result (replay)</button></form>
+          </div>
+        </div>
+        <section class="panel" th:if="${acquisition != null}">
+          <h2>Repository provenance</h2>
+          <dl class="identity"><dt>Repository</dt><dd th:text="${acquisition.url}"></dd><dt>Requested revision</dt><dd th:text="${acquisition.requestedRevision}"></dd><dt>Resolved commit</dt><dd><code th:text="${acquisition.resolvedCommit}"></code></dd><dt>Selected source directory</dt><dd th:text="${acquisition.sourceSubdirectory.isEmpty() ? '(repository root)' : acquisition.sourceSubdirectory}"></dd><dt>Acquisition state</dt><dd th:text="${acquisition.state}"></dd></dl>
+          <p th:if="${acquisition.state == 'RETAINED'}"><span th:text="${acquisition.fileCount}"></span> tracked files retained; <span th:text="${acquisition.sourceBytes}"></span> bytes; <span th:text="${acquisition.acquisitionSeconds}"></span> s acquisition.</p>
+          <p class="notice" th:text="${acquisition.sourceMode}"></p>
+          <a th:href="@{/api/v1/runs/{id}/artifacts/acquisition.json(id=${selected.id})}">Download commit and source-hash receipt</a>
+          <p th:if="${acquisition.containsKey('discoveryReceiptSha256')}"><a th:href="@{/api/v1/runs/{id}/artifacts/discovery.json(id=${selected.id})}">Download the linked discovery query and candidate page</a></p>
+          <form th:if="${selected.operation == 'GITHUB_IMPORT' and selected.state == 'COMPLETED'}" method="post" th:action="@{/ui/repositories/{id}/analyze(id=${selected.id})}">
+            <input type="hidden" name="_csrf" th:value="${csrf}"><input type="hidden" name="idempotencyKey" th:value="${requestKey}"><button>Analyze retained Java source</button>
+          </form>
+        </section>
+        <th:block th:if="${overview != null}">
+          <div class="metrics">
+            <div class="metric" th:each="entry : ${decisionCounts}" th:classappend="${#strings.toLowerCase(entry.key)}"><span th:text="${entry.key == 'CONFORMANT' ? 'CONFORMANT RULES' : entry.key == 'NON_CONFORMANT' ? 'RULES WITH VIOLATIONS' : 'NOT EVALUATED'}"></span><strong th:text="${entry.value}"></strong></div>
+            <div class="metric"><span>CLASSIFIERS / MEMBERS</span><strong th:text="${overview.counts.classifiers + ' / ' + overview.counts.members}"></strong></div>
+          </div>
+          <p class="interpretation">Decisions concern the selected formal profile and measured source world. Missing evidence is not conformance.</p>
+          <nav class="tabs" aria-label="Inspector sections"><a th:each="item : ${tabs}" th:href="@{/(run=${selected.id},tab=${item})}" th:classappend="${tab == item} ? 'active'" th:attr="aria-current=${tab == item ? 'page' : null}" th:text="${item}"></a></nav>
+          <section class="panel inspector" th:switch="${tab}">
+            <th:block th:case="'Overview'" th:insert="~{inspector :: overview}"></th:block>
+            <th:block th:case="'Decisions'" th:insert="~{inspector :: decisions}"></th:block>
+            <th:block th:case="'Model'" th:insert="~{inspector :: model}"></th:block>
+            <th:block th:case="'Sources'" th:insert="~{inspector :: model}"></th:block>
+            <th:block th:case="'Evidence'" th:insert="~{inspector :: evidence}"></th:block>
+            <th:block th:case="'Artifacts'" th:insert="~{inspector :: artifacts}"></th:block>
+          </section>
+          <section class="panel trace" th:if="${entityText != null or sourceView != null or sourceError != null}">
+            <h2>Source ↔ model trace</h2>
+            <p class="error" role="alert" th:if="${sourceError != null}" th:text="${sourceError}"></p>
+            <div class="trace-grid">
+              <pre th:if="${entityText != null}" th:text="${entityText}"></pre>
+              <div th:if="${sourceView != null}"><p><code th:text="${sourceView.path}"></code> · hash checked</p><ol class="source-code"><li th:each="text,status : ${sourceView.lines}" th:classappend="${line == status.count} ? 'highlight'"><code th:text="${text.isEmpty() ? ' ' : text}"></code></li></ol></div>
+            </div>
+          </section>
+        </th:block>
+        <section class="panel" th:if="${overview == null}">
+          <h2 th:text="${selected.operation == 'REPLAY' ? 'Independent formal replay' : 'Execution record'}"></h2><p th:text="${selected.message}"></p>
+          <p th:if="${selected.replayOf != null}"><a th:href="@{/(run=${selected.replayOf})}">Open original analysis</a></p>
+          <p class="notice" th:text="${active ? 'The job runs independently of this page. You may close the browser and return later.' : 'No observation or formal decisions are fabricated for this operation.'}"></p>
+          <p th:if="${#strings.startsWith(selected.operation,'GITHUB_')}"><a th:href="@{/api/v1/runs/{id}/artifacts/git-fetch-error.log(id=${selected.id})}">Git fetch diagnostic log</a></p>
+          <p th:if="${selected.operation != 'GITHUB_IMPORT'}"><a th:href="@{/api/v1/runs/{id}/artifacts/worker.log(id=${selected.id})}">Download analysis worker log</a></p>
+          <a th:href="@{/(run=${selected.id})}">Refresh status</a>
+        </section>
+        <details class="lifecycle"><summary>Recorded lifecycle</summary><p th:each="event : ${events}"><code th:text="${event.run.updated}"></code> <b th:text="${event.run.state}"></b> <span th:text="${event.run.message}"></span></p></details>
+      </th:block>
+    </div>
+  </main>
+</div>
+</body>
+</html>

@@ -58,7 +58,7 @@ verification_exit=99
 if [[ ${clone_exit} -eq 0 ]]; then
   python_files="$(find "${source_root}" -type f -name '*.py' | wc -l)"
 
-  if bash ./scripts/resolve-python-dependencies.sh "${source_root}" "${dependency_manifest}" \
+  if bash ./tools/resolve-python-dependencies.sh "${source_root}" "${dependency_manifest}" \
       >"${output_root}/dependency-resolution.log" 2>&1; then
     dependency_resolution_exit=0
     dependency_distribution_count="$(awk -F '\t' '$1 == "distribution" {print $3}' "${dependency_manifest}" | sort -u | wc -l)"

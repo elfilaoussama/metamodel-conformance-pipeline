@@ -12,7 +12,7 @@ prefix-composer SPI; it does not parse or copy local repository layout/tracking.
 Prepare a new cache directory once, on native Linux storage:
 
 ~~~bash
-python3 -B scripts/maven-cache/cache-profile.py prepare \
+python3 -B tools/maven-cache/cache-profile.py prepare \
   /absolute/path/to/new-cache "$MAVEN_RESOLVER_IMAGE"
 ~~~
 
@@ -20,7 +20,7 @@ Use it explicitly with the normal resolver:
 
 ~~~bash
 MAVEN_RESOLVER_CACHE_PROFILE=/absolute/path/to/new-cache \
-  scripts/resolve-maven-dependencies.sh /absolute/source /absolute/manifest.tsv
+  tools/resolve-maven-dependencies.sh /absolute/source /absolute/manifest.tsv
 ~~~
 
 The image and normal dependency goal remain explicit provider inputs. Without
@@ -57,5 +57,5 @@ Primary references:
 - [Resolver 1.x configuration](https://maven.apache.org/resolver-1.x/configuration.html)
 - [Resolver 1.x named locking](https://maven.apache.org/resolver-1.x/maven-resolver-impl/synccontextfactory.html)
 
-The earlier manual artifact-copy seed under scripts/performance/cache-seed-diagnostic
+The earlier manual artifact-copy seed under tools/performance/cache-seed-diagnostic
 remains a rejected diagnostic. This profile does not use it.

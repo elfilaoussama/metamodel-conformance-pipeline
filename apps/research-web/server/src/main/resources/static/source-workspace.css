@@ -1,0 +1,57 @@
+/* Source configuration and run review use a single action area and a readable batch table. */
+.source-editor{max-width:none}
+.source-editor>summary{font-size:14px}
+.source-editor .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}
+.source-editor label{font-size:13px;margin:14px 0}
+.source-editor .source-location{grid-column:1/-1}
+.source-editor .field-help{display:block;margin-top:8px;font-weight:400}
+.source-editor #git-source-settings{padding:16px;background:var(--surface-subtle);border:1px solid var(--line);border-radius:6px;margin:10px 0 20px}
+.source-editor .form-grid input,.source-editor select{font-size:14px}
+.source-editor .form-grid input{background:var(--surface)}
+.source-editor #git-source-settings>summary{font-size:13px}
+.project-selection .filter-bar{margin:18px 0}
+.project-selection .empty-state{padding:30px 16px;border:1px dashed var(--line-strong);border-radius:6px;margin:20px 0}
+.selection-status{display:flex;flex-direction:column;gap:6px}
+.selection-status strong{font-size:14px}
+.configuration-actions{position:static;box-shadow:none;display:flex;align-items:center;justify-content:space-between;gap:18px;margin-top:22px}
+.source-editor #source-editor>button{margin-right:12px}
+.configuration-actions .actions{justify-content:flex-end;flex-wrap:wrap}
+.selection-management{padding-top:20px;margin-top:22px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+.selection-management p{line-height:1.6}
+.selection-management button{color:var(--failure)}
+.review-statistics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px;margin-bottom:22px}
+.review-statistics>div{background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:18px 20px}
+.review-statistics strong{display:block;font-size:28px;margin-bottom:8px;color:var(--accent)}
+.review-statistics span{font-size:12px;color:var(--muted)}
+.review-table{table-layout:fixed}
+.review-table th{background:var(--surface-subtle)}
+.review-table th:first-child{width:24%}
+.review-table th:last-child{width:28%}
+.review-table td{vertical-align:top;line-height:1.6;overflow-wrap:anywhere}
+.review-table td small{display:block;margin-top:8px;color:var(--muted)}
+.review-table td p{margin:12px 0 4px}
+.review-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin:24px 0 16px;padding-top:20px;border-top:1px solid var(--line)}
+.review-actions form{margin:0}
+.review-settings details{margin-top:20px;font-size:13px;line-height:1.7}
+.review-settings .identity{margin-top:24px}
+.review-projects .activity-banner{margin-top:18px}
+
+@media(max-width:1000px){.configuration-actions{flex-direction:column;align-items:stretch}
+.configuration-actions .actions{justify-content:flex-start}
+.review-statistics{gap:10px}
+.review-statistics>div{padding:16px}
+}
+@media(max-width:720px){.source-editor .form-grid{grid-template-columns:1fr}
+.source-editor label{margin:12px 0}
+.review-statistics{grid-template-columns:repeat(2,minmax(0,1fr))}
+.review-table thead{display:none}
+.review-table tr{display:block;padding:12px 0;border-bottom:1px solid var(--line)}
+.review-table td{display:block;border:0;padding:8px 0}
+.review-table td:first-child{font-size:15px}
+.review-table td p{margin:8px 0}
+.review-actions{align-items:stretch}
+.review-actions form,.review-actions button{width:100%}
+.configuration-actions .actions{display:flex;flex-direction:column;align-items:stretch}
+}
+
+.configuration-actions .primary { margin-right: 0; }

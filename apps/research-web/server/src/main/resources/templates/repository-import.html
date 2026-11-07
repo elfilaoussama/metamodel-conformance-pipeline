@@ -1,0 +1,18 @@
+<!doctype html><html xmlns:th="http://www.thymeleaf.org"><body><th:block th:fragment="form">    <details id="repository-import" class="panel setup direct-import" th:if="${collection == null}" th:open="${!url.isEmpty() or importOpen}"><summary>Import repository URLs directly</summary>
+      <h2>Retain source or start a Java analysis</h2>
+      <p class="error" th:if="${blocked}">Interrupted worker ownership needs reconciliation before new work can start.</p>
+      <form method="post" th:action="@{/ui/repositories}">
+        <input type="hidden" name="_csrf" th:value="${csrf}"><input type="hidden" name="idempotencyKey" th:value="${requestKey}">
+        <input th:if="${discoveryId != null}" type="hidden" name="discoveryId" th:value="${discoveryId}">
+        <p th:if="${discoveryId != null}" class="notice">This selection is linked to the retained discovery query and candidate page. To import other URLs, <a th:href="@{/repositories(import=1)}">start a direct import</a>.</p>
+        <label>Repository URLs, one per line<textarea name="urls" rows="3" required th:text="${url}" placeholder="https://github.com/OWNER/REPOSITORY"></textarea></label>
+        <label>Revision: branch, tag or full commit ID<input name="revision" required maxlength="200" th:value="${revision}"></label>
+        <p class="muted">HEAD selects the default branch at acquisition time. The exact resolved commit is recorded; later changes to that branch do not change this attempt.</p>
+        <label>Source subdirectory (optional, relative to repository root)<input name="subdirectory" maxlength="500" placeholder="src/main/java"></label>
+        <label>After ingestion<select name="mode"><option value="IMPORT">Retain pinned source only</option><option value="JAVA">Analyze Java source and inspect formal results</option></select></label>
+        <p class="notice">Analysis currently uses the default Java source-only observer and bundled formal profile. It does not execute repository build scripts or resolve dependencies. Python/C++ source may be retained; execution configuration for those languages is still pending.</p>
+        <details><summary>Acquisition limits and unsupported inputs</summary><p>120 s acquisition budget; 256 MiB acquired Git data by default; up to 2,000 selected files, 64 MiB total, 2 MiB per file. These are operational limits. Symlinks, submodules, unresolved LFS pointers and unsafe/non-portable paths in the selected source are rejected explicitly. Content is read from Git blobs without checkout filters or archive exclusions. File modes are recorded; executable permissions are not applied.</p></details>
+        <button class="primary" type="submit" th:disabled="${blocked}">Queue repositories</button>
+      </form>
+    </details>
+</th:block></body></html>
