@@ -1,0 +1,43 @@
+name: Research-only Step09 current-engine fidelity controls
+on:
+  push:
+    branches:
+      - research/step09-observability-audit-20261108
+    paths:
+      - 'tools/step09-fidelity/**'
+      - '.github/workflows/step09-20261108-fidelity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  exact-current-engine-controls:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Guard production code unchanged
+        run: |
+          git merge-base --is-ancestor 5ea604fb29b0ff9807c621b7286691440ee9a630 HEAD
+          if git diff --name-only 5ea604fb29b0ff9807c621b7286691440ee9a630 HEAD | grep -vE '^(tools/step09-fidelity/|\.github/workflows/step09-20261108-fidelity.yml$)'; then
+            echo "Unexpected production file change"
+            exit 1
+          fi
+      - name: Build unmodified engine
+        run: mvn --batch-mode --no-transfer-progress -DskipTests package
+      - name: Native source oracle then observe/analyze/replay
+        run: bash tools/step09-fidelity/execute.sh
+      - name: Archive exact inputs and full observed outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: step09-source-to-alloy-10-controlled-cases
+          path: step09-results/
+          if-no-files-found: warn
+          retention-days: 30
