@@ -1,57 +1,35 @@
-# Pipeline architecture visual QA and semantic correspondence
+# Architecture diagram: iterative visual and technical QA
 
-## Basis
+**Scope:** The existing EMF/Ecore/XMI/Alloy core-architecture figure, not scientific verification of the pipeline. Based on the preceding `pipeline_architecture_review_fixed` version.
 
-- Existing `documentation/assets/pipeline-architecture/pipeline_modules_with_assets.tikz` from GitHub at commit `984e56af00bcd232e75dafddbfb7fde4873da1a3`.
-- User-provided render review: global flow, dispatch fan-out, connector corridors, retained artifact inputs, alignment, vocabulary, print size, and logo consistency.
-- User's established design: one outer dashed boundary; horizontal and vertical dashed modules, plus one circular shared-observation module; limited black/gray palette and no legend.
+## Rendered revision loops
 
-## Seven actual render-and-review passes
+| Iteration | Screenshot / intervention | Defect and disposition |
+|---|---|---|
+| 01 | `iterations/iteration_01.png` | Raised shared-model core; enlarged Evidence admission; gave artifacts and documents consistent tint. Detected overlapping conformant/nonconformant ellipse shapes, Replay status collision, and disconnected observer output. |
+| 02 | `iterations/iteration_02.png` | Replaced ellipses with compact rounded *status pills* (not execution rectangles), separated replay status, connected observer rail. Detected a small diagonal observer link and long gaps in dotted prerequisite routing. |
+| 03 | `iterations/iteration_03.png`, `iterations/ieee_page_03.png` | Orthogonalized observer output; shortened broken prerequisite-wire gaps; compiled in IEEEtran. Detected text under 7 pt after scaling, particularly status identifiers. |
+| 04 | `iterations/iteration_04.png`, `preview.png` | Increased verdict labels, yes/no, replay text, and rule-profile filename to ~7.2 pt effective at IEEE full width; no overlap in final viewed screenshot. |
 
-| Pass | Inspection and correction |
-| --- | --- |
-| 01 | Rebuilt source entry at the upper left, made Dispatch a true fan-out, established independent XMI/yes/no connector routes, and added XMI/Alloy/decision provenance bus. Initial screenshot revealed tight source nodes, an evidence-heading collision, and oversized artifact store. |
-| 02 | Separated source elements, moved the evidence feed to a shared XMI bus, reduced the artifact store label, and moved yes/no annotations. Screenshot showed the retained ellipse / profile-file layout still needed work. |
-| 03 | Merged the two declarative rule files into one compact document node, removed dangling metadata-arrowheads and revised the replay region. Screenshot found replay nodes colliding. |
-| 04 | Shortened replay status to `Status` and moved the replay components into a side-by-side chain. |
-| 05 | Adjusted replay padding; compiled inside IEEEtran and inspected several 310-dpi crops. Found `NOT_EVALUATED` extending beyond its dashed boundary. |
-| 06 | Moved `NOT_EVALUATED` wholly inside Evidence admission and added orthogonal spacing and readable yes/no annotations; preserved an unobstructed input corridor. |
-| 07 | Increased separation between the XMI-to-encoder route and the rule-prerequisite route, and slightly reduced the single combined rule filename label to allow padding. |
+## Geometry and meaning
 
-## Status against the reviewer comments
+- **Dashed enclosing boundary**: entire research pipeline; **finer dashed containers**: architectural modules; center observation module remains a circle.
+- **Rectangular processing nodes**: operations / adapters / solver / capsule services.
+- **Pale-blue wavy document nodes**: source/generated formal files, including `observation.xmi`, `repository-instance.als`, and the verification capsule.
+- **Muted-teal cylinders**: structured EMF/Ecore observation representation and retained artifact bundle, **not** arbitrary processing.
+- **Evidence diamond**: readiness/admissibility gate; solid dark-blue arrows indicate main data/control flows, thin pale dotted arrow indicates a rule-prerequisite dependency.
+- **Verdict pills**: `CONFORMANT` (green), `NON_CONFORMANT` (terracotta), `NOT_EVALUATED` (ochre). Colors are reinforced with direct text labels. Non-conformance is based on a violating witness, not on a general claim that the source program is invalid.
 
-| Reviewer point | Result |
-| --- | --- |
-| Provider looped along full upper/left outline | Fixed: top-left source module points directly into Dispatch. |
-| Dispatch appeared bypassed | Fixed: Dispatch feeds one branching rail with three explicit tool arrows. |
-| Spiraling main sequence | Simplified: source -> observers -> shared model -> formal verification -> retained artifacts; independent replay branches from the capsule. |
-| Parallel connector congestion | Improved with separate corridors; source XMI feeds the encoder above, evidence below, and provenance along an independent lower rail. |
-| Circle's title inconsistent | Fixed: centered title breaks the circle's upper dashed arc. Circle retained by design. |
-| Work units arrow to Alloy not visible | Confirmed explicit arrow with a visible gap. |
-| Oblique/diagonal paths | Main links are orthogonal; small arrowheads connect to component anchors. |
-| Yes/no annotation too small | Both set at `\small`, placed adjacent to their branches. |
-| Replay connector angled | Reorganized as a horizontal capsule -> capsule verifier -> status path. |
-| Arrows ended at dashed module borders | Functional arrows terminate on their actual component nodes. |
-| Registry/Alloy file merge cramped | A compact combined document node with a centered output was substituted; semantics of two declarative inputs retained. |
-| Artifact store showed only decision provenance | Three source paths merge before the retained store: XMI, exact Alloy instance, and decisions. |
-| Uneven module alignment | Left source/observers and right profile/formal modules share aligned edges. |
-| Tight module padding | Fixed known overlap of NOT_EVALUATED and replay; minor profile label spacing validated visually. |
-| Ellipse semantics unclear | Ellipses used only for states; solver and admission are processing components. |
-| Gray fills / shape legend | Not used, respecting user request for restrained monochrome diagram and no legend. |
-| Print legibility | IEEEtran `figure*` run: main text ~7.87 pt; compact rulefile label ~7.44 pt. Do not place single-column. |
-| Jagged logos | Supplied full-resolution PNGs used as small embedded observer/source icons; embedded source resolution is >1,000 ppi at displayed size. No external logos were substituted. |
+## Final checks
 
-## Automated checks
+- LaTeX compilation of standalone source and IEEEtran `figure*`: **passed**.
+- `main.pdf` has one page; IEEE test document has two pages. Both are viewable.
+- PDF diagram text is editable/vector; the **four user-provided logos remain raster images**, and are embedded as assets, not redrawn.
+- No `Overfull \\hbox` or `Overfull \\vbox` warnings were found in the final standalone and IEEE build logs.
+- Measured IEEE figure text in PDF: representative regular labels **7.23 pt**, registry filename **7.15 pt**, statuses **7.23 pt**. These measurements are based on the tested full-width two-column IEEEtran placement, not a single-column placement.
+- Source code and graphical symbols denote the observed pipeline's *contract*. This figure does **not** demonstrate correctness of the pipeline's scientific judgments or that an experiment has been executed.
+- The missing-evidence branch visually explains one way to obtain `NOT_EVALUATED`; solver/tool failures may also yield that outcome and are documented in the README rather than drawn as an additional crossing arrow.
 
-- `pdflatex` standalone and IEEE integration both compiled with no overflow or fatal warnings.
-- Every critical architecture label is present in the PDF's searchable text.
-- The standalone PDF page is approximately 592 x 405 pt, sized for a `figure*` placement.
-- The drawing and text are vector. Four logos are the only raster content, with high effective embedded resolution.
-- `qa_machine_checks.json` records relevant measured font sizes and PDF metadata.
+## Remaining practical consideration
 
-## Limitations
-
-- Visual review remains qualitative and does not establish formal source-observer correctness or invariant soundness.
-- Artifact-provenance lines intentionally occupy a narrow corridor below the evidence and verification modules. They represent retained inputs, not runtime control flow.
-- This figure is too wide for an IEEE single column; use a full-width `figure*`.
-- PDF output uses the four user-provided raster logos because those are the requested image assets; they are not vector-traced substitutes.
+At a narrower journal width, all labels would shrink; keep the Figure* full double-column layout. The diagram retains only a small number of right-angle connectors where artifact provenance crosses the formal-module boundary; these are visible and distinguishable from dashed module outlines. Figure appearance and exact fonts should be checked once in the final manuscript's actual composition.

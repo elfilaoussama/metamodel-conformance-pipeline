@@ -1,0 +1,62 @@
+{
+  "compiled": true,
+  "ieee_compiled": true,
+  "standalone_page_count": 1,
+  "ieee_page_count": 2,
+  "labels_checked": [
+    {
+      "text": "Evidence admission",
+      "size_pt": 7.23
+    },
+    {
+      "text": "Spoon / javac",
+      "size_pt": 7.23
+    },
+    {
+      "text": "registry.json / invariants.als",
+      "size_pt": 7.15
+    },
+    {
+      "text": "NOT_EVALUATED",
+      "size_pt": 7.23
+    },
+    {
+      "text": "no",
+      "size_pt": 7.23
+    },
+    {
+      "text": "yes",
+      "size_pt": 7.23
+    },
+    {
+      "text": "CONFORMANT",
+      "size_pt": 7.23
+    },
+    {
+      "text": "NON_CONFORMANT",
+      "size_pt": 7.23
+    },
+    {
+      "text": "Replay status",
+      "size_pt": 7.23
+    },
+    {
+      "text": "Fig. 1. Core architecture of the metamodel conformance pipeline. Language observers produce normalized EMF/Ecore and XMI evidence;",
+      "size_pt": 7.97
+    },
+    {
+      "text": " CONFORMANT",
+      "size_pt": 7.97
+    },
+    {
+      "text": "NON_CONFORMANT",
+      "size_pt": 7.97
+    },
+    {
+      "text": " NOT_EVALUATED",
+      "size_pt": 7.97
+    }
+  ],
+  "warnings": [],
+  "png_assets": 4
+}

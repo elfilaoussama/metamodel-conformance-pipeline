@@ -10,7 +10,7 @@
 \begin{figure*}[t]
 \centering
 \resizebox{\textwidth}{!}{\input{pipeline_modules_with_assets.tikz}}
-\caption{Core architecture of the metamodel conformance pipeline. Language-specific observers produce a shared EMF/Ecore observation; exact Alloy encoding and evidence-qualified evaluation yield retained decisions and replayable artifacts.}
+\caption{Core architecture of the metamodel conformance pipeline. Language observers produce normalized EMF/Ecore and XMI evidence; a registered invariant profile supplies formal rules and evidence prerequisites. Qualified Alloy evaluation reports invariant-level \texttt{CONFORMANT}, \texttt{NON\_CONFORMANT} or \texttt{NOT\_EVALUATED} decisions and retained witnesses for capsule replay.}
 \label{fig:core-pipeline}
 \end{figure*}
 \null\newpage

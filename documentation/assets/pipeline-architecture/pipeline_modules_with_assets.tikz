@@ -1,139 +1,179 @@
-% Research architecture of the EMF/XMI-to-Alloy metamodel conformance pipeline.
-% Labels reflect the November 2026 pipeline. Not an experimental result figure.
-% Dashed system boundary; dashed modules (vertical/horizontal rectangular + centered circular).
-% Processing in rectangles; files as document symbols; persisted bundle as cylinder; states as ovals.
-% Full supplied logos identify observers, not intermediate processing steps.
+% Core research architecture of the observed EMF/XMI -> exact Alloy pipeline.
+% Semantic graphic vocabulary:
+% dashed cool-grey containers = modules; solid neutral rectangles = operations;
+% pale blue document-shaped nodes = immutable source/generated files;
+% muted teal cylinders = structured representations / retained bundle;
+% outlined diamond = evidence-admissibility decision; softly tinted ellipses = rule status.
+% Source-language logos are identifiers attached to the observer operations.
+\definecolor{modline}{HTML}{8799A6}
+\definecolor{modfill}{HTML}{FCFDFD}
+\definecolor{flowink}{HTML}{263B4D}
+\definecolor{procink}{HTML}{526574}
+\definecolor{fileink}{HTML}{386D92}
+\definecolor{filefill}{HTML}{EAF3F9}
+\definecolor{storeink}{HTML}{467978}
+\definecolor{storefill}{HTML}{E9F2F0}
+\definecolor{gatefill}{HTML}{F6F5EE}
+\definecolor{yesfill}{HTML}{E9F4ED}
+\definecolor{yesink}{HTML}{477358}
+\definecolor{nofill}{HTML}{F8EEE9}
+\definecolor{noink}{HTML}{96664F}
+\definecolor{unknownfill}{HTML}{F7F2E6}
+\definecolor{unknownink}{HTML}{806C40}
 \begin{tikzpicture}[
- x=1cm,y=1cm,>=Stealth,line join=round,line cap=round,
- sys/.style={draw=black!88,line width=.85pt,dash pattern=on 6pt off 3.5pt},
- module/.style={draw=black!66,line width=.58pt,dash pattern=on 3pt off 2.5pt},
- mb/.style={module,rounded corners=.10cm},
- mh/.style={font=\small\sffamily\bfseries,inner xsep=3pt,inner ysep=1pt,fill=white},
- title/.style={font=\normalsize\sffamily\bfseries,inner xsep=5pt,fill=white},
- proc/.style={rectangle,draw=black!84,line width=.59pt,rounded corners=1.1pt,fill=white,inner xsep=6pt,inner ysep=4pt,minimum height=.61cm,font=\small\sffamily,align=center},
- sourcefile/.style={tape,tape bend top=none,tape bend bottom=in and out,draw=black!77,line width=.58pt,fill=white,font=\small\ttfamily,inner xsep=6pt,inner ysep=4pt,minimum height=.58cm,align=center},
- db/.style={cylinder,shape border rotate=90,aspect=.19,draw=black!80,line width=.6pt,fill=white,inner xsep=7pt,inner ysep=4pt,minimum height=.72cm,font=\small\sffamily,align=center},
- state/.style={ellipse,draw=black!83,line width=.57pt,fill=white,font=\small\sffamily,inner xsep=7pt,inner ysep=4pt,minimum height=.52cm,align=center},
- gate/.style={diamond,aspect=1.85,draw=black!83,line width=.62pt,fill=white,font=\small\sffamily,inner sep=2pt,minimum width=1.5cm,minimum height=.92cm,align=center},
- flow/.style={-{Stealth[length=4.3pt,width=3.2pt]},draw=black!84,line width=.63pt},
- bus/.style={draw=black!80,line width=.60pt},
- reqwire/.style={draw=black!65,line width=.55pt,dash pattern=on 2pt off 2pt},
- requires/.style={-{Stealth[length=4.1pt,width=2.7pt]},draw=black!65,line width=.55pt,dash pattern=on 2pt off 2pt},
- branchtext/.style={font=\small\sffamily,inner sep=1.7pt,fill=white},
+ x=1cm,y=1cm,>=Stealth,line cap=round,line join=round,
+ system/.style={draw=flowink,line width=.90pt,dash pattern=on 6pt off 3.4pt},
+ module/.style={draw=modline,line width=.56pt,dash pattern=on 3.3pt off 3.1pt,fill=modfill},
+ mb/.style={module,rounded corners=1pt},
+ mh/.style={font=\small\sffamily\bfseries,fill=white,inner xsep=4pt,inner ysep=1.3pt,text=flowink},
+ syshead/.style={font=\normalsize\sffamily\bfseries,fill=white,inner xsep=5pt,text=flowink},
+ op/.style={rectangle,draw=procink,line width=.56pt,rounded corners=1pt,fill=white,font=\small\sffamily,
+ align=center,minimum height=.62cm,inner xsep=5pt,inner ysep=3pt},
+ file/.style={tape,tape bend top=none,tape bend bottom=in and out,draw=fileink,
+ line width=.62pt,fill=filefill,font=\small\ttfamily,align=center,minimum height=.58cm,
+ inner xsep=6pt,inner ysep=4pt},
+ store/.style={cylinder,shape border rotate=90,aspect=.18,draw=storeink,
+ line width=.64pt,fill=storefill,font=\small\sffamily,align=center,
+ minimum height=.72cm,inner xsep=7pt,inner ysep=4pt},
+ gate/.style={diamond,aspect=1.88,draw=procink,line width=.72pt,
+ fill=gatefill,font=\small\sffamily,inner sep=2pt,minimum width=1.52cm,
+ minimum height=.97cm,align=center},
+ status/.style={rectangle,rounded corners=7pt,line width=.62pt,align=center,minimum height=.55cm,
+ font=\small\ttfamily,inner xsep=6pt,inner ysep=3pt},
+ pass/.style={status,draw=yesink,fill=yesfill},
+ fail/.style={status,draw=noink,fill=nofill},
+ unknown/.style={status,draw=unknownink,fill=unknownfill},
+ neutral/.style={status,draw=procink,fill=white,font=\small\sffamily},
+ flow/.style={-{Stealth[length=4.4pt,width=3.2pt]},draw=flowink,line width=.77pt},
+ bus/.style={draw=flowink,line width=.70pt},
+ dependency/.style={-{Stealth[length=3.7pt,width=2.9pt]},draw=modline,line width=.71pt,densely dotted},
+ depwire/.style={draw=modline,line width=.66pt,densely dotted},
+ texttag/.style={font=\small\sffamily,inner xsep=2pt,inner ysep=1pt,fill=white,text=flowink}
 ]
-% System boundary and module frames. No color backgrounds needed for print.
-\draw[sys] (0,0) rectangle (20.5,13.65);
-\node[title,anchor=west] at (.50,13.65) {Metamodel conformance pipeline};
+% ---- Module layer. Only upright / horizontal dashed rectangles and one circle.
+\draw[system] (0,0) rectangle (20.5,13.65);
+\node[syshead,anchor=west] at (.5,13.65) {Metamodel conformance pipeline};
 \draw[mb] (.85,11.45) rectangle (6.45,13.15);
 \node[mh] at (3.22,13.15) {Source / build context};
-\draw[mb] (.85,5.17) rectangle (6.45,11.04);
+\draw[mb] (.85,4.76) rectangle (6.20,11.04);
 \node[mh,anchor=west] at (1.06,11.04) {Language observers};
-\draw[module] (9.90,8.08) circle[radius=2.43cm];
-\node[mh] at (9.90,10.25) {Shared observation};
+\draw[module] (9.90,8.62) circle[radius=2.50cm];
+\node[mh] at (9.90,10.88) {Shared observation};
 \draw[mb] (14.05,11.05) rectangle (19.65,13.15);
 \node[mh] at (16.85,13.15) {Invariant profile};
-\draw[mb] (14.05,3.11) rectangle (19.65,10.67);
+\draw[mb] (14.05,3.10) rectangle (19.65,10.67);
 \node[mh] at (16.85,10.67) {Formal verification};
-\draw[mb] (7.18,3.11) rectangle (12.54,5.40);
-\node[mh,anchor=west] at (7.37,5.40) {Evidence admission};
-\draw[mb] (.85,.67) rectangle (6.15,2.65);
-\node[mh] at (3.50,2.65) {Independent replay};
-\draw[mb] (6.65,.67) rectangle (19.65,2.65);
-\node[mh,anchor=west] at (7.30,2.65) {Retained research artifacts};
+\draw[mb] (7.18,3.05) rectangle (12.54,5.73);
+\node[mh,anchor=west] at (7.37,5.73) {Evidence admission};
+\draw[mb] (.85,.62) rectangle (6.15,2.57);
+\node[mh] at (3.50,2.57) {Independent replay};
+\draw[mb] (6.65,.62) rectangle (19.65,2.57);
+\node[mh,anchor=west] at (7.30,2.57) {Retained research artifacts};
 
-% Source / context — top-left, no cross-page source return.
+% ---- Source controls and dispatch. Names are deliberately compact.
 \node[inner sep=0pt] (github) at (1.37,12.14) {\includegraphics[height=.62cm]{assets/github_logo.png}};
-\node[proc,minimum width=2.17cm] (context) at (3.19,12.14) {Revision / build};
-\node[proc,minimum width=1.44cm] (provider) at (5.51,12.14) {Provider};
+\node[op,minimum width=2.17cm] (context) at (3.19,12.14) {Revision / build};
+\node[op,minimum width=1.44cm] (provider) at (5.51,12.14) {Provider};
 \draw[flow] (github.east) -- (context.west);
 \draw[flow] (context.east) -- (provider.west);
 
-% Observer dispatch: a REAL one-to-three fan-out from Dispatch.
-\node[proc,minimum width=1.52cm] (dispatch) at (5.34,10.12) {Dispatch};
-\draw[flow] (provider.south) -- (5.51,11.24) -- (5.34,11.24) -- (dispatch.north);
-\node[proc,minimum width=3.33cm,minimum height=.83cm] (spoon) at (3.85,8.83) {\hspace*{.73cm}Spoon / javac};
-\node[proc,minimum width=3.33cm,minimum height=.83cm] (pythonobs) at (3.85,7.45) {\hspace*{.73cm}Python AST};
-\node[proc,minimum width=3.33cm,minimum height=.83cm] (clang) at (3.85,6.07) {\hspace*{.73cm}Clang / TU};
-\node[inner sep=0pt] at (2.65,8.83) {\includegraphics[height=.62cm]{assets/java_logo.png}};
-\node[inner sep=0pt] at (2.65,7.45) {\includegraphics[height=.62cm]{assets/python_logo.png}};
-\node[inner sep=0pt] at (2.65,6.07) {\includegraphics[height=.62cm]{assets/cpp_logo.png}};
-\draw[bus] (dispatch.west) -- (1.40,10.12) -- (1.40,6.07);
-\foreach \n/\y in {spoon/8.83,pythonobs/7.45,clang/6.07}{\draw[flow] (1.40,\y) -- (\n.west);}
-% three tool outputs merge at an explicit output rail
-\draw[bus] (spoon.east) -- (5.70,8.83) -- (5.70,6.07);
-\draw[bus] (pythonobs.east) -- (5.70,7.45);
-\draw[bus] (clang.east) -- (5.70,6.07);
-\fill (5.70,7.45) circle[radius=.035cm];
+\node[op,minimum width=1.52cm] (dispatch) at (5.06,10.12) {Dispatch};
+\draw[flow] (provider.south) -- (5.51,11.24) -- (5.06,11.24) -- (dispatch.north);
+% Language observers as single processes with logos, not extra processing stages.
+\node[op,minimum width=3.33cm,minimum height=.85cm] (spoon) at (3.80,8.64) {\hspace*{.73cm}Spoon / javac};
+\node[op,minimum width=3.33cm,minimum height=.85cm] (pythonobs) at (3.80,7.14) {\hspace*{.73cm}Python AST};
+\node[op,minimum width=3.33cm,minimum height=.85cm] (clang) at (3.80,5.64) {\hspace*{.73cm}Clang / TU};
+\node[inner sep=0pt] at (2.60,8.64) {\includegraphics[height=.62cm]{assets/java_logo.png}};
+\node[inner sep=0pt] at (2.60,7.14) {\includegraphics[height=.62cm]{assets/python_logo.png}};
+\node[inner sep=0pt] at (2.60,5.64) {\includegraphics[height=.62cm]{assets/cpp_logo.png}};
+\draw[bus] (dispatch.west) -- (1.38,10.12) -- (1.38,5.64);
+\foreach \n/\y in {spoon/8.64,pythonobs/7.14,clang/5.64}{\draw[flow] (1.38,\y) -- (\n.west);}
+\draw[bus] (spoon.east) -- (5.68,8.64) -- (5.68,8.82) -- (5.68,5.64);
+\draw[bus] (pythonobs.east) -- (5.68,7.14);
+\draw[bus] (clang.east) -- (5.68,5.64);
+\fill[flowink] (5.68,7.14) circle[radius=.037cm];
 
-% Shared observation core — centered on the main left-to-right path.
-\node[proc,minimum width=1.68cm] (norm) at (8.65,8.20) {Normalize};
-\node[db,minimum width=1.83cm] (emf) at (10.73,8.20) {EMF / Ecore};
-\node[sourcefile,minimum width=2.44cm] (xmi) at (9.90,6.69) {observation.xmi};
-\draw[flow] (5.70,8.20) -- (norm.west);
+% ---- Shared normalization core. XMI is a document, not a datastore.
+\node[op,minimum width=1.72cm] (norm) at (8.58,8.82) {Normalize};
+\node[store,minimum width=1.95cm] (emf) at (10.85,8.82) {EMF / Ecore};
+\node[file,minimum width=2.54cm] (xmi) at (9.88,7.26) {observation.xmi};
+\draw[flow] (5.68,8.82) -- (norm.west);
 \draw[flow] (norm.east) -- (emf.west);
-\draw[flow] (emf.south) -- (10.73,7.52) -- (9.90,7.52) -- (xmi.north);
+\draw[flow] (emf.south) -- (10.85,8.04) -- (9.88,8.04) -- (xmi.north);
 
-% Two declarative source files form one registered, versioned rule profile.
-\node[sourcefile,font=\fontsize{8.5pt}{10pt}\selectfont\ttfamily,minimum width=4.77cm] (rulefiles) at (16.85,12.27) {registry.json / invariants.als};
-\node[proc,minimum width=2.10cm] (profile) at (16.85,11.49) {Rule profile};
-\draw[flow] (rulefiles.south) -- (profile.north);
+% ---- Versioned invariant profile, controlling encoding + admission + solver.
+\node[file,font=\fontsize{8.9pt}{10.5pt}\selectfont\ttfamily,minimum width=4.76cm] (rules) at (16.85,12.27) {registry.json / invariants.als};
+\node[op,minimum width=2.10cm] (profile) at (16.85,11.49) {Rule profile};
+\draw[flow] (rules.south) -- (profile.north);
 
-% Formal verification – exact model constructed before qualified solving.
-\node[proc,minimum width=2.41cm] (encoder) at (16.38,9.53) {Exact encoder};
-\node[sourcefile,minimum width=3.12cm] (instance) at (16.38,8.27) {repository-instance.als};
-\node[proc,minimum width=1.74cm] (planner) at (15.52,6.37) {Work units};
-\node[proc,minimum width=1.78cm] (solver) at (18.15,6.37) {Alloy / SAT4J};
-\node[proc,minimum width=2.87cm] (decisions) at (16.69,4.05) {Decisions / witnesses};
+% ---- Exact Alloy instance and work-unit solving.
+\node[op,minimum width=2.40cm] (encoder) at (16.38,9.57) {Exact encoder};
+\node[file,minimum width=3.12cm] (instance) at (16.38,8.43) {repository-instance.als};
+\node[op,minimum width=1.73cm] (planner) at (15.42,7.19) {Work units};
+\node[op,minimum width=1.83cm] (solver) at (18.06,7.19) {Alloy / SAT4J};
 \draw[flow] (encoder.south) -- (instance.north);
-\draw[flow] (instance.south) -- (16.38,7.42) -- (15.52,7.42) -- (planner.north);
+\draw[flow] (instance.south) -- (16.38,7.75) -- (15.42,7.75) -- (planner.north);
 \draw[flow] (planner.east) -- (solver.west);
-\draw[flow] (solver.south) -- (18.15,5.18) -- (18.95,5.18) -- (18.95,4.05) -- (decisions.east);
-% XMI -> exact encoding via a separate upper corridor
-\draw[bus] (xmi.east) -- (12.77,6.69) -- (12.77,9.53);
-\draw[flow] (12.77,9.53) -- (encoder.west);
-% Profile -> encoder and solver via the right-hand rail
-\draw[bus] (profile.east) -- (19.12,11.49) -- (19.12,9.53);
-\draw[flow] (19.12,9.53) -- (encoder.east);
-\draw[bus] (19.12,9.53) -- (19.12,7.10) -- (18.15,7.10);
-\draw[flow] (18.15,7.10) -- (solver.north);
+% XMI -> exact encoding, independent of evidence readiness.
+\draw[bus] (xmi.east) -- (12.80,7.26) -- (12.80,9.57);
+\draw[flow] (12.80,9.57) -- (encoder.west);
+% Registry profile -> encoder and solver along an east-side profile bus.
+\draw[bus] (profile.east) -- (19.08,11.49) -- (19.08,9.57);
+\draw[flow] (19.08,9.57) -- (encoder.east);
+\draw[bus] (19.08,9.57) -- (19.08,7.75) -- (18.06,7.75);
+\draw[flow] (18.06,7.75) -- (solver.north);
 
-% Evidence admission uses the observed facts and rule prerequisites.
-\node[proc,minimum width=1.78cm] (evidence) at (8.92,4.76) {Evidence};
-\node[gate] (ready) at (11.18,4.76) {Ready?};
-\node[state,font=\small\ttfamily,minimum width=2.54cm] (unknown) at (10.40,3.65) {NOT\_EVALUATED};
+% ---- Evidence admission with two distinct branches.
+\node[op,minimum width=1.80cm] (evidence) at (8.85,4.82) {Evidence};
+\node[gate] (ready) at (11.02,4.83) {Ready?};
+\node[unknown,minimum width=2.58cm] (notEval) at (10.05,3.64) {NOT\_EVALUATED};
 \draw[flow] (evidence.east) -- (ready.west);
-\draw[flow] (ready.south) -- (11.18,4.10) -- (10.40,4.10) -- (unknown.north);
-\node[branchtext] at (11.43,4.16) {no};
-% Shared observed XMI feeds admission and artifact retention.
-\draw[flow] (6.77,4.76) -- (evidence.west);
-\fill (6.77,4.76) circle[radius=.033cm];
-% Profile prerequisite metadata: dashed, with deliberate gaps at the two data-flow crossings.
-\draw[reqwire] (profile.west) -- (13.50,11.49) -- (13.50,9.70);
-\draw[reqwire] (13.50,9.37) -- (13.50,6.02);
-\draw[requires] (13.50,5.65) -- (13.50,5.30) -- (11.18,5.30) -- (ready.north);
-% yes branch has its own lower corridor; does not share xmi-to-encoder lane
-\draw[bus] (ready.east) -- (12.68,4.76) -- (12.68,5.81) -- (15.52,5.81);
-\node[branchtext] at (12.27,5.00) {yes};
-\draw[flow] (15.52,5.81) -- (planner.south);
-% no branch bypasses the solver and feeds the decision record
-\draw[bus] (unknown.east) -- (12.28,3.65) -- (12.28,4.05);
-\draw[flow] (12.28,4.05) -- (decisions.west);
+\draw[flow] (ready.south) -- (11.02,4.12) -- (10.05,4.12) -- (notEval.north);
+\node[texttag] at (11.28,4.11) {no};
+% Shared observed XMI -> evidence and artifact record through separate collector bus.
+\draw[bus] (xmi.west) -- (6.74,7.26) -- (6.74,2.84);
+\draw[flow] (6.74,4.82) -- (evidence.west);
+\fill[flowink] (6.74,4.82) circle[radius=.036cm];
+% Admissible cases reach the planner; use a route different from XMI and prerequisites.
+\draw[bus] (ready.east) -- (13.11,4.83) -- (13.11,7.19);
+\draw[flow] (13.11,7.19) -- (planner.west);
+\node[texttag] at (12.02,5.06) {yes};
+% Rule-profile prerequisites are dependencies (dotted), never solid data flow.
+\draw[depwire] (profile.west) -- (13.58,11.49) -- (13.58,9.68);
+% Two breaks at crossings: no falsely connected paths.
+\draw[depwire] (13.58,9.45) -- (13.58,7.32);
+\draw[depwire] (13.58,7.06) -- (13.58,5.44);
+\draw[dependency] (13.58,5.44) -- (11.02,5.44) -- (ready.north);
 
-% Retained evidence and independently replayable capsule.
-\node[db,minimum width=3.0cm] (bundle) at (16.40,1.63) {Artifacts};
-\node[proc,minimum width=2.08cm] (writer) at (11.98,1.63) {Capsule writer};
-\node[sourcefile,font=\small\sffamily,minimum width=2.62cm] (capsule) at (8.48,1.63) {Verification capsule};
+% ---- Verdicts are explicit states, not steps or files.
+\node[pass,minimum width=2.10cm] (conformant) at (15.36,5.54) {CONFORMANT};
+\node[fail,minimum width=2.47cm] (nonconformant) at (17.94,5.54) {NON\_CONFORMANT};
+\node[op,minimum width=2.62cm] (decisions) at (16.67,4.06) {Decisions / witnesses};
+% Solver results split into conformant vs violations; witness availability distinguishes outcomes.
+\draw[bus] (solver.south) -- (18.06,6.43) -- (15.36,6.43);
+\draw[flow] (15.36,6.43) -- (conformant.north);
+\draw[flow] (17.94,6.43) -- (nonconformant.north);
+% Both evaluated outcomes join the recorder, which also records NOT_EVALUATED.
+\draw[bus] (conformant.south) -- (15.36,4.88) -- (17.94,4.88) -- (nonconformant.south);
+\draw[flow] (16.67,4.88) -- (decisions.north);
+\draw[bus] (notEval.east) -- (12.28,3.64) -- (12.28,4.06);
+\draw[flow] (12.28,4.06) -- (decisions.west);
+
+% ---- Provenance bus and retained capsule. Store is a cylinder; capsule is a file.
+\node[store,minimum width=2.95cm] (bundle) at (16.40,1.61) {Artifacts};
+\node[op,minimum width=2.07cm] (writer) at (11.92,1.61) {Capsule writer};
+\node[file,font=\small\sffamily,minimum width=2.55cm] (capsule) at (8.46,1.61) {Verification capsule};
 \draw[flow] (bundle.west) -- (writer.east);
 \draw[flow] (writer.west) -- (capsule.east);
-\node[proc,minimum width=2.33cm] (verifier) at (4.68,1.63) {Capsule verifier};
-\node[state,minimum width=2.02cm] (replay) at (2.08,1.63) {Status};
+\node[op,minimum width=2.25cm] (verifier) at (4.65,1.61) {Capsule verifier};
+\node[neutral,minimum width=2.09cm] (replay) at (2.13,1.61) {Replay status};
 \draw[flow] (capsule.west) -- (verifier.east);
 \draw[flow] (verifier.west) -- (replay.east);
-% Provenance three-way bus: independently sourced XMI, encoded Alloy, recorded decisions.
-\draw[bus] (xmi.west) -- (6.77,6.69) -- (6.77,2.89) -- (15.43,2.89);
-\draw[bus] (instance.east) -- (19.97,8.27) -- (19.97,2.89) -- (17.45,2.89);
-\draw[bus] (15.43,2.89) -- (17.45,2.89);
-\draw[bus] (decisions.south) -- (16.69,2.89);
-\fill (16.40,2.89) circle[radius=.035cm];
-\draw[flow] (16.40,2.89) -- (bundle.north);
+% Three retained sources: original observed XMI, exact .als, and decision records.
+\draw[bus] (6.74,2.84) -- (15.25,2.84);
+\draw[bus] (instance.east) -- (19.98,8.43) -- (19.98,2.84) -- (17.50,2.84);
+\draw[bus] (15.25,2.84) -- (17.50,2.84);
+\draw[bus] (decisions.south) -- (16.67,2.84);
+\fill[flowink] (16.40,2.84) circle[radius=.037cm];
+\draw[flow] (16.40,2.84) -- (bundle.north);
 \end{tikzpicture}
