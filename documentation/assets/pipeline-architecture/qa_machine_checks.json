@@ -1,0 +1,16 @@
+{
+  "figure_width_pt": 591.91,
+  "figure_height_pt": 405.06,
+  "required_labels_present": 14,
+  "effective_ieee_font_sizes_pt": {
+    "Metamodel conformance pipeline": 8.75,
+    "Evidence admission": 7.87,
+    "registry.json / invariants.als": 7.44,
+    "Work units": 7.87,
+    "NOT_EVALUATED": 7.87,
+    "Capsule verifier": 7.87
+  },
+  "pdflatex_overflow_warnings": false,
+  "pdf_pages": 1,
+  "ieee_test_pages": 2
+}

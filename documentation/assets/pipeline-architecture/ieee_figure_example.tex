@@ -1,17 +1,18 @@
-\documentclass[conference]{IEEEtran}
+\documentclass[journal]{IEEEtran}
 \usepackage[T1]{fontenc}
 \usepackage[utf8]{inputenc}
+\usepackage{lmodern}
 \usepackage{graphicx}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,shapes.geometric,shapes.symbols,shapes.misc,shapes.multipart,calc}
+\usetikzlibrary{arrows.meta,positioning,calc,fit,backgrounds,shapes.geometric,shapes.symbols,shapes.misc}
 \begin{document}
-\title{Figure Inclusion Example}
-\author{\IEEEauthorblockN{Example}}
-\maketitle
+\twocolumn[{\centerline{\Large Figure layout check}\vspace{.7cm}}]
 \begin{figure*}[t]
 \centering
-\input{pipeline_modules_with_assets.tikz}
-\caption{Architecture of the metamodel conformance pipeline.}
-\label{fig:pipeline-architecture}
+\resizebox{\textwidth}{!}{\input{pipeline_modules_with_assets.tikz}}
+\caption{Core architecture of the metamodel conformance pipeline. Language-specific observers produce a shared EMF/Ecore observation; exact Alloy encoding and evidence-qualified evaluation yield retained decisions and replayable artifacts.}
+\label{fig:core-pipeline}
 \end{figure*}
+\null\newpage
+\null\newpage
 \end{document}
