@@ -1,11 +1,42 @@
 {
-  "figure": "Metamodel conformance pipeline — semantic module diagram",
-  "version": "semantic-v4",
-  "format": "LaTeX/TikZ PDF with four embedded image logos",
+  "figure": "Metamodel conformance pipeline — caption-ready architecture",
+  "version": "caption-ready-2026-11-17",
+  "updated_at": "2026-11-17",
+  "title_rendered_inside_figure": false,
+  "labels": {
+    "lower_artifacts_module": "Verification Artifacts",
+    "replay_module": "Formal Replay"
+  },
+  "compiled_from": "main.tex",
   "source": "pipeline_modules_with_assets.tikz",
-  "standalone": "main.tex",
   "ieee_reference": "ieee_figure_example.tex",
-  "assets": ["assets/github_logo.png", "assets/java_logo.png", "assets/python_logo.png", "assets/cpp_logo.png"],
-  "outcomes": ["CONFORMANT", "NON_CONFORMANT", "NOT_EVALUATED"],
-  "validation": "standalone and IEEEtran compilation; four screenshot revision passes; font-size review"
+  "outputs": [
+    "main.pdf",
+    "preview.png",
+    "ieee_figure_example.pdf"
+  ],
+  "logos": [
+    "assets/github_logo.png",
+    "assets/java_logo.png",
+    "assets/python_logo.png",
+    "assets/cpp_logo.png"
+  ],
+  "github_logo_height_cm": 0.775,
+  "git_blobs": {
+    "main.tex": "dc7d2379d66de2b5cc81ff8cda61e0c96798893c",
+    "pipeline_modules_with_assets.tikz": "236869bcaf058e3664749d8dda4da6cdd3471a6e",
+    "main.pdf": "dcb61bd688dc23323df563d06b95655cd1344eeb",
+    "preview.png": "34ee03af3efb013e1a794b4e2e4fa70bd4becf6b",
+    "ieee_figure_example.pdf": "1c28e71469090e2af43ca20fce1b1a220ed7c68d"
+  },
+  "validation": {
+    "standalone_compile": "pdflatex -interaction=nonstopmode -halt-on-error main.tex",
+    "ieee_compile": "pdflatex -interaction=nonstopmode -halt-on-error ieee_figure_example.tex",
+    "standalone_pages": 1,
+    "ieee_pages": 2,
+    "overflow_warnings": 0,
+    "preview_inspected": true,
+    "scientific_implementation_tests": "not part of this figure update"
+  },
+  "note": "Earlier QA_REPORT.md and QA_MACHINE.json are historical artifacts for previous figure versions."
 }
