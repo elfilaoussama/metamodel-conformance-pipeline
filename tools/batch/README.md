@@ -11,7 +11,7 @@ From the repository root:
 ```bash
 python3 -B tools/run-analysis-batch.py \
   --jobs /absolute/path/jobs.json \
-  --jar target/metamodel-conformance-pipeline-next-0.15.0.jar \
+  --jar target/metamodel-conformance-pipeline-next-0.16.0.jar \
   --output /new/path/batch-run
 ```
 

@@ -124,7 +124,7 @@ if [[ -n "$native_ninja" ]]; then
     "${native_mounts[@]}" \
     -e PYTHONDONTWRITEBYTECODE=1 \
     -w "$container_worktree" "$resolver_image_id" \
-    python3 /provider-tools/capture-cpp-ninja-membership.py \
+    python3 /provider-scripts/capture-cpp-ninja-membership.py \
       --build-directory "$container_out/build" \
       --configured-model "$container_out/configured-build-model.json" \
       --compile-commands "$container_out/build/compile_commands.json" \

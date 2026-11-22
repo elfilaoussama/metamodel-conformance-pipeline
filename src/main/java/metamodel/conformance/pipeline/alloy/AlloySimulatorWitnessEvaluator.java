@@ -23,9 +23,6 @@ final class AlloySimulatorWitnessEvaluator {
     AlloySimulatorWitnessEvaluator(CompModule module, A4Solution solution,
             AlloyExecutionConfig config) throws Err {
         config.requireSupported();
-        if (!ID.equals(config.witnessEvaluatorId())) {
-            throw new IllegalArgumentException("unsupported Alloy witness evaluator");
-        }
         if (!solution.satisfiable()) {
             throw new IllegalArgumentException("no SAT-validated consistent instance");
         }

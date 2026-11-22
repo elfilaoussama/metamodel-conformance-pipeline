@@ -443,7 +443,8 @@ public final class CppDependencyInputs {
     private static final java.util.Set<String> SUPPORTED_FLAGS = java.util.Set.of(
             "-fPIC", "-fpic", "-fPIE", "-fpie", "-pthread", "-fno-exceptions",
             "-fexceptions", "-fno-rtti", "-frtti", "-O0", "-O1", "-O2", "-O3",
-            "-Os", "-Oz", "-Og", "-g", "-g0", "-g1", "-g2", "-g3");
+            "-Os", "-Oz", "-Og", "-g", "-g0", "-g1", "-g2", "-g3",
+            "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wno-error", "-pedantic", "-pedantic-errors");
 
     public record CompileOperation(String kind, String value) { }
     public record CppCompileContext(String sourcePath, boolean ordered, List<CompileOperation> operations,

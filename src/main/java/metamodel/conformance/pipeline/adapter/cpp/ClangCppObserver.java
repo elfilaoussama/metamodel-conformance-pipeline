@@ -75,8 +75,10 @@ import java.util.stream.Stream;
  */
 public final class ClangCppObserver implements SourceObserver {
     public static final String ADAPTER_ID = "clang-cpp";
-    public static final String ADAPTER_VERSION = "0.25.0";
+    public static final String ADAPTER_VERSION = "0.27.0";
     private static final String PROFILE_ID = "contextual-native-projection-v13";
+    private static final Pattern SIGNATURE_PLACEHOLDER = Pattern.compile(
+            "(?<![\\p{L}\\p{M}\\p{N}_$])(?:decltype|auto)(?![\\p{L}\\p{M}\\p{N}_$])");
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final Set<String> SOURCE_EXTENSIONS = Set.of(".cpp", ".cc", ".cxx", ".c++");
     private static final Set<String> HEADER_EXTENSIONS = Set.of(".hpp", ".hh", ".hxx", ".h", ".ipp", ".tpp");
@@ -182,6 +184,7 @@ public final class ClangCppObserver implements SourceObserver {
             Map<String,CppNativeLookupReceipt.Result> lookupCensuses = new HashMap<>();
             Map<String,CppNativeImplementationReceipt.Result> implementationCensuses = new HashMap<>();
             Map<String,CppNativeMethodReceipt.Result> methodCensuses = new HashMap<>();
+            Map<String,CppNativeSignatureReceipt.Result> signatureCensuses = new HashMap<>();
             Map<String,List<NativeEvidence.DirectBase>> compilerBases = new HashMap<>();
             Set<Path> coveredProjectFiles = new HashSet<>();
             if (nativeHelper != null) recordPhysicalHash(nativeHelper, physicalHashes);
@@ -230,7 +233,7 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(file);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, languageModes, tracedInputs, physicalHashes);
-                retainMethodFacts(contextId,result,methodCensuses);
+                retainMethodFacts(contextId,result,methodCensuses,signatureCensuses);
                 retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainImplementationFacts(root, relativePath(root,file), contextId, result, implementationCensuses);
                 retainBaseIdentities(result, compilerBases);
@@ -254,7 +257,7 @@ public final class ClangCppObserver implements SourceObserver {
                 associated.add(header);
                 associatedInputs.put(contextId, associated);
                 retainTrace(result, nativeInvocations, invocationByContext, languageModes, tracedInputs, physicalHashes);
-                retainMethodFacts(contextId,result,methodCensuses);
+                retainMethodFacts(contextId,result,methodCensuses,signatureCensuses);
                 retainLookups(result, contextId, nativeLookups, lookupCensuses);
                 retainImplementationFacts(root, relativePath(root,header), contextId, result, implementationCensuses);
                 retainBaseIdentities(result, compilerBases);
@@ -286,6 +289,10 @@ public final class ClangCppObserver implements SourceObserver {
             Set<String> allowed = externalParents == null ? Set.of() : Set.copyOf(externalParents);
 
             List<MemberObservation> members = new ArrayList<>();
+            Map<String,CppNativeSignatureReceipt.Signature> compilerSignatures = new HashMap<>();
+            for(var census:signatureCensuses.values())for(var entry:census.signatures().entrySet())
+                if(compilerSignatures.putIfAbsent(entry.getKey(),entry.getValue())!=null)
+                    throw new ObservationException("duplicate contextual C++ native signature facts");
             List<NativeEvidence.Signature> nativeSignatures = new ArrayList<>();
             List<NativeEvidence.Bases> nativeBases = new ArrayList<>();
             Map<String, List<String>> memberKeysByOwner = new HashMap<>();
@@ -319,9 +326,16 @@ public final class ClangCppObserver implements SourceObserver {
                         continue;
                     }
                     boolean method = "METHOD".equals(source.kind());
+                    var compilerSignature=method?compilerSignatures.get(technicalKey):null;
+                    if(compilerSignature!=null && !compilerSignature.owner().equals(draft.id()))
+                        throw new ObservationException("native signature owner differs from source member owner");
+                    boolean signatureSupported=compilerSignature==null ? source.signatureSupported()
+                            : compilerSignature.parameters().knowledge()==NativeEvidence.Knowledge.KNOWN;
+                    List<String> parameterTypes=compilerSignature==null ? source.parameterTypes()
+                            : compilerSignature.parameters().values().stream().map(NativeEvidence.TypeToken::spelling).toList();
                     if (method) {
                         methodCount++;
-                        if (!source.signatureSupported()) {
+                        if (!signatureSupported) {
                             signaturesIncomplete = true;
                             unsupportedMethodCount++;
                         }
@@ -345,14 +359,14 @@ public final class ClangCppObserver implements SourceObserver {
                             draft.path(),
                             source.line(),
                             source.endLine(),
-                            source.parameterTypes(),
+                            parameterTypes,
                             method ? MethodAbstraction.valueOf(source.abstraction())
                                     : MethodAbstraction.UNKNOWN,
                             method ? MemberScope.valueOf(source.scope()) : MemberScope.UNKNOWN));
                     keys.add(technicalKey);
                     if (method) {
-                        var parameters = source.signatureSupported()
-                                ? NativeEvidence.Evidence.known(source.parameterTypes().stream()
+                        var parameters = signatureSupported
+                                ? NativeEvidence.Evidence.known(parameterTypes.stream()
                                     .map(type -> new NativeEvidence.Parameter(type,
                                             NativeEvidence.TypeMeaning.COMPILER_TYPE)).toList())
                                 : NativeEvidence.Evidence.<NativeEvidence.Parameter>unavailable(
@@ -737,7 +751,8 @@ public final class ClangCppObserver implements SourceObserver {
     }
 
     private static void retainMethodFacts(String context,AnalysisResult result,
-            Map<String,CppNativeMethodReceipt.Result> output) throws ObservationException {
+            Map<String,CppNativeMethodReceipt.Result> output,
+            Map<String,CppNativeSignatureReceipt.Result> signatures) throws ObservationException {
         var facts=result.trace()!=null && result.astFailure()==null && result.exitCode()==0
                 ? CppNativeMethodReceipt.observe(result.trace().methodSemantics(),result.collector().nativeDeclarationKeys)
                 : CppNativeMethodReceipt.Result.unavailable();
@@ -745,6 +760,10 @@ public final class ClangCppObserver implements SourceObserver {
         // Unknown canonical declarations are deliberately absent from this map.
         result.collector().nativeDeclarationKeys.putAll(facts.declarationAliases());
         if(output.putIfAbsent(context,facts)!=null)throw new ObservationException("duplicate C++ method census context");
+        var signature=result.trace()!=null && result.astFailure()==null && result.exitCode()==0
+                ? CppNativeSignatureReceipt.observe(result.trace().methodSemantics(),result.collector().nativeDeclarationKeys)
+                : CppNativeSignatureReceipt.Result.unavailable();
+        if(signatures.putIfAbsent(context,signature)!=null)throw new ObservationException("duplicate C++ signature census context");
     }
 
     private static void retainBaseIdentities(AnalysisResult result,
@@ -2014,7 +2033,12 @@ public final class ClangCppObserver implements SourceObserver {
             // Parenthesized return declarators/expressions are explicitly unknown;
             // their independently collected ParmVarDecl facts stay usable.
             int open = text.indexOf('(');
-            if (open < 1 || !Character.isWhitespace(text.charAt(open - 1))) return null;
+            if (open < 1) return null;
+            char preceding = text.charAt(open - 1);
+            // Clang prints pointer/reference returns without a separating space,
+            // e.g. "Product *(int) const". These are ordinary function types;
+            // parenthesized return declarators still fail the suffix grammar.
+            if (!Character.isWhitespace(preceding) && preceding != '*' && preceding != '&') return null;
             String prefix = text.substring(0, open).trim();
             if (prefix.contains("decltype") || prefix.contains("__attribute__")) return null;
             int close = matchingParenthesis(text, open);
@@ -2178,7 +2202,8 @@ public final class ClangCppObserver implements SourceObserver {
                 return;
             }
             if (token == null || token.isBlank()
-                    || token.contains("<") || token.contains("decltype") || token.contains("auto")) {
+                    || token.contains("<")
+                    || SIGNATURE_PLACEHOLDER.matcher(token).find()) {
                 markUnsupportedSignature();
                 return;
             }

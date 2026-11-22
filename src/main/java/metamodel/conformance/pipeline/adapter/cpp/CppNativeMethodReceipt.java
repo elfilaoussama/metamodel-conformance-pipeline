@@ -17,7 +17,7 @@ final class CppNativeMethodReceipt {
     static Result observe(JsonNode receipt,Map<String,String> declarations) throws ObservationException {
         if(receipt==null)return Result.unavailable();
         try {
-            require(text(receipt,"format").equals("cpp-method-semantics-v1"),"unsupported format");
+            require(Set.of("cpp-method-semantics-v1","cpp-method-semantics-v2").contains(text(receipt,"format")),"unsupported format");
             JsonNode complete=receipt.get("populationComplete");
             require(complete!=null && complete.isBoolean(),"missing population completeness");
             boolean population=complete.booleanValue();

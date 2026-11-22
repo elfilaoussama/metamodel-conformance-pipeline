@@ -65,8 +65,14 @@ def parse_query(text, requested_operand):
             if operand.startswith((' ', '|')):
                 raise ValueError('malformed query dependency')
             operand = _path(operand)
-            identity = ('outputs' if section == 'outputs' else 'inputs', operand)
-            if identity in seen:
+            # Ninja can report the same path as both an implicit dependency and
+            # an order-only dependency. Preserve both measured roles; neither
+            # participates in direct artifact membership below.
+            identity = (key, operand)
+            # Consumer rows can repeat when the same target depends on this
+            # node through multiple roles. Retain occurrences; consumer edges
+            # never establish artifact participation.
+            if identity in seen and key != 'outputs':
                 raise ValueError('duplicate query dependency')
             seen.add(identity)
             result[key].append(operand)
@@ -104,7 +110,9 @@ def _argv(row):
 def derive_membership(targets, commands, queries, build_directory):
     """Return all command identities and direct artifact participation relations.
 
-    STATIC_LIBRARY: artifact's direct explicit inputs join command outputs.
+    STATIC_LIBRARY/EXECUTABLE: direct explicit object inputs join command outputs.
+    Declared static archives on executable link lines are dependencies, never
+    compiler participation. Unknown explicit link inputs still fail closed.
     OBJECT_LIBRARY: artifact itself joins a command output. Every joined output
     must have exactly one explicit graph input equal to its compileDB source.
     Implicit/order-only inputs and consumer edges never establish membership.
@@ -173,6 +181,12 @@ def derive_membership(targets, commands, queries, build_directory):
         inputs = [_absolute(p, build) for p in query['explicitInputs']]
         if inputs != [records[command_id]['source']]:
             raise ValueError('command graph source mismatch: ' + output)
+    # A link can name a configured archive explicitly or implicitly. Its members
+    # belong to that library's world, not to the executable's direct world.
+    archives = {_absolute(a['path'], build) for t in targets if t.get('type') == 'STATIC_LIBRARY'
+                for a in t.get('artifacts', [])}
+    if archives.intersection(by_output):
+        raise ValueError('archive artifact aliases compiler output')
     dispositions, relations, target_ids = [], [], set()
     for target in targets:
         target_id = _text(target.get('id'), 'target id')
@@ -181,7 +195,7 @@ def derive_membership(targets, commands, queries, build_directory):
         if target_id in target_ids:
             raise ValueError('duplicate target id')
         target_ids.add(target_id)
-        supported = kind in ('STATIC_LIBRARY', 'OBJECT_LIBRARY')
+        supported = kind in ('STATIC_LIBRARY', 'OBJECT_LIBRARY', 'EXECUTABLE')
         dispositions.append(dict(targetId=target_id, targetName=name, type=kind,
                                  status='SUPPORTED_DIRECT_ARTIFACTS' if supported else 'UNSUPPORTED_TARGET_TYPE'))
         if not supported:
@@ -200,11 +214,13 @@ def derive_membership(targets, commands, queries, build_directory):
                 raise ValueError('missing or phony artifact query: ' + artifact)
             outputs = [artifact] if kind == 'OBJECT_LIBRARY' else [_absolute(p, build) for p in query['explicitInputs']]
             for output in outputs:
+                if kind == 'EXECUTABLE' and output in archives:
+                    continue
                 if output not in by_output:
                     raise ValueError('unknown direct compiled input: ' + output)
                 relations.append(dict(targetId=target_id, targetName=name, artifact=artifact,
                                       commandId=by_output[output]))
-    return dict(format='cpp-ninja-direct-participation-v1',
+    return dict(format='cpp-ninja-direct-participation-v2',
                 commands=sorted(records.values(), key=lambda r: r['id']),
                 relations=sorted(relations, key=lambda r: (r['targetId'], r['artifact'], r['commandId'])),
                 targetDispositions=sorted(dispositions, key=lambda r: r['targetId']))

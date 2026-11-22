@@ -12,11 +12,11 @@ import edu.mit.csail.sdg.translator.TranslateAlloyToKodkod;
 import metamodel.conformance.pipeline.decision.Decision;
 import metamodel.conformance.pipeline.decision.DecisionStatus;
 import metamodel.conformance.pipeline.decision.WitnessTuple;
-import metamodel.conformance.pipeline.model.EvidenceKind;
 import metamodel.conformance.pipeline.model.Observation;
 import metamodel.conformance.pipeline.invariant.InvariantRegistry;
 import metamodel.conformance.pipeline.invariant.InvariantDefinition;
 import metamodel.conformance.pipeline.invariant.InvariantProfile;
+import metamodel.conformance.pipeline.invariant.InvariantEvidenceAdmission;
 import metamodel.conformance.pipeline.emf.ObservationXmiWriter;
 import metamodel.conformance.pipeline.cli.PipelineCli;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -33,11 +33,9 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
-import java.util.stream.Collectors;
 
 public final class AlloyInvariantEvaluator {
     private final AlloyExecutionConfig executionConfig;
@@ -67,17 +65,21 @@ public final class AlloyInvariantEvaluator {
         InvariantRegistry registry = profile.registry();
         Map<String, Decision> decisionsById = new LinkedHashMap<>();
         List<InvariantDefinition> evaluable = new ArrayList<>();
+        List<InvariantDefinition> witnessOnly = new ArrayList<>();
         for (InvariantDefinition definition : registry.all()) {
-            Set<EvidenceKind> missing = missingEvidence(observation, definition);
-            if (missing.isEmpty()) {
+            var unavailable = InvariantEvidenceAdmission.unavailableReason(observation, definition);
+            if (unavailable.isEmpty()) {
                 evaluable.add(definition);
             } else {
-                String names = missing.stream().map(Enum::name).sorted().collect(Collectors.joining(", "));
                 decisionsById.put(definition.id(), notEvaluated(
-                        definition, "Required evidence is incomplete: " + names));
+                        definition, unavailable.orElseThrow()));
+                if (executionConfig.allowsScopedWitnesses()
+                        && LocalNamespaceWitnessScope.applies(observation, definition, profile)) {
+                    witnessOnly.add(definition);
+                }
             }
         }
-        if (evaluable.isEmpty()) {
+        if (evaluable.isEmpty() && witnessOnly.isEmpty()) {
             return orderedDecisions(registry, decisionsById);
         }
 
@@ -94,6 +96,18 @@ public final class AlloyInvariantEvaluator {
             return orderedDecisions(registry, decisionsById);
         }
 
+        for (InvariantDefinition definition : witnessOnly) {
+            var units = LocalNamespaceWitnessScope.plan(observation);
+            if (units.isEmpty()) continue;
+            var result = evaluate(units, definition, encoder, executionConfig);
+            if (result.status() == DecisionStatus.NON_CONFORMANT) {
+                decisionsById.put(definition.id(), new Decision(result.status(), definition.id(),
+                        result.message() + " Reported witnesses are supported within the observed declaration scope. "
+                                + "The repository-wide witness census is incomplete.", result.witnesses()));
+            }
+        }
+
+        if (evaluable.isEmpty()) return orderedDecisions(registry, decisionsById);
         if (processWorkers() > 1) {
             return evaluateInWorkerProcesses(observation, alloyModel, registry, evaluable, decisionsById);
         }
@@ -162,17 +176,27 @@ public final class AlloyInvariantEvaluator {
 
     private void evaluateModelGroup(String model, List<ModelTask> tasks,
             Map<String, Decision> decisions, Map<String, List<WitnessTuple>> witnesses) {
+        boolean profiling = Boolean.getBoolean("metamodel.conformance.alloy.profile");
+        long started = System.nanoTime();
+        if (profiling) System.err.printf("ALLOY_STAGE parse_started modelChars=%d tasks=%d%n", model.length(), tasks.size());
         try {
             CompModule module = CompUtil.parseEverything_fromString(new A4Reporter(), model);
+            if (profiling) System.err.printf("ALLOY_STAGE parse_done elapsedMs=%d%n", (System.nanoTime() - started) / 1_000_000);
+            long solveStarted = System.nanoTime();
             A4Solution solution = TranslateAlloyToKodkod.execute_command(new A4Reporter(),
                     module.getAllReachableSigs(), findCommand(module, "ObservationConsistency"),
                     AlloyOptionsFactory.create(executionConfig));
+            if (profiling) System.err.printf("ALLOY_STAGE translation_solve_done elapsedMs=%d%n", (System.nanoTime() - solveStarted) / 1_000_000);
             if (!solution.satisfiable()) {
                 for (ModelTask task : tasks) decisions.putIfAbsent(task.definition().id(),
                         notEvaluated(task.definition(), "An exact Alloy work unit is inconsistent."));
                 return;
             }
+            long importStarted = System.nanoTime();
+            if (profiling) System.err.println("ALLOY_STAGE instance_import_started");
             var interpreter = new AlloySimulatorWitnessEvaluator(module, solution, executionConfig);
+            if (profiling) System.err.printf("ALLOY_STAGE instance_import_done elapsedMs=%d%n", (System.nanoTime() - importStarted) / 1_000_000);
+            long witnessStarted = System.nanoTime();
             for (ModelTask task : tasks) {
                 InvariantDefinition definition = task.definition();
                 if (decisions.containsKey(definition.id())) continue;
@@ -196,6 +220,7 @@ public final class AlloyInvariantEvaluator {
                             "Alloy work-unit evaluation failed: " + safeMessage(failure)));
                 }
             }
+            if (profiling) System.err.printf("ALLOY_STAGE witnesses_done elapsedMs=%d%n", (System.nanoTime() - witnessStarted) / 1_000_000);
         } catch (Exception | LinkageError | StackOverflowError failure) {
             for (ModelTask task : tasks) decisions.putIfAbsent(task.definition().id(),
                     notEvaluated(task.definition(), "Alloy work-unit evaluation failed: " + safeMessage(failure)));
@@ -287,7 +312,7 @@ public final class AlloyInvariantEvaluator {
                 if (line.startsWith(marker)) {
                     json = line.substring(marker.length());
                 } else {
-                    if (line.startsWith("ALLOY_WORK_UNIT")) {
+                    if (line.startsWith("ALLOY_WORK_UNIT") || line.startsWith("ALLOY_STAGE")) {
                         System.err.printf("ALLOY_BATCH invariant=%s first=%d end=%d %s%n",
                                 invariant, first, end, line);
                     }
@@ -336,10 +361,9 @@ public final class AlloyInvariantEvaluator {
             Observation observation, String alloyModel, String invariantId,
             int firstUnitIndex, int endUnitIndex) {
         InvariantDefinition definition = profile.registry().require(invariantId);
-        Set<EvidenceKind> missing = missingEvidence(observation, definition);
-        if (!missing.isEmpty()) {
-            String names = missing.stream().map(Enum::name).sorted().collect(Collectors.joining(", "));
-            return notEvaluated(definition, "Required evidence is incomplete: " + names);
+        var unavailable = InvariantEvidenceAdmission.unavailableReason(observation, definition);
+        if (unavailable.isPresent()) {
+            return notEvaluated(definition, unavailable.orElseThrow());
         }
         ExactAlloyEncoder encoder = new ExactAlloyEncoder(profile);
         try {
@@ -357,13 +381,6 @@ public final class AlloyInvariantEvaluator {
         } catch (Exception | LinkageError | StackOverflowError failure) {
             return notEvaluated(definition, "Alloy work-unit planning failed: " + safeMessage(failure));
         }
-    }
-
-    private static Set<EvidenceKind> missingEvidence(
-            Observation observation, InvariantDefinition definition) {
-        return definition.requiredEvidence().stream()
-                .filter(required -> !observation.completeEvidence().contains(required))
-                .collect(Collectors.toSet());
     }
 
     private static List<Decision> orderedDecisions(
@@ -389,17 +406,27 @@ public final class AlloyInvariantEvaluator {
                 long startedAt = System.nanoTime();
                 reportWorkUnit("start", definition, unitIndex, workUnits.size(), workUnit, 0L);
                 String model = encoder.encode(workUnit);
+                boolean profiling = Boolean.getBoolean("metamodel.conformance.alloy.profile");
+                long parseStarted = System.nanoTime();
+                if (profiling) System.err.printf("ALLOY_STAGE parse_started modelChars=%d tasks=1%n", model.length());
                 CompModule module = CompUtil.parseEverything_fromString(new A4Reporter(), model);
+                if (profiling) System.err.printf("ALLOY_STAGE parse_done elapsedMs=%d%n", (System.nanoTime() - parseStarted) / 1_000_000);
                 Command consistencyCommand = findCommand(module, "ObservationConsistency");
+                long solveStarted = System.nanoTime();
                 A4Solution exactSolution = TranslateAlloyToKodkod.execute_command(
                         new A4Reporter(), module.getAllReachableSigs(), consistencyCommand,
                         AlloyOptionsFactory.create(executionConfig));
+                if (profiling) System.err.printf("ALLOY_STAGE translation_solve_done elapsedMs=%d%n", (System.nanoTime() - solveStarted) / 1_000_000);
                 if (!exactSolution.satisfiable()) {
                     return notEvaluated(definition, "An exact Alloy work unit is inconsistent.");
                 }
 
                 Func witnessFunction = findFunction(module, definition.witnessFunction());
+                long importStarted = System.nanoTime();
+                if (profiling) System.err.println("ALLOY_STAGE instance_import_started");
                 var interpreter = new AlloySimulatorWitnessEvaluator(module, exactSolution, executionConfig);
+                if (profiling) System.err.printf("ALLOY_STAGE instance_import_done elapsedMs=%d%n", (System.nanoTime() - importStarted) / 1_000_000);
+                long witnessStarted = System.nanoTime();
                 var tuples = interpreter.evaluate(witnessFunction.call());
                 Map<String, String> atomKeys = encoder.atomTechnicalKeys(workUnit);
                 for (var tuple : tuples) {
@@ -419,6 +446,7 @@ public final class AlloyInvariantEvaluator {
                     }
                     witnesses.add(new WitnessTuple(technicalKeys));
                 }
+                if (profiling) System.err.printf("ALLOY_STAGE witnesses_done elapsedMs=%d%n", (System.nanoTime() - witnessStarted) / 1_000_000);
                 reportWorkUnit("complete", definition, unitIndex, workUnits.size(), workUnit,
                         System.nanoTime() - startedAt);
             }

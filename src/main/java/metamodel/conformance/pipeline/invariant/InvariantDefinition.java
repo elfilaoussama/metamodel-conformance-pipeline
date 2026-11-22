@@ -14,6 +14,8 @@ public record InvariantDefinition(
         Set<EvidenceKind> requiredEvidence,
         Set<ProjectionRelation> partitionRelations,
         Set<ProjectionRoot> partitionRoots,
+        PartitionPolicy partitionPolicy,
+        Set<EvidenceRequirement> evidenceRequirements,
         String conformanceMessage,
         String violationMessage) {
 
@@ -37,6 +39,18 @@ public record InvariantDefinition(
         requiredEvidence = requiredEvidence == null ? Set.of() : Set.copyOf(requiredEvidence);
         partitionRelations = partitionRelations == null ? Set.of() : Set.copyOf(partitionRelations);
         partitionRoots = partitionRoots == null ? Set.of() : Set.copyOf(partitionRoots);
+        partitionPolicy = partitionPolicy == null ? PartitionPolicy.AUTO : partitionPolicy;
+        evidenceRequirements = evidenceRequirements == null ? Set.of() : Set.copyOf(evidenceRequirements);
+        if (partitionPolicy == PartitionPolicy.ALL_CLASSIFIER_UPWARD
+                && (!partitionRoots.equals(Set.of(ProjectionRoot.CLASSIFIER))
+                    || !partitionRelations.equals(Set.of(ProjectionRelation.PARENTS)))) {
+            throw new IllegalArgumentException("all-classifier upward planning requires classifier roots and parents only");
+        }
+        if (evidenceRequirements.contains(EvidenceRequirement.SOURCE_ANCESTOR_IMPLEMENTATION_COVERAGE)
+                && !requiredEvidence.containsAll(Set.of(EvidenceKind.HIERARCHY,
+                    EvidenceKind.DECLARATION_OWNERSHIP, EvidenceKind.IMPLEMENTATION_BINDINGS))) {
+            throw new IllegalArgumentException("ancestor implementation coverage requires hierarchy, ownership and bindings");
+        }
         if (partitionRoots.isEmpty()) {
             throw new IllegalArgumentException("at least one partition root is required");
         }

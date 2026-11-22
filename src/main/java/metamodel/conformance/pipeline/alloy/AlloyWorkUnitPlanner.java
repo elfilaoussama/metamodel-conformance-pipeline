@@ -3,6 +3,7 @@ package metamodel.conformance.pipeline.alloy;
 import metamodel.conformance.pipeline.invariant.InvariantDefinition;
 import metamodel.conformance.pipeline.invariant.ProjectionRelation;
 import metamodel.conformance.pipeline.invariant.ProjectionRoot;
+import metamodel.conformance.pipeline.invariant.PartitionPolicy;
 import metamodel.conformance.pipeline.model.ClassifierObservation;
 import metamodel.conformance.pipeline.model.ImplementationBindingObservation;
 import metamodel.conformance.pipeline.model.Language;
@@ -28,8 +29,12 @@ final class AlloyWorkUnitPlanner {
     private static final String BINDING_PREFIX = "I:";
 
     List<Observation> plan(Observation observation, InvariantDefinition definition) {
+        if (definition.partitionPolicy() == PartitionPolicy.ALL_CLASSIFIER_UPWARD) {
+            return allClassifierHierarchyPlan(observation, definition);
+        }
         Map<String, Set<String>> graph = graph(observation, definition.partitionRelations());
-        if (requiresSourceRootedHierarchyPlan(observation, definition)) {
+        if (definition.partitionPolicy() != PartitionPolicy.ALL_CONNECTED
+                && requiresSourceRootedHierarchyPlan(observation, definition)) {
             return sourceRootedHierarchyPlan(observation, definition);
         }
         Set<String> visited = new HashSet<>();
@@ -54,6 +59,16 @@ final class AlloyWorkUnitPlanner {
         }
         if (!packed.isEmpty()) result.add(project(observation, packed, definition.partitionRelations()));
         return List.copyOf(result);
+    }
+
+    private static List<Observation> allClassifierHierarchyPlan(
+            Observation observation, InvariantDefinition definition) {
+        Set<String> sourcePaths = sourcePaths(observation);
+        ClosureIndex index = closureIndex(observation, definition.partitionRelations());
+        List<Set<String>> closures = observation.classifiers().stream()
+                .map(value -> upwardClosure(classifierNode(value.id()), index,
+                        definition.partitionRelations(), sourcePaths)).toList();
+        return pack(observation, closures, definition.partitionRelations());
     }
 
     /**
@@ -103,7 +118,7 @@ final class AlloyWorkUnitPlanner {
         return pack(observation, closures, definition.partitionRelations());
     }
 
-    private static Set<String> sourcePaths(Observation observation) {
+    static Set<String> sourcePaths(Observation observation) {
         return observation.units().stream()
                 .filter(unit -> unit.language() != Language.JAVA_ARCHIVE
                         && unit.language() != Language.JAVA_PLATFORM)
@@ -172,7 +187,8 @@ final class AlloyWorkUnitPlanner {
                     classifier.declaredMemberKeys().forEach(key -> pending.addLast(memberNode(key)));
                 }
                 if (relations.contains(ProjectionRelation.OBSERVED_INHERITED_MEMBERS)
-                        && sourcePaths.contains(classifier.sourcePath())) {
+                        && (sourcePaths.contains(classifier.sourcePath())
+                            || relations.contains(ProjectionRelation.IMPLEMENTATION_BINDINGS))) {
                     classifier.inheritedMemberKeys().forEach(key -> pending.addLast(memberNode(key)));
                 }
                 if (relations.contains(ProjectionRelation.IMPLEMENTATION_BINDINGS)) {
@@ -281,6 +297,13 @@ final class AlloyWorkUnitPlanner {
                 roots.contains(ProjectionRoot.CLASSIFIER) && node.startsWith(CLASSIFIER_PREFIX)
                         || roots.contains(ProjectionRoot.MEMBER) && node.startsWith(MEMBER_PREFIX)
                         || roots.contains(ProjectionRoot.BODY) && node.startsWith(BODY_PREFIX));
+    }
+
+    static Observation declarationScope(Observation source, String owner, List<String> members) {
+        Set<String> component = new HashSet<>();
+        component.add(classifierNode(owner));
+        members.forEach(key -> component.add(memberNode(key)));
+        return project(source, component, Set.of(ProjectionRelation.DECLARED_MEMBERS));
     }
 
     private static Observation project(Observation source, Set<String> component, Set<ProjectionRelation> relations) {

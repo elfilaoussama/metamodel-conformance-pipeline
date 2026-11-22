@@ -206,7 +206,7 @@ protected:
                 {"classes",std::move(implementation.classes)},
                 {"methods",std::move(implementation.methods)},
                 {"bodies",std::move(implementation.bodies)}}},
-            {"methodSemantics",llvm::json::Object{{"format","cpp-method-semantics-v1"},
+            {"methodSemantics",llvm::json::Object{{"format","cpp-method-semantics-v2"},
                 {"populationComplete",semanticsTraversed && !compiler.getDiagnostics().hasErrorOccurred()},
                 {"methods",std::move(semantics.rows)}}},
             {"memberLookup",llvm::json::Object{{"format","cpp-member-lookup-v1"},

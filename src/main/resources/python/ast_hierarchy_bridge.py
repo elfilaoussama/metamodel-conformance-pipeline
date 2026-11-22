@@ -1095,14 +1095,37 @@ def static_lookup_reason(tree):
 
 lookup_reason = ""
 source_modules = {module_name(path) for path in paths}
+captured_trees={};captured_failures={};module_records=[]
+all_method_keys={}
+for relative in paths:
+    captured_path=root/pathlib.PurePosixPath(relative)
+    try:
+        with tokenize.open(str(captured_path)) as source:captured_text=source.read()
+        captured_tree=ast.parse(captured_text,filename=relative,type_comments=True)
+        captured_trees[relative]=(captured_text,captured_tree)
+        compile(captured_tree,relative,'exec',dont_inherit=True)
+    except (SyntaxError,UnicodeError,ValueError,TypeError) as failure:
+        captured_failures[relative]=failure
+        continue
+    captured_module=module_name(relative)
+    module_records.append(dict(path=relative,module=captured_module,tree=captured_tree,
+        is_package=pathlib.PurePosixPath(relative).name=='__init__.py',
+        sha256=hashlib.sha256(captured_path.read_bytes()).hexdigest()))
+    for declaration in captured_tree.body:
+        if not isinstance(declaration,ast.ClassDef):continue
+        owner=child_name(captured_module,declaration.name)
+        for member in declaration.body:
+            if isinstance(member,(ast.FunctionDef,ast.AsyncFunctionDef)):
+                name=mangled_name(member.name,owner)
+                all_method_keys[owner,name]=member_definition_key(relative,member,owner,'METHOD',name)
+module_projections=project_captured_modules(module_records,absolute_from)
 for current_rel in paths:
     module = module_name(current_rel)
     is_package = pathlib.PurePosixPath(current_rel).name == "__init__.py"
     path = root / pathlib.PurePosixPath(current_rel)
     try:
-        with tokenize.open(str(path)) as source:
-            text = source.read()
-        tree = ast.parse(text, filename=current_rel, type_comments=True)
+        if current_rel not in captured_trees:raise captured_failures[current_rel]
+        text,tree=captured_trees[current_rel]
     except (SyntaxError, UnicodeError) as failure:
         body_census_complete = False
         lookup_reason = lookup_reason or "parse error prevents static lookup"
@@ -1136,25 +1159,17 @@ for current_rel in paths:
                                 line=getattr(failure, "lineno", 0) or 0,
                                 message=str(failure)[:4096]))
     legacy_reason = static_lookup_reason(tree)
-    shadowed_abc = any(name == "abc" or name.startswith("abc.") for name in source_modules)
-    creation = (dict(complete=False, classes={}, reason="project abc namespace prevents standard-library identity proof")
-                if shadowed_abc and legacy_reason else project(tree))
+    creation = module_projections.get(current_rel,dict(complete=False,classes={},reason='compiler rejects captured module'))
     method_semantics_complete = method_semantics_complete and creation['complete']
     if creation['complete']:
         source_class_nodes = {n.name:n for n in tree.body if isinstance(n,ast.ClassDef)}
         class_keys = {name:definition_key(current_rel,n,child_name(module,name)) for name,n in source_class_nodes.items()}
-        method_keys = {}
-        for name,n in source_class_nodes.items():
-            owner=child_name(module,name)
-            for member in n.body:
-                if isinstance(member,(ast.FunctionDef,ast.AsyncFunctionDef)):
-                    runtime_name=mangled_name(member.name,owner)
-                    method_keys[name,runtime_name]=member_definition_key(current_rel,member,owner,'METHOD',runtime_name)
+        method_keys = all_method_keys
         for owner,description in creation['classes'].items():
             if 'methods' not in description:
                 method_semantics_complete=False;continue
             for row in description['methods']:
-                key=method_keys.get((owner,row['name']))
+                key=method_keys.get((child_name(module,owner),row['name']))
                 if key is None:raise RuntimeError('native method is outside captured source declarations')
                 targets=[]
                 for target in row['overrides']:

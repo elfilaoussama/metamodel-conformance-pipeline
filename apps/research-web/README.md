@@ -16,7 +16,7 @@ Build the independent server with a full JDK 17:
 ```powershell
 ./apps/research-web/build.ps1
 ./apps/research-web/start.ps1 `
-  -Engine ./target/metamodel-conformance-pipeline-next-0.15.0.jar `
+  -Engine ./target/metamodel-conformance-pipeline-next-0.16.0.jar `
   -InputRoot E:/experiment-inputs `
   -Workspace E:/experiment-workspace `
   -JavaHome 'C:/Program Files/Java/jdk-17'

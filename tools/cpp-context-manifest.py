@@ -14,7 +14,8 @@ import importlib.util
 
 FLAGS = {"-fPIC", "-fpic", "-fPIE", "-fpie", "-pthread", "-fno-exceptions",
          "-fexceptions", "-fno-rtti", "-frtti", "-O0", "-O1", "-O2", "-O3",
-         "-Os", "-Oz", "-Og", "-g", "-g0", "-g1", "-g2", "-g3"}
+         "-Os", "-Oz", "-Og", "-g", "-g0", "-g1", "-g2", "-g3",
+         "-Wall", "-Wextra", "-Wpedantic", "-Werror", "-Wno-error", "-pedantic", "-pedantic-errors"}
 STANDARDS = {f"{prefix}{version}" for prefix in ("c++", "gnu++")
              for version in ("98", "03", "11", "14", "17", "20", "2a", "2b")}
 PATH_OPTIONS = {"-I": "include", "-isystem": "system-include",

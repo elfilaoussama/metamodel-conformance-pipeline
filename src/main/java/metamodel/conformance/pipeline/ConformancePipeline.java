@@ -38,7 +38,7 @@ public final class ConformancePipeline {
 
     public ConformancePipeline(SourceObserver observer, InvariantProfile profile) {
         this(observer, new ExactAlloyEncoder(profile),
-                new AlloyInvariantEvaluator(AlloyExecutionConfig.frozen(), profile));
+                new AlloyInvariantEvaluator(AlloyExecutionConfig.scopedWitnesses(), profile));
     }
 
     ConformancePipeline(SourceObserver observer, ExactAlloyEncoder encoder, AlloyInvariantEvaluator runner) {

@@ -55,8 +55,30 @@ final class JavacCompilationContext implements AutoCloseable {
             Map<String, List<Path>> filesByContext,
             JavaDependencyInputs inputs) throws IOException {
         JavaDependencyInputs actual = inputs == null ? JavaDependencyInputs.none() : inputs;
-        return JavacSourceWorld.prepare(root, context, filesByContext, actual,
-                () -> prepareFresh(root, context, filesByContext, actual));
+        // Selection limits projected declarations, not declared compiler dependencies.
+        // Include upstream source bytes before cache fingerprinting so reuse remains
+        // bound to every source file that can affect the compiled context.
+        Map<String, List<Path>> compilerInputs = new LinkedHashMap<>(filesByContext);
+        List<Path> capturedFiles = null;
+        for (String upstreamId : actual.context(context.id()) == null
+                ? List.<String>of() : actual.upstreamTopological(context.id())) {
+            if (compilerInputs.containsKey(upstreamId)) continue;
+            if (capturedFiles == null) {
+                try {
+                    capturedFiles = SpoonJavaObserver.discoverJavaFiles(root);
+                } catch (metamodel.conformance.pipeline.adapter.ObservationException failure) {
+                    throw new IOException("Cannot enumerate declared upstream compiler inputs", failure);
+                }
+            }
+            JavaCompilationContext upstream = actual.context(upstreamId);
+            compilerInputs.put(upstreamId, capturedFiles.stream()
+                    .filter(file -> upstream.ownsSourcePath(relativePath(root, file)))
+                    .filter(file -> !actual.noncompiledSources().contains(relativePath(root, file)))
+                    .filter(file -> !actual.excludedSources(upstreamId).contains(relativePath(root, file)))
+                    .toList());
+        }
+        return JavacSourceWorld.prepare(root, context, compilerInputs, actual,
+                () -> prepareFresh(root, context, compilerInputs, actual));
     }
 
     private static JavacCompilationContext prepareFresh(Path root, JavaCompilationContext context,
@@ -331,7 +353,10 @@ final class JavacCompilationContext implements AutoCloseable {
                 context, JavaResolutionPathRole.MODULE_PATH, upstreamOutputs));
         if (modularContext) {
             for (CompiledOutput output : upstreamOutputs) {
-                if (output.modular() && !entries.contains(output.directory())) {
+                // A declared module output needs an explicit module-path role.
+                // Reconstruction must not repair a missing JPMS visibility fact.
+                if (output.modular() && output.context().outputs().isEmpty()
+                        && !entries.contains(output.directory())) {
                     entries.add(output.directory());
                 }
             }

@@ -57,7 +57,9 @@ public final class CppNativeInvocationPlan {
         }
         JsonNode membership=binding.get("membership");
         fields(membership,"format","commands","relations","targetDispositions");
-        require(text(membership,"format").equals("cpp-ninja-direct-participation-v1"),"unsupported membership format");
+        String membershipFormat=text(membership,"format");
+        require(Set.of("cpp-ninja-direct-participation-v1","cpp-ninja-direct-participation-v2").contains(membershipFormat),"unsupported membership format");
+        boolean executableSupport=membershipFormat.equals("cpp-ninja-direct-participation-v2");
         Map<String,JsonNode> commands=new TreeMap<>(); Set<String> outputs=new HashSet<>();
         for(JsonNode command:array(membership,"commands")) {
             fields(command,"id","directory","source","output","arguments","occurrenceCount","original");
@@ -97,14 +99,14 @@ public final class CppNativeInvocationPlan {
             JsonNode target=targets.get(id); require(target!=null && dispositions.add(id),"unknown or duplicate target disposition");
             String type=text(target,"type");
             require(text(disposition,"targetName").equals(text(target,"name")) && text(disposition,"type").equals(type)
-                    && text(disposition,"status").equals(supported(type)?"SUPPORTED_DIRECT_ARTIFACTS":"UNSUPPORTED_TARGET_TYPE"),"target disposition differs");
+                    && text(disposition,"status").equals(supported(type,executableSupport)?"SUPPORTED_DIRECT_ARTIFACTS":"UNSUPPORTED_TARGET_TYPE"),"target disposition differs");
         }
         require(dispositions.equals(targets.keySet()),"incomplete target dispositions");
         Map<String,SortedSet<String>> participation=new TreeMap<>(); Set<String> relations=new HashSet<>();
         for(JsonNode relation:array(membership,"relations")) {
             fields(relation,"targetId","targetName","artifact","commandId");
             String targetId=text(relation,"targetId"), commandId=text(relation,"commandId"); JsonNode target=targets.get(targetId);
-            require(target!=null && commands.containsKey(commandId) && supported(text(target,"type"))
+            require(target!=null && commands.containsKey(commandId) && supported(text(target,"type"),executableSupport)
                     && text(relation,"targetName").equals(text(target,"name")),"invalid participation endpoint");
             String artifact=absolute(text(relation,"artifact"),null); boolean declared=false;
             for(JsonNode row:array(target,"artifacts")) declared|=absolute(text(row,"path"),model.buildRoot().toString()).equals(artifact);
@@ -195,7 +197,9 @@ public final class CppNativeInvocationPlan {
         }
         require(sources==1,"source operand absent or repeated"); return List.copyOf(out);
     }
-    private static boolean supported(String type) { return type.equals("STATIC_LIBRARY") || type.equals("OBJECT_LIBRARY"); }
+    private static boolean supported(String type, boolean executableSupport) {
+        return type.equals("STATIC_LIBRARY") || type.equals("OBJECT_LIBRARY") || executableSupport && type.equals("EXECUTABLE");
+    }
     private static JsonNode json(String value) {
         try { return new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
                 .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS).readTree(Objects.requireNonNull(value)); }

@@ -109,7 +109,7 @@ public final class ExactAlloyEncoder {
         signatures(alloy, java.util.stream.IntStream.range(0, positionCount)
                 .mapToObj(position -> "P_" + position).toList(), "PositionToken");
         alloy.append("\nfun SourceClassifiers : set Classifier {\n  ")
-                .append(sourceClassifierAtoms.isEmpty() ? "none" : String.join(" + ", sourceClassifierAtoms))
+                .append(sourceClassifierAtoms.isEmpty() ? "none" : union(sourceClassifierAtoms))
                 .append("\n}\n");
 
         List<String> classifierAtoms = observation.classifiers().stream()
@@ -294,16 +294,39 @@ public final class ExactAlloyEncoder {
         List<String> terms = new ArrayList<>();
         values.forEach((owner, targets) -> {
             if (!targets.isEmpty()) {
-                String target = targets.stream().sorted()
+                String target = union(targets.stream().sorted()
                         .map(value -> value.contains("->") ? "(" + value + ")" : value)
-                        .collect(Collectors.joining(" + "));
+                        .toList());
                 terms.add(owner + "->(" + target + ")");
             }
         });
         String empty = String.join("->", java.util.Collections.nCopies(arity, "none"));
         alloy.append("\nfact Exact").append(field).append(" {\n  ").append(field)
-                .append(" = ").append(terms.isEmpty() ? empty : String.join(" + ", terms))
+                .append(" = ").append(terms.isEmpty() ? empty : union(terms))
                 .append("\n}\n");
+    }
+
+    /** Set union is associative; keep large exact relations shallow for type resolution. */
+    private static String union(List<String> terms) {
+        StringBuilder result = new StringBuilder();
+        union(result, terms, 0, terms.size());
+        return result.toString();
+    }
+
+    private static void union(StringBuilder result, List<String> terms, int first, int end) {
+        if (end - first <= 16) {
+            for (int index = first; index < end; index++) {
+                if (index > first) result.append(" + ");
+                result.append(terms.get(index));
+            }
+            return;
+        }
+        int middle = first + (end - first) / 2;
+        result.append('(');
+        union(result, terms, first, middle);
+        result.append(") + (");
+        union(result, terms, middle, end);
+        result.append(')');
     }
 
     private static void signatures(StringBuilder alloy, List<String> atoms, String parent) {

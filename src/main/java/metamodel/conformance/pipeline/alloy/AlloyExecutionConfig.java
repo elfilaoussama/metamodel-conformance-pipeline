@@ -18,6 +18,9 @@ public record AlloyExecutionConfig(
     private static final AlloyExecutionConfig FROZEN = new AlloyExecutionConfig(
             "6.2.0", "sat4j", false, 20, 0, 2, 0,
             false, false, -1, 0, 4, AlloySimulatorWitnessEvaluator.ID);
+    private static final AlloyExecutionConfig SCOPED_WITNESSES = new AlloyExecutionConfig(
+            "6.2.0", "sat4j", false, 20, 0, 2, 0,
+            false, false, -1, 0, 4, "alloy-sim-instance-scoped-local-namespace-v1");
 
     public AlloyExecutionConfig {
         if (alloyVersion == null || alloyVersion.isBlank()
@@ -35,8 +38,16 @@ public record AlloyExecutionConfig(
         return FROZEN;
     }
 
+    public static AlloyExecutionConfig scopedWitnesses() {
+        return SCOPED_WITNESSES;
+    }
+
+    boolean allowsScopedWitnesses() {
+        return equals(SCOPED_WITNESSES);
+    }
+
     public boolean supported() {
-        return equals(FROZEN);
+        return equals(FROZEN) || allowsScopedWitnesses();
     }
 
     public void requireSupported() {
